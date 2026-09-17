@@ -38,7 +38,14 @@ class AppUpdater(private val context: Context) {
                         if (latestVersion != currentVersion && release.assets.isNotEmpty()) {
                             val apkUrl = release.assets[0].browser_download_url
                             withContext(Dispatchers.Main) {
-                                downloadAndInstallApk(apkUrl, latestVersion)
+                                android.app.AlertDialog.Builder(context)
+                                    .setTitle("Update Available")
+                                    .setMessage("A new version ($latestVersion) is available. Do you want to download and install it?")
+                                    .setPositiveButton("Update") { _, _ ->
+                                        downloadAndInstallApk(apkUrl, latestVersion)
+                                    }
+                                    .setNegativeButton("Later", null)
+                                    .show()
                             }
                         } else {
                             Log.d("AppUpdater", "App is up to date.")
