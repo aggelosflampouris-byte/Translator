@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Translator</string>
+    <string name="accessibility_service_description">Reads text on screen for real-time translation overlays.</string>
+</resources>
