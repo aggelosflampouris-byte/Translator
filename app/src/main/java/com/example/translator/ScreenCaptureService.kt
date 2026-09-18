@@ -73,17 +73,17 @@ class ScreenCaptureService : Service() {
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .build()
 
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-            startForeground(1, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-        } else {
-            startForeground(1, notification)
-        }
-
         if (intent?.action == ACTION_CLEAR_OVERLAYS) {
             if (this::overlayManager.isInitialized) {
                 overlayManager.removeAllOverlays()
             }
             return START_NOT_STICKY
+        }
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            startForeground(1, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        } else {
+            startForeground(1, notification)
         }
         
         intent?.getStringExtra("sourceLanguage")?.let { sourceLanguage = it }
