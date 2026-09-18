@@ -165,32 +165,30 @@ fun MainScreen(
 }
 
 fun checkAccessibilityEnabled(context: Context): Boolean {
-    var accessibilityEnabled = 0
-    val service = context.packageName + "/" + com.example.translator.TranslationAccessibilityService::class.java.canonicalName
-    try {
-        accessibilityEnabled = Settings.Secure.getInt(
-            context.applicationContext.contentResolver,
-            Settings.Secure.ACCESSIBILITY_ENABLED
-        )
-    } catch (e: Settings.SettingNotFoundException) {
-        // Assume disabled
-    }
+    val expectedComponentName = android.content.ComponentName(context, com.example.translator.TranslationAccessibilityService::class.java)
+    val expectedString = expectedComponentName.flattenToString()
     
-    if (accessibilityEnabled == 1) {
-        val settingValue = Settings.Secure.getString(
-            context.applicationContext.contentResolver,
-            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-        )
-        if (settingValue != null) {
-            val splitter = android.text.TextUtils.SimpleStringSplitter(':')
-            splitter.setString(settingValue)
-            while (splitter.hasNext()) {
-                val accessibilityService = splitter.next()
-                if (accessibilityService.equals(service, ignoreCase = true)) {
-                    return true
-                }
+    // Method 1: Check Settings.Secure directly (most reliable on Xiaomi/Samsung)
+    val settingValue = Settings.Secure.getString(
+        context.applicationContext.contentResolver,
+        Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+    )
+    if (settingValue != null) {
+        val splitter = android.text.TextUtils.SimpleStringSplitter(':')
+        splitter.setString(settingValue)
+        while (splitter.hasNext()) {
+            val accessibilityService = splitter.next()
+            if (accessibilityService.equals(expectedString, ignoreCase = true)) {
+                return true
             }
         }
     }
-    return false
+
+    // Method 2: Fallback to AccessibilityManager
+    val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as android.view.accessibility.AccessibilityManager
+    val enabledServices = am.getEnabledAccessibilityServiceList(android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+    return enabledServices.any { 
+        it.resolveInfo.serviceInfo.packageName == expectedComponentName.packageName && 
+        it.resolveInfo.serviceInfo.name == expectedComponentName.className 
+    }
 }
