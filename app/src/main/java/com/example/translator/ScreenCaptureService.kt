@@ -57,6 +57,9 @@ class ScreenCaptureService : Service() {
         var isRunning = false
     }
 
+    private var sourceLanguage: String = "AUTO"
+    private var targetLanguage: String = TranslateLanguage.ENGLISH
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val channelId = "screen_capture_channel"
         val channelName = "Screen Capture Service"
@@ -83,6 +86,9 @@ class ScreenCaptureService : Service() {
             return START_NOT_STICKY
         }
         
+        intent?.getStringExtra("sourceLanguage")?.let { sourceLanguage = it }
+        intent?.getStringExtra("targetLanguage")?.let { targetLanguage = it }
+
         val resultCode = intent?.getIntExtra("resultCode", 0) ?: 0
         val data = intent?.getParcelableExtra<Intent>("data")
 
@@ -128,11 +134,12 @@ class ScreenCaptureService : Service() {
 
     private val translators = mutableMapOf<String, Translator>()
 
-    private fun getTranslator(languageCode: String): Translator {
-        return translators.getOrPut(languageCode) {
+    private fun getTranslator(sourceLang: String, targetLang: String): Translator {
+        val key = "\$sourceLang-\$targetLang"
+        return translators.getOrPut(key) {
             val options = TranslatorOptions.Builder()
-                .setSourceLanguage(languageCode)
-                .setTargetLanguage(TranslateLanguage.ENGLISH)
+                .setSourceLanguage(sourceLang)
+                .setTargetLanguage(targetLang)
                 .build()
             Translation.getClient(options)
         }
@@ -200,9 +207,13 @@ class ScreenCaptureService : Service() {
                     languageIdentifier.identifyLanguage(text)
                         .addOnSuccessListener { languageCode ->
                             val bcp47Code = TranslateLanguage.fromLanguageTag(languageCode)
-                            if (bcp47Code != null && bcp47Code != TranslateLanguage.ENGLISH) {
+                            
+                            val isTargetLanguage = bcp47Code == targetLanguage
+                            val isSourceLanguageMatch = sourceLanguage == "AUTO" || bcp47Code == sourceLanguage
+                            
+                            if (bcp47Code != null && !isTargetLanguage && isSourceLanguageMatch) {
                                 try {
-                                    val translator = getTranslator(bcp47Code)
+                                    val translator = getTranslator(bcp47Code, targetLanguage)
 
                                     translator.downloadModelIfNeeded()
                                         .addOnSuccessListener {

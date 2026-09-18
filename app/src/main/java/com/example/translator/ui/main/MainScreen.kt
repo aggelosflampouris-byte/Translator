@@ -23,6 +23,7 @@ import androidx.navigation3.runtime.NavKey
 import com.example.translator.ScreenCaptureService
 import com.example.translator.TranslationAccessibilityService
 import kotlinx.coroutines.delay
+import java.util.Locale
 
 @Composable
 fun MainScreen(
@@ -32,6 +33,12 @@ fun MainScreen(
   val context = LocalContext.current
   val lifecycleOwner = LocalLifecycleOwner.current
   val snackbarHostState = remember { SnackbarHostState() }
+
+  val prefs = context.getSharedPreferences("translator_prefs", Context.MODE_PRIVATE)
+  var sourceLanguage by remember { mutableStateOf(prefs.getString("source_language", "AUTO") ?: "AUTO") }
+  var targetLanguage by remember { mutableStateOf(prefs.getString("target_language", com.google.mlkit.nl.translate.TranslateLanguage.ENGLISH) ?: com.google.mlkit.nl.translate.TranslateLanguage.ENGLISH) }
+
+  val supportedLanguages = remember { com.google.mlkit.nl.translate.TranslateLanguage.getAllLanguages() }
 
   // Permission state — refreshed on every resume
   var canDrawOverlays by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
@@ -70,6 +77,8 @@ fun MainScreen(
       val serviceIntent = Intent(context, ScreenCaptureService::class.java).apply {
         putExtra("resultCode", result.resultCode)
         putExtra("data", result.data)
+        putExtra("sourceLanguage", sourceLanguage)
+        putExtra("targetLanguage", targetLanguage)
       }
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
         context.startForegroundService(serviceIntent)
@@ -92,6 +101,19 @@ fun MainScreen(
     ) {
       Text("Translator Control Panel", style = MaterialTheme.typography.headlineMedium)
       Spacer(modifier = Modifier.height(32.dp))
+
+      // Language Selection
+      LanguageDropdown("Source Language", sourceLanguage, listOf("AUTO") + supportedLanguages) {
+          sourceLanguage = it
+          prefs.edit().putString("source_language", it).apply()
+      }
+      Spacer(modifier = Modifier.height(8.dp))
+      LanguageDropdown("Target Language", targetLanguage, supportedLanguages) {
+          targetLanguage = it
+          prefs.edit().putString("target_language", it).apply()
+      }
+
+      Spacer(modifier = Modifier.height(24.dp))
 
       // Per-permission status rows with individual Fix buttons
       PermissionStatusRow(label = "Display over other apps", granted = canDrawOverlays) {
@@ -173,6 +195,46 @@ fun MainScreen(
       }
     }
   }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun LanguageDropdown(label: String, selectedCode: String, options: List<String>, onSelected: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    
+    val getDisplayName = { code: String ->
+        if (code == "AUTO") "Auto-Detect"
+        else Locale(code).displayLanguage.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
+    }
+
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = !expanded }
+    ) {
+        OutlinedTextField(
+            modifier = Modifier.menuAnchor().fillMaxWidth(),
+            readOnly = true,
+            value = getDisplayName(selectedCode),
+            onValueChange = {},
+            label = { Text(label) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
+        )
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            options.forEach { code ->
+                DropdownMenuItem(
+                    text = { Text(getDisplayName(code)) },
+                    onClick = {
+                        onSelected(code)
+                        expanded = false
+                    }
+                )
+            }
+        }
+    }
 }
 
 @Composable
