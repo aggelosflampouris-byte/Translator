@@ -80,12 +80,6 @@ class ScreenCaptureService : Service() {
             return START_NOT_STICKY
         }
 
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-            startForeground(1, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-        } else {
-            startForeground(1, notification)
-        }
-        
         intent?.getStringExtra("sourceLanguage")?.let { sourceLanguage = it }
         intent?.getStringExtra("targetLanguage")?.let { targetLanguage = it }
 
@@ -95,6 +89,15 @@ class ScreenCaptureService : Service() {
         if (resultCode != 0 && data != null) {
             val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             mediaProjection = projectionManager.getMediaProjection(resultCode, data)
+        }
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            startForeground(1, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        } else {
+            startForeground(1, notification)
+        }
+
+        if (mediaProjection != null) {
             setupVirtualDisplay()
         }
         
