@@ -19,12 +19,17 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation3.runtime.NavKey
 import com.example.translator.ScreenCaptureService
 
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+
 @Composable
 fun MainScreen(
   onItemClick: (NavKey) -> Unit,
   modifier: Modifier = Modifier
 ) {
   val context = LocalContext.current
+  val lifecycleOwner = LocalLifecycleOwner.current
   
   // State for permissions
   var canDrawOverlays by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
@@ -32,9 +37,21 @@ fun MainScreen(
   var showPermissionDialog by remember { mutableStateOf(false) }
 
   // Check permissions on launch and resume
-  LaunchedEffect(Unit) {
-      if (!canDrawOverlays || !isAccessibilityEnabled) {
-          showPermissionDialog = true
+  DisposableEffect(lifecycleOwner) {
+      val observer = LifecycleEventObserver { _, event ->
+          if (event == Lifecycle.Event.ON_RESUME) {
+              canDrawOverlays = Settings.canDrawOverlays(context)
+              isAccessibilityEnabled = checkAccessibilityEnabled(context)
+              if (!canDrawOverlays || !isAccessibilityEnabled) {
+                  showPermissionDialog = true
+              } else {
+                  showPermissionDialog = false
+              }
+          }
+      }
+      lifecycleOwner.lifecycle.addObserver(observer)
+      onDispose {
+          lifecycleOwner.lifecycle.removeObserver(observer)
       }
   }
 
@@ -59,10 +76,19 @@ fun MainScreen(
       AlertDialog(
           onDismissRequest = { showPermissionDialog = false },
           title = { Text("Permissions Required") },
-          text = { Text("The Translator app requires 'Display over other apps' and 'Accessibility' permissions to function. Please grant them in the control panel.") },
+          text = { Text("The Translator app requires 'Display over other apps' and 'Accessibility' permissions to function. Please grant them on the next screens.") },
           confirmButton = {
-              TextButton(onClick = { showPermissionDialog = false }) {
-                  Text("OK")
+              TextButton(onClick = {
+                  showPermissionDialog = false
+                  if (!canDrawOverlays) {
+                      val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
+                      context.startActivity(intent)
+                  } else if (!isAccessibilityEnabled) {
+                      val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                      context.startActivity(intent)
+                  }
+              }) {
+                  Text("Grant Permissions")
               }
           }
       )
@@ -85,11 +111,12 @@ fun MainScreen(
             Column(modifier = Modifier.padding(16.dp)) {
                 Text("⚠️ Restricted Settings (Android 13+)", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onErrorContainer)
                 Text(
-                    "You CANNOT enable Accessibility yet. You will get an 'App access denied' error. To fix this one-time security lock:\n\n" +
+                    "You CANNOT enable Accessibility yet. You will get an 'App access denied' error. To fix this Android 13+ security lock on ANY device:\n\n" +
                     "1. Tap 'Open App Info' below.\n" +
-                    "2. For Pixel/Samsung: Tap the 3 dots (⋮) in the top right -> 'Allow restricted settings'.\n" +
-                    "3. For Xiaomi/POCO: Scroll to the very bottom -> 'Allow restricted settings'.\n" +
-                    "4. Authenticate (fingerprint/PIN), then come back here to enable it.",
+                    "2. Look for 'Allow restricted settings'.\n" +
+                    "   • For most (Pixel/Samsung/Moto): Tap the 3 dots (⋮) in the top right -> 'Allow restricted settings'.\n" +
+                    "   • For Xiaomi/POCO/Redmi: Scroll to the very bottom of the page -> 'Allow restricted settings'.\n" +
+                    "3. Authenticate (fingerprint/PIN), then come back here to enable Accessibility.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onErrorContainer
                 )
@@ -109,33 +136,19 @@ fun MainScreen(
         }
     }
 
-    if (!canDrawOverlays) {
-      Button(onClick = {
-        val intent = Intent(
-          Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-          Uri.parse("package:${context.packageName}")
-        )
-        context.startActivity(intent)
-      }) {
-        Text("Grant Overlay Permission")
-      }
-      Spacer(modifier = Modifier.height(16.dp))
-    }
-
-    Button(onClick = {
-      val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-      context.startActivity(intent)
-    }) {
-      Text(if (isAccessibilityEnabled) "Accessibility Enabled ✓" else "Enable Accessibility Service")
-    }
-    Spacer(modifier = Modifier.height(16.dp))
-
     Button(
       onClick = {
-        val mediaProjectionManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        mediaProjectionLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
-      },
-      enabled = canDrawOverlays && isAccessibilityEnabled
+        if (!canDrawOverlays) {
+            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
+            context.startActivity(intent)
+        } else if (!isAccessibilityEnabled) {
+            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            context.startActivity(intent)
+        } else {
+            val mediaProjectionManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            mediaProjectionLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
+        }
+      }
     ) {
       Text("Start Translating")
     }
