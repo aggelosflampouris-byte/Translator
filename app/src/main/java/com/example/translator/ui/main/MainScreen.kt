@@ -44,6 +44,48 @@ fun MainScreen(
   var canDrawOverlays by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
   var isAccessibilityEnabled by remember { mutableStateOf(checkAccessibilityEnabled(context)) }
 
+  // Crash Reporting
+  val crashPrefs = context.getSharedPreferences("crash_prefs", Context.MODE_PRIVATE)
+  var crashLog by remember { mutableStateOf(crashPrefs.getString("last_crash", null)) }
+
+  if (crashLog != null) {
+      AlertDialog(
+          onDismissRequest = {
+              crashPrefs.edit().remove("last_crash").apply()
+              crashLog = null
+          },
+          title = { Text("App Crashed") },
+          text = { 
+              androidx.compose.foundation.lazy.LazyColumn {
+                  item {
+                      Text(
+                          "The app crashed during the last session. Please send this log to the developer:\n\n\$crashLog",
+                          style = MaterialTheme.typography.bodySmall
+                      )
+                  }
+              }
+          },
+          confirmButton = {
+              TextButton(onClick = {
+                  val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                  val clip = android.content.ClipData.newPlainText("Crash Log", crashLog)
+                  clipboard.setPrimaryClip(clip)
+                  android.widget.Toast.makeText(context, "Copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
+              }) {
+                  Text("Copy Log")
+              }
+          },
+          dismissButton = {
+              TextButton(onClick = {
+                  crashPrefs.edit().remove("last_crash").apply()
+                  crashLog = null
+              }) {
+                  Text("Dismiss")
+              }
+          }
+      )
+  }
+
   // Refresh permissions when activity resumes (user may have just returned from Settings)
   DisposableEffect(lifecycleOwner) {
       val observer = LifecycleEventObserver { _, event ->
