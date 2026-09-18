@@ -189,6 +189,9 @@ class ScreenCaptureService : Service() {
             val inputImage = InputImage.fromBitmap(croppedBitmap, 0)
 
         textRecognizer.process(inputImage)
+            .addOnCompleteListener {
+                croppedBitmap.recycle()
+            }
             .addOnSuccessListener { visionText ->
                 val textBlocks = visionText.textBlocks
                 if (textBlocks.isEmpty()) {
