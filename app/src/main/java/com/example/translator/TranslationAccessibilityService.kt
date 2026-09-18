@@ -12,10 +12,12 @@ class TranslationAccessibilityService : AccessibilityService() {
         when (event.eventType) {
             AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
                 Log.d("Translator", "Scroll detected")
-                val intent = android.content.Intent(this, ScreenCaptureService::class.java).apply {
-                    action = ScreenCaptureService.ACTION_CLEAR_OVERLAYS
+                if (ScreenCaptureService.isRunning) {
+                    val intent = android.content.Intent(this, ScreenCaptureService::class.java).apply {
+                        action = ScreenCaptureService.ACTION_CLEAR_OVERLAYS
+                    }
+                    startService(intent)
                 }
-                startService(intent)
             }
             AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> {
                 Log.d("Translator", "Text changed: ${event.text}")

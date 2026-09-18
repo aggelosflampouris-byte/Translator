@@ -47,22 +47,17 @@ class ScreenCaptureService : Service() {
     override fun onCreate() {
         super.onCreate()
         overlayManager = OverlayManager(this)
+        isRunning = true
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
         const val ACTION_CLEAR_OVERLAYS = "com.example.translator.CLEAR_OVERLAYS"
+        var isRunning = false
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_CLEAR_OVERLAYS) {
-            if (this::overlayManager.isInitialized) {
-                overlayManager.removeAllOverlays()
-            }
-            return START_NOT_STICKY
-        }
-
         val channelId = "screen_capture_channel"
         val channelName = "Screen Capture Service"
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -79,6 +74,13 @@ class ScreenCaptureService : Service() {
             startForeground(1, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
         } else {
             startForeground(1, notification)
+        }
+
+        if (intent?.action == ACTION_CLEAR_OVERLAYS) {
+            if (this::overlayManager.isInitialized) {
+                overlayManager.removeAllOverlays()
+            }
+            return START_NOT_STICKY
         }
         
         val resultCode = intent?.getIntExtra("resultCode", 0) ?: 0
@@ -252,6 +254,7 @@ class ScreenCaptureService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        isRunning = false
         virtualDisplay?.release()
         imageReader?.close()
         mediaProjection?.stop()
