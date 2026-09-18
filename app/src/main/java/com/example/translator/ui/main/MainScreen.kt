@@ -218,7 +218,13 @@ fun MainScreen(
         onClick = {
             val mediaProjectionManager =
                 context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            mediaProjectionLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
+            val captureIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                val config = android.media.projection.MediaProjectionConfig.createConfigForDefaultDisplay()
+                mediaProjectionManager.createScreenCaptureIntent(config)
+            } else {
+                mediaProjectionManager.createScreenCaptureIntent()
+            }
+            mediaProjectionLauncher.launch(captureIntent)
         }
       ) {
         Text(

@@ -43,9 +43,11 @@ class ScreenCaptureService : Service() {
 
     private val handler = Handler(Looper.getMainLooper())
     private var isProcessing = false
+    private var isDestroyed = false
 
     override fun onCreate() {
         super.onCreate()
+        isDestroyed = false
         overlayManager = OverlayManager(this)
         isRunning = true
     }
@@ -146,8 +148,7 @@ class ScreenCaptureService : Service() {
         )
 
         imageReader?.setOnImageAvailableListener({ reader ->
-            if (isProcessing) {
-                // Drop frame if still processing
+            if (isDestroyed || !isRunning || isProcessing) {
                 val image = reader.acquireLatestImage()
                 image?.close()
                 return@setOnImageAvailableListener
@@ -161,7 +162,7 @@ class ScreenCaptureService : Service() {
     private val translators = mutableMapOf<String, Translator>()
 
     private fun getTranslator(sourceLang: String, targetLang: String): Translator {
-        val key = "\$sourceLang-\$targetLang"
+        val key = "$sourceLang-$targetLang"
         return translators.getOrPut(key) {
             val options = TranslatorOptions.Builder()
                 .setSourceLanguage(sourceLang)
@@ -172,6 +173,11 @@ class ScreenCaptureService : Service() {
     }
 
     private fun processImage(image: Image, width: Int, height: Int) {
+        if (isDestroyed || !isRunning) {
+            image.close()
+            isProcessing = false
+            return
+        }
         try {
             val planes = image.planes
             if (planes.isEmpty()) {
@@ -214,75 +220,100 @@ class ScreenCaptureService : Service() {
             
             val inputImage = InputImage.fromBitmap(croppedBitmap, 0)
 
-        textRecognizer.process(inputImage)
-            .addOnCompleteListener {
-                croppedBitmap.recycle()
-            }
-            .addOnSuccessListener { visionText ->
-                val textBlocks = visionText.textBlocks
-                if (textBlocks.isEmpty()) {
-                    overlayManager.removeAllOverlays()
-                    isProcessing = false
-                    return@addOnSuccessListener
+            textRecognizer.process(inputImage)
+                .addOnCompleteListener {
+                    croppedBitmap.recycle()
                 }
+                .addOnSuccessListener { visionText ->
+                    if (isDestroyed || !isRunning) {
+                        isProcessing = false
+                        return@addOnSuccessListener
+                    }
+                    val textBlocks = visionText.textBlocks
+                    if (textBlocks.isEmpty()) {
+                        overlayManager.removeAllOverlays()
+                        isProcessing = false
+                        return@addOnSuccessListener
+                    }
 
-                val translations = mutableListOf<Pair<Rect?, String>>()
-                var pendingTranslations = textBlocks.size
+                    val translations = mutableListOf<Pair<Rect?, String>>()
+                    var pendingTranslations = textBlocks.size
 
-                for (block in textBlocks) {
-                    val text = block.text
-                    val rect = block.boundingBox
+                    for (block in textBlocks) {
+                        val text = block.text
+                        val rect = block.boundingBox
 
-                    languageIdentifier.identifyLanguage(text)
-                        .addOnSuccessListener { languageCode ->
-                            val bcp47Code = TranslateLanguage.fromLanguageTag(languageCode)
-                            
-                            val isTargetLanguage = bcp47Code == targetLanguage
-                            val isSourceLanguageMatch = sourceLanguage == "AUTO" || bcp47Code == sourceLanguage
-                            
-                            if (bcp47Code != null && !isTargetLanguage && isSourceLanguageMatch) {
-                                try {
-                                    val translator = getTranslator(bcp47Code, targetLanguage)
+                        languageIdentifier.identifyLanguage(text)
+                            .addOnSuccessListener { languageCode ->
+                                if (isDestroyed || !isRunning) {
+                                    pendingTranslations--
+                                    checkTranslationComplete(pendingTranslations, translations)
+                                    return@addOnSuccessListener
+                                }
+                                val bcp47Code = TranslateLanguage.fromLanguageTag(languageCode)
+                                
+                                val isTargetLanguage = bcp47Code == targetLanguage
+                                val isSourceLanguageMatch = sourceLanguage == "AUTO" || bcp47Code == sourceLanguage
+                                
+                                if (bcp47Code != null && !isTargetLanguage && isSourceLanguageMatch) {
+                                    try {
+                                        val translator = getTranslator(bcp47Code, targetLanguage)
 
-                                    translator.downloadModelIfNeeded()
-                                        .addOnSuccessListener {
-                                            translator.translate(text)
-                                                .addOnSuccessListener { translatedText ->
-                                                    translations.add(Pair(rect, translatedText))
+                                        translator.downloadModelIfNeeded()
+                                            .addOnSuccessListener {
+                                                if (isDestroyed || !isRunning) {
+                                                    pendingTranslations--
+                                                    checkTranslationComplete(pendingTranslations, translations)
+                                                    return@addOnSuccessListener
+                                                }
+                                                try {
+                                                    translator.translate(text)
+                                                        .addOnSuccessListener { translatedText ->
+                                                            if (isDestroyed || !isRunning) {
+                                                                pendingTranslations--
+                                                                checkTranslationComplete(pendingTranslations, translations)
+                                                                return@addOnSuccessListener
+                                                            }
+                                                            translations.add(Pair(rect, translatedText))
+                                                            pendingTranslations--
+                                                            checkTranslationComplete(pendingTranslations, translations)
+                                                        }
+                                                        .addOnFailureListener {
+                                                            pendingTranslations--
+                                                            checkTranslationComplete(pendingTranslations, translations)
+                                                        }
+                                                } catch (e: Exception) {
+                                                    Log.e("Translator", "Translation call failed", e)
                                                     pendingTranslations--
                                                     checkTranslationComplete(pendingTranslations, translations)
                                                 }
-                                                .addOnFailureListener {
-                                                    pendingTranslations--
-                                                    checkTranslationComplete(pendingTranslations, translations)
-                                                }
-                                        }
-                                        .addOnFailureListener {
-                                            pendingTranslations--
-                                            checkTranslationComplete(pendingTranslations, translations)
-                                        }
-                                } catch (e: Exception) {
-                                    Log.e("Translator", "Translation initialization failed for \$bcp47Code", e)
+                                            }
+                                            .addOnFailureListener {
+                                                pendingTranslations--
+                                                checkTranslationComplete(pendingTranslations, translations)
+                                            }
+                                    } catch (e: Exception) {
+                                        Log.e("Translator", "Translation initialization failed for $bcp47Code", e)
+                                        pendingTranslations--
+                                        checkTranslationComplete(pendingTranslations, translations)
+                                    }
+                                } else {
                                     pendingTranslations--
                                     checkTranslationComplete(pendingTranslations, translations)
                                 }
-                            } else {
+                            }
+                            .addOnFailureListener {
                                 pendingTranslations--
                                 checkTranslationComplete(pendingTranslations, translations)
                             }
-                        }
-                        .addOnFailureListener {
-                            pendingTranslations--
-                            checkTranslationComplete(pendingTranslations, translations)
-                        }
+                    }
                 }
-            }
-            .addOnFailureListener {
-                Log.e("Translator", "OCR Failed", it)
-                isProcessing = false
-            }
+                .addOnFailureListener {
+                    Log.e("Translator", "OCR Failed", it)
+                    isProcessing = false
+                }
         } catch (e: Exception) {
-            Log.e("Translator", "Error processing image: \${e.message}", e)
+            Log.e("Translator", "Error processing image: ${e.message}", e)
             isProcessing = false
         } finally {
             image.close()
@@ -292,6 +323,10 @@ class ScreenCaptureService : Service() {
     private fun checkTranslationComplete(pending: Int, translations: List<Pair<Rect?, String>>) {
         if (pending <= 0) {
             handler.post {
+                if (isDestroyed || !isRunning) {
+                    isProcessing = false
+                    return@post
+                }
                 overlayManager.updateOverlays(translations)
                 // Add a delay before taking the next frame to save battery
                 handler.postDelayed({ isProcessing = false }, 1000) 
@@ -301,7 +336,11 @@ class ScreenCaptureService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        isDestroyed = true
         isRunning = false
+        isProcessing = false
+        handler.removeCallbacksAndMessages(null)
+        imageReader?.setOnImageAvailableListener(null, null)
         virtualDisplay?.release()
         virtualDisplay = null
         imageReader?.close()
@@ -311,9 +350,23 @@ class ScreenCaptureService : Service() {
         overlayManager.removeAllOverlays()
         
         // Clean up ML Kit resources to prevent memory leaks
-        translators.values.forEach { it.close() }
+        translators.values.forEach { 
+            try {
+                it.close()
+            } catch (e: Exception) {
+                Log.w("Translator", "Error closing translator", e)
+            }
+        }
         translators.clear()
-        textRecognizer.close()
-        languageIdentifier.close()
+        try {
+            textRecognizer.close()
+        } catch (e: Exception) {
+            Log.w("Translator", "Error closing textRecognizer", e)
+        }
+        try {
+            languageIdentifier.close()
+        } catch (e: Exception) {
+            Log.w("Translator", "Error closing languageIdentifier", e)
+        }
     }
 }
