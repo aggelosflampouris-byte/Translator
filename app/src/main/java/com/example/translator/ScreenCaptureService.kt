@@ -255,10 +255,18 @@ class ScreenCaptureService : Service() {
                     val configuredSource = prefs.getString("source_language", sourceLanguage) ?: sourceLanguage
                     val configuredTarget = prefs.getString("target_language", targetLanguage) ?: targetLanguage
 
+                    val density = resources.displayMetrics.density
+                    val topInset = (48 * density).toInt()
+                    val bottomInset = (40 * density).toInt()
+
                     val validBlocks = visionText.textBlocks.filter { block ->
                         val rect = block.boundingBox
                         val text = block.text
-                        rect != null && shouldTranslate(text) && !overlayRects.any { Rect.intersects(rect, it) }
+                        rect != null &&
+                            rect.top >= topInset &&
+                            rect.bottom <= (cropHeight - bottomInset) &&
+                            TranslationFilter.shouldTranslate(text, configuredTarget) &&
+                            !overlayRects.any { Rect.intersects(rect, it) }
                     }
 
                     if (validBlocks.isEmpty()) {
@@ -271,48 +279,65 @@ class ScreenCaptureService : Service() {
                     var pendingTranslations = validBlocks.size
 
                     for (block in validBlocks) {
-                        val text = block.text
+                        val rawText = block.text
+                        val cleanText = TranslationFilter.cleanMessageText(rawText)
                         val rect = block.boundingBox
+
+                        if (cleanText.isBlank() || !TranslationFilter.shouldTranslate(cleanText, configuredTarget)) {
+                            pendingTranslations--
+                            checkTranslationComplete(pendingTranslations, translations)
+                            continue
+                        }
 
                         if (configuredSource != "AUTO") {
                             // User selected explicit source language (e.g. RO or EN)
-                            languageIdentifier.identifyLanguage(text)
-                                .addOnSuccessListener { detected ->
+                            languageIdentifier.identifyPossibleLanguages(cleanText)
+                                .addOnSuccessListener { possibleLanguages ->
                                     if (isDestroyed || !isRunning) {
                                         pendingTranslations--
                                         checkTranslationComplete(pendingTranslations, translations)
                                         return@addOnSuccessListener
                                     }
-                                    val detectedBcp = TranslateLanguage.fromLanguageTag(detected)
-                                    if (detectedBcp == configuredTarget) {
-                                        // Already in target language, skip
-                                        pendingTranslations--
-                                        checkTranslationComplete(pendingTranslations, translations)
-                                        return@addOnSuccessListener
-                                    }
-                                    translateBlock(configuredSource, configuredTarget, text, rect, translations) {
+
+                                    val isTarget = TranslationFilter.isTargetLanguage(cleanText, configuredTarget, possibleLanguages)
+                                    val isSource = !isTarget && TranslationFilter.isMatchingSourceLanguage(cleanText, configuredSource, possibleLanguages)
+
+                                    if (isSource) {
+                                        translateBlock(configuredSource, configuredTarget, cleanText, rect, translations) {
+                                            pendingTranslations--
+                                            checkTranslationComplete(pendingTranslations, translations)
+                                        }
+                                    } else {
                                         pendingTranslations--
                                         checkTranslationComplete(pendingTranslations, translations)
                                     }
                                 }
                                 .addOnFailureListener {
-                                    translateBlock(configuredSource, configuredTarget, text, rect, translations) {
-                                        pendingTranslations--
-                                        checkTranslationComplete(pendingTranslations, translations)
-                                    }
+                                    pendingTranslations--
+                                    checkTranslationComplete(pendingTranslations, translations)
                                 }
                         } else {
                             // Auto-detect language
-                            languageIdentifier.identifyLanguage(text)
-                                .addOnSuccessListener { languageCode ->
+                            languageIdentifier.identifyPossibleLanguages(cleanText)
+                                .addOnSuccessListener { possibleLanguages ->
                                     if (isDestroyed || !isRunning) {
                                         pendingTranslations--
                                         checkTranslationComplete(pendingTranslations, translations)
                                         return@addOnSuccessListener
                                     }
-                                    val bcp47Code = TranslateLanguage.fromLanguageTag(languageCode)
-                                    if (bcp47Code != null && bcp47Code != configuredTarget && languageCode != "und") {
-                                        translateBlock(bcp47Code, configuredTarget, text, rect, translations) {
+
+                                    val isTarget = TranslationFilter.isTargetLanguage(cleanText, configuredTarget, possibleLanguages)
+                                    if (isTarget) {
+                                        pendingTranslations--
+                                        checkTranslationComplete(pendingTranslations, translations)
+                                        return@addOnSuccessListener
+                                    }
+
+                                    val bestCandidate = possibleLanguages.firstOrNull { it.languageTag != "und" && it.confidence >= 0.25f }
+                                    val bcp47Code = bestCandidate?.let { TranslateLanguage.fromLanguageTag(it.languageTag) }
+
+                                    if (bcp47Code != null && bcp47Code != configuredTarget) {
+                                        translateBlock(bcp47Code, configuredTarget, cleanText, rect, translations) {
                                             pendingTranslations--
                                             checkTranslationComplete(pendingTranslations, translations)
                                         }
@@ -379,32 +404,6 @@ class ScreenCaptureService : Service() {
             Log.e("Translator", "Translator initialization failed for $sourceLang->$targetLang", e)
             onComplete()
         }
-    }
-
-    private fun shouldTranslate(text: String): Boolean {
-        val trimmed = text.trim()
-        if (trimmed.length < 2) return false
-
-        // Filter out URLs
-        if (trimmed.startsWith("http://", ignoreCase = true) ||
-            trimmed.startsWith("https://", ignoreCase = true) ||
-            trimmed.startsWith("www.", ignoreCase = true) ||
-            trimmed.contains("bit.ly/", ignoreCase = true) ||
-            trimmed.contains("facebook.com/share", ignoreCase = true)) {
-            return false
-        }
-
-        // Filter out pure timestamps e.g. "5:16 μ.μ.", "12:55", "3:23 pm", "7:17"
-        if (trimmed.matches(Regex("""^\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?$""", RegexOption.IGNORE_CASE))) {
-            return false
-        }
-
-        // Must contain at least one letter
-        if (!trimmed.any { it.isLetter() }) {
-            return false
-        }
-
-        return true
     }
 
     private fun checkTranslationComplete(pending: Int, translations: List<Pair<Rect?, String>>) {
