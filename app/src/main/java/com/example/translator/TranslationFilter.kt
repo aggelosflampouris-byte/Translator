@@ -98,20 +98,30 @@ object TranslationFilter {
         return false
     }
 
+    private val COMMON_ROMANIAN_WORDS = setOf(
+        "la", "multi", "ani", "un", "an", "nou", "fericit", "si",
+        "ce", "faci", "buna", "salut", "unde", "esti", "cum", "bine",
+        "da", "nu", "multumesc", "mersi", "te", "iubesc", "prieten",
+        "noapte", "ziua", "seara", "drag", "draga", "acum", "maine", "azi"
+    )
+
     /**
      * Validates that text matches the explicitly configured source language.
      * Prevents random UI strings, other languages, or low-confidence garbage from being translated.
      */
     fun isMatchingSourceLanguage(text: String, sourceLang: String, candidates: List<IdentifiedLanguage>): Boolean {
-        // Romanian specific check: diacritics ă, â, î, ș, ț
+        // Romanian specific check: diacritics or common vocabulary
         if (sourceLang == TranslateLanguage.ROMANIAN) {
             val hasRomanianDiacritics = text.any { it in "ăâîșțĂÂÎȘȚ" }
             if (hasRomanianDiacritics) return true
+
+            val words = text.lowercase().split(Regex("""[^a-zăâîșț]+""")).filter { it.isNotBlank() }
+            if (words.any { COMMON_ROMANIAN_WORDS.contains(it) }) return true
         }
 
         // Check candidate languages from ML Kit
         val match = candidates.firstOrNull { it.languageTag == sourceLang }
-        if (match != null && match.confidence >= 0.18f) {
+        if (match != null && match.confidence >= 0.15f) {
             val higherConf = candidates.firstOrNull { it.languageTag != sourceLang && it.confidence > (match.confidence * 2.0f) }
             return higherConf == null
         }

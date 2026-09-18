@@ -66,17 +66,22 @@ class TranslationAccessibilityService : AccessibilityService() {
         Log.d("Translator", "TranslationAccessibilityService connected")
     }
 
+    private fun isWhatsAppPackage(pkg: String?): Boolean {
+        return pkg != null && (pkg == "com.whatsapp" || pkg == "com.whatsapp.w4b" || pkg.startsWith("com.whatsapp"))
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         if (!FloatingBubbleService.isTranslatingActive) return
 
         val packageName = event.packageName?.toString() ?: ""
-        if (packageName != "com.whatsapp") return
+        if (!isWhatsAppPackage(packageName)) return
 
         when (event.eventType) {
             AccessibilityEvent.TYPE_VIEW_SCROLLED,
-            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
-                // Debounce full window scans to prevent frame drops during rapid scrolling
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
+                // Debounce full window scans to prevent frame drops during rapid scrolling/updates
                 scanJob?.cancel()
                 scanJob = serviceScope.launch {
                     delay(120)
@@ -92,14 +97,42 @@ class TranslationAccessibilityService : AccessibilityService() {
     private fun requestScan() {
         scanJob?.cancel()
         scanJob = serviceScope.launch {
-            delay(100)
+            // Immediate attempt
+            delay(50)
+            scanAndTranslateVisibleMessages()
+            // Follow-up attempt after window focus settles
+            delay(200)
             scanAndTranslateVisibleMessages()
         }
     }
 
+    private fun findWhatsAppRootNode(): AccessibilityNodeInfo? {
+        // 1. Search through all interactive windows (works even if floating overlay has focus)
+        try {
+            val windowList = windows
+            for (window in windowList) {
+                val root = window.root ?: continue
+                val pkg = root.packageName?.toString() ?: ""
+                if (isWhatsAppPackage(pkg)) {
+                    return root
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("Translator", "Error querying windows in accessibility service", e)
+        }
+
+        // 2. Fallback to rootInActiveWindow
+        val active = rootInActiveWindow
+        if (active != null && isWhatsAppPackage(active.packageName?.toString())) {
+            return active
+        }
+
+        return active
+    }
+
     private fun scanAndTranslateVisibleMessages() {
         if (!FloatingBubbleService.isTranslatingActive) return
-        val rootNode = rootInActiveWindow ?: return
+        val rootNode = findWhatsAppRootNode() ?: return
 
         val prefs = getSharedPreferences("translator_prefs", Context.MODE_PRIVATE)
         val configuredSource = prefs.getString("source_language", "AUTO") ?: "AUTO"
@@ -222,11 +255,11 @@ class TranslationAccessibilityService : AccessibilityService() {
             return
         }
 
-        val text = node.text?.toString()
-        if (!text.isNullOrBlank() && node.className == "android.widget.TextView") {
+        val text = node.text?.toString() ?: node.contentDescription?.toString()
+        if (!text.isNullOrBlank()) {
             val rect = Rect()
             node.getBoundsInScreen(rect)
-            if (rect.top >= minY && rect.bottom <= maxY && TranslationFilter.shouldTranslate(text, configuredTarget)) {
+            if (rect.width() > 10 && rect.height() > 10 && rect.top >= minY && rect.bottom <= maxY && TranslationFilter.shouldTranslate(text, configuredTarget)) {
                 outList.add(Pair(node, rect))
             }
         }

@@ -99,4 +99,21 @@ class TranslationFilterTest {
         )
         assertTrue(result)
     }
+
+    @Test
+    fun isMatchingSourceLanguage_matchesRomanianWithoutDiacriticsWhenCommonWordsPresent() {
+        val result = TranslationFilter.isMatchingSourceLanguage(
+            "La multi ani si un An Nou fericit, Angelos",
+            TranslateLanguage.ROMANIAN,
+            emptyList()
+        )
+        assertTrue(result)
+
+        val result2 = TranslationFilter.isMatchingSourceLanguage(
+            "Ce faci prietene?",
+            TranslateLanguage.ROMANIAN,
+            emptyList()
+        )
+        assertTrue(result2)
+    }
 }

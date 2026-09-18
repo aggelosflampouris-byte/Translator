@@ -138,14 +138,24 @@ class FloatingBubbleService : Service() {
     }
 
     private fun toggleTranslationState() {
-        isTranslatingActive = !isTranslatingActive
         val root = sphereView?.findViewById<FrameLayout>(R.id.sphere_root)
 
-        if (isTranslatingActive) {
+        if (!isTranslatingActive) {
+            // Verify accessibility service instance is connected
+            if (!TranslationAccessibilityService.isSharedInstanceActive) {
+                Toast.makeText(this, "⚠️ Accessibility Service is OFF. Please toggle it ON in Settings!", Toast.LENGTH_LONG).show()
+                val intent = Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                startActivity(intent)
+                return
+            }
+            isTranslatingActive = true
             root?.setBackgroundResource(R.drawable.bg_floating_sphere_active)
             Toast.makeText(this, "Translation Active (Scanning WhatsApp)", Toast.LENGTH_SHORT).show()
             TranslationAccessibilityService.onTranslationStateChanged(true)
         } else {
+            isTranslatingActive = false
             root?.setBackgroundResource(R.drawable.bg_floating_sphere_idle)
             Toast.makeText(this, "Translation Paused (Idle)", Toast.LENGTH_SHORT).show()
             TranslationAccessibilityService.onTranslationStateChanged(false)
