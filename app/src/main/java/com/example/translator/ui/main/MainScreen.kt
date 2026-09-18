@@ -1,55 +1,95 @@
 package com.example.translator.ui.main
 
-import androidx.compose.foundation.layout.Column
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
+import android.app.Activity
+import android.content.Context
+import android.content.Intent
+import android.media.projection.MediaProjectionManager
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.navigation3.runtime.NavKey
-import com.example.translator.data.DefaultDataRepository
-import com.example.translator.theme.TranslatorTheme
+import com.example.translator.ScreenCaptureService
 
 @Composable
 fun MainScreen(
   onItemClick: (NavKey) -> Unit,
-  modifier: Modifier = Modifier,
-  viewModel: MainScreenViewModel = viewModel { MainScreenViewModel(DefaultDataRepository()) },
+  modifier: Modifier = Modifier
 ) {
-  val state by viewModel.uiState.collectAsStateWithLifecycle()
-  when (state) {
-    MainScreenUiState.Loading -> {
-      // Blank
-    }
-    is MainScreenUiState.Success -> {
-      MainScreen(data = (state as MainScreenUiState.Success).data, modifier = modifier)
-    }
-    is MainScreenUiState.Error -> {
-      Text("Error loading data: ${(state as MainScreenUiState.Error).throwable.message}")
+  val context = LocalContext.current
+  var canDrawOverlays by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
+
+  // Launcher for MediaProjection
+  val mediaProjectionLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.StartActivityForResult()
+  ) { result ->
+    if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+      val serviceIntent = Intent(context, ScreenCaptureService::class.java).apply {
+        putExtra("resultCode", result.resultCode)
+        putExtra("data", result.data)
+      }
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        context.startForegroundService(serviceIntent)
+      } else {
+        context.startService(serviceIntent)
+      }
     }
   }
-}
 
-@Composable
-internal fun MainScreen(data: List<String>, modifier: Modifier = Modifier) {
-  Column(modifier) { data.forEach { Greeting(it) } }
-}
+  Column(
+    modifier = modifier.fillMaxSize().padding(16.dp),
+    horizontalAlignment = Alignment.CenterHorizontally,
+    verticalArrangement = Arrangement.Center
+  ) {
+    Text("Translator Control Panel", style = MaterialTheme.typography.headlineMedium)
+    Spacer(modifier = Modifier.height(32.dp))
 
-@Composable
-fun Greeting(name: String, modifier: Modifier = Modifier) {
-  Text(text = "Hello $name!", modifier = modifier)
-}
+    if (!canDrawOverlays) {
+      Button(onClick = {
+        val intent = Intent(
+          Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+          Uri.parse("package:${context.packageName}")
+        )
+        context.startActivity(intent)
+      }) {
+        Text("Grant Overlay Permission")
+      }
+      Spacer(modifier = Modifier.height(16.dp))
+    }
 
-@Preview(showBackground = true)
-@Composable
-fun MainScreenPreview() {
-  TranslatorTheme { MainScreen(listOf("Android")) }
-}
+    Button(onClick = {
+      val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+      context.startActivity(intent)
+    }) {
+      Text("Enable Accessibility Service")
+    }
+    Spacer(modifier = Modifier.height(16.dp))
 
-@Preview(showBackground = true, widthDp = 340)
-@Composable
-fun MainScreenPortraitPreview() {
-  TranslatorTheme { MainScreen(listOf("Android")) }
+    Button(
+      onClick = {
+        val mediaProjectionManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        mediaProjectionLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
+      },
+      enabled = canDrawOverlays
+    ) {
+      Text("Start Translating")
+    }
+    
+    Button(
+      onClick = {
+         context.stopService(Intent(context, ScreenCaptureService::class.java))
+      },
+      modifier = Modifier.padding(top = 16.dp)
+    ) {
+      Text("Stop Translating")
+    }
+  }
 }
