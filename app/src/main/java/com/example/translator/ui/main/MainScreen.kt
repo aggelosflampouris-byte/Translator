@@ -36,7 +36,7 @@ fun MainScreen(
   var isAccessibilityEnabled by remember { mutableStateOf(checkAccessibilityEnabled(context)) }
   var showPermissionDialog by remember { mutableStateOf(false) }
 
-  // Check permissions on launch and resume
+  // Check permissions on launch, resume, and continuously poll to fix Android's async service binding race condition
   DisposableEffect(lifecycleOwner) {
       val observer = LifecycleEventObserver { _, event ->
           if (event == Lifecycle.Event.ON_RESUME) {
@@ -52,6 +52,28 @@ fun MainScreen(
       lifecycleOwner.lifecycle.addObserver(observer)
       onDispose {
           lifecycleOwner.lifecycle.removeObserver(observer)
+      }
+  }
+
+  LaunchedEffect(Unit) {
+      while(true) {
+          if (!isAccessibilityEnabled) {
+              if (checkAccessibilityEnabled(context)) {
+                  isAccessibilityEnabled = true
+                  if (canDrawOverlays) {
+                      showPermissionDialog = false
+                  }
+              }
+          }
+          if (!canDrawOverlays) {
+              if (Settings.canDrawOverlays(context)) {
+                  canDrawOverlays = true
+                  if (isAccessibilityEnabled) {
+                      showPermissionDialog = false
+                  }
+              }
+          }
+          kotlinx.coroutines.delay(500)
       }
   }
 
@@ -183,7 +205,7 @@ fun checkAccessibilityEnabled(context: Context): Boolean {
         splitter.setString(settingValue)
         while (splitter.hasNext()) {
             val accessibilityService = splitter.next()
-            if (accessibilityService.equals(expectedString, ignoreCase = true)) {
+            if (accessibilityService.contains(context.packageName, ignoreCase = true)) {
                 return true
             }
         }
