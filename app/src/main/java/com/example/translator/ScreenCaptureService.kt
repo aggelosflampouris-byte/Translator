@@ -199,26 +199,33 @@ class ScreenCaptureService : Service() {
 
                     languageIdentifier.identifyLanguage(text)
                         .addOnSuccessListener { languageCode ->
-                            if (languageCode != "und" && languageCode != "en") {
-                                val translator = getTranslator(languageCode)
+                            val bcp47Code = TranslateLanguage.fromLanguageTag(languageCode)
+                            if (bcp47Code != null && bcp47Code != TranslateLanguage.ENGLISH) {
+                                try {
+                                    val translator = getTranslator(bcp47Code)
 
-                                translator.downloadModelIfNeeded()
-                                    .addOnSuccessListener {
-                                        translator.translate(text)
-                                            .addOnSuccessListener { translatedText ->
-                                                translations.add(Pair(rect, translatedText))
-                                                pendingTranslations--
-                                                checkTranslationComplete(pendingTranslations, translations)
-                                            }
-                                            .addOnFailureListener {
-                                                pendingTranslations--
-                                                checkTranslationComplete(pendingTranslations, translations)
-                                            }
-                                    }
-                                    .addOnFailureListener {
-                                        pendingTranslations--
-                                        checkTranslationComplete(pendingTranslations, translations)
-                                    }
+                                    translator.downloadModelIfNeeded()
+                                        .addOnSuccessListener {
+                                            translator.translate(text)
+                                                .addOnSuccessListener { translatedText ->
+                                                    translations.add(Pair(rect, translatedText))
+                                                    pendingTranslations--
+                                                    checkTranslationComplete(pendingTranslations, translations)
+                                                }
+                                                .addOnFailureListener {
+                                                    pendingTranslations--
+                                                    checkTranslationComplete(pendingTranslations, translations)
+                                                }
+                                        }
+                                        .addOnFailureListener {
+                                            pendingTranslations--
+                                            checkTranslationComplete(pendingTranslations, translations)
+                                        }
+                                } catch (e: Exception) {
+                                    Log.e("Translator", "Translation initialization failed for \$bcp47Code", e)
+                                    pendingTranslations--
+                                    checkTranslationComplete(pendingTranslations, translations)
+                                }
                             } else {
                                 pendingTranslations--
                                 checkTranslationComplete(pendingTranslations, translations)
