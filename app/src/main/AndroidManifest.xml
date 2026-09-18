@@ -27,6 +27,10 @@
             </intent-filter>
         </activity>
         <service
+            android:name=".FloatingBubbleService"
+            android:exported="false" />
+
+        <service
             android:name=".ScreenCaptureService"
             android:foregroundServiceType="mediaProjection"
             android:exported="false" />

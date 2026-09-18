@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/sphere_root"
+    android:layout_width="54dp"
+    android:layout_height="54dp"
+    android:background="@drawable/bg_floating_sphere_idle"
+    android:elevation="8dp">
+
+    <ImageView
+        android:id="@+id/sphere_icon"
+        android:layout_width="28dp"
+        android:layout_height="28dp"
+        android:layout_gravity="center"
+        android:src="@drawable/ic_translate_sphere"
+        android:contentDescription="@string/app_name" />
+</FrameLayout>

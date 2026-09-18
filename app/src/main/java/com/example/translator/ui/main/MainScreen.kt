@@ -1,14 +1,9 @@
 package com.example.translator.ui.main
 
-import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.media.projection.MediaProjectionManager
 import android.net.Uri
-import android.os.Build
 import android.provider.Settings
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -20,6 +15,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.navigation3.runtime.NavKey
+import com.example.translator.FloatingBubbleService
 import com.example.translator.ScreenCaptureService
 import com.example.translator.TranslationAccessibilityService
 import kotlinx.coroutines.delay
@@ -111,24 +107,7 @@ fun MainScreen(
       }
   }
 
-  // Launcher for MediaProjection screen capture consent
-  val mediaProjectionLauncher = rememberLauncherForActivityResult(
-    contract = ActivityResultContracts.StartActivityForResult()
-  ) { result ->
-    if (result.resultCode == Activity.RESULT_OK && result.data != null) {
-      val serviceIntent = Intent(context, ScreenCaptureService::class.java).apply {
-        putExtra("resultCode", result.resultCode)
-        putExtra("data", result.data)
-        putExtra("sourceLanguage", sourceLanguage)
-        putExtra("targetLanguage", targetLanguage)
-      }
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        context.startForegroundService(serviceIntent)
-      } else {
-        context.startService(serviceIntent)
-      }
-    }
-  }
+
 
   Scaffold(
     snackbarHost = { SnackbarHost(snackbarHostState) }
@@ -216,19 +195,17 @@ fun MainScreen(
         modifier = Modifier.fillMaxWidth(),
         enabled = allPermissionsGranted,
         onClick = {
-            val mediaProjectionManager =
-                context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            val captureIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                val config = android.media.projection.MediaProjectionConfig.createConfigForDefaultDisplay()
-                mediaProjectionManager.createScreenCaptureIntent(config)
-            } else {
-                mediaProjectionManager.createScreenCaptureIntent()
-            }
-            mediaProjectionLauncher.launch(captureIntent)
+            val intent = Intent(context, FloatingBubbleService::class.java)
+            context.startService(intent)
+            android.widget.Toast.makeText(
+                context,
+                "Floating menu opened. Switch to WhatsApp!",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
         }
       ) {
         Text(
-            if (allPermissionsGranted) "Start Translating"
+            if (allPermissionsGranted) "Start Floating Translator"
             else "Grant permissions above to start"
         )
       }
@@ -237,9 +214,12 @@ fun MainScreen(
 
       OutlinedButton(
         modifier = Modifier.fillMaxWidth(),
-        onClick = { context.stopService(Intent(context, ScreenCaptureService::class.java)) }
+        onClick = {
+            context.stopService(Intent(context, FloatingBubbleService::class.java))
+            context.stopService(Intent(context, ScreenCaptureService::class.java))
+        }
       ) {
-        Text("Stop Translating")
+        Text("Stop Translator")
       }
     }
   }

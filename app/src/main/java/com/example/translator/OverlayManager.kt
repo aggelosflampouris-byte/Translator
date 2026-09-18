@@ -158,6 +158,118 @@ class OverlayManager(private val context: Context) {
         return Pair(params, overlayBounds)
     }
 
+    private var draftOverlayView: View? = null
+    private var currentDraftText: String? = null
+
+    fun updateDraftOverlay(inputRect: Rect, text: String, onInsertClicked: () -> Unit) {
+        if (text.isBlank()) {
+            removeDraftOverlay()
+            return
+        }
+
+        val metrics = context.resources.displayMetrics
+        val screenWidth = metrics.widthPixels
+        val density = metrics.density
+
+        val maxBubbleWidth = (screenWidth * 0.90f).toInt()
+        val minBubbleWidth = (120 * density).toInt()
+
+        if (draftOverlayView == null) {
+            val view = inflater.inflate(R.layout.draft_preview_overlay, null)
+            val textView = view.findViewById<TextView>(R.id.draft_text)
+            textView.text = text
+            textView.maxWidth = maxBubbleWidth
+
+            view.findViewById<View>(R.id.draft_container).setOnClickListener {
+                onInsertClicked()
+            }
+
+            view.measure(
+                View.MeasureSpec.makeMeasureSpec(maxBubbleWidth, View.MeasureSpec.AT_MOST),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+            )
+
+            val bubbleWidth = view.measuredWidth.coerceIn(minBubbleWidth, maxBubbleWidth)
+            val bubbleHeight = view.measuredHeight.coerceAtLeast((40 * density).toInt())
+
+            val spacing = (8 * density).toInt()
+            val posX = (16 * density).toInt()
+            val posY = (inputRect.top - bubbleHeight - spacing).coerceAtLeast((48 * density).toInt())
+
+            val params = WindowManager.LayoutParams(
+                bubbleWidth,
+                bubbleHeight,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                x = posX
+                y = posY
+            }
+
+            try {
+                windowManager.addView(view, params)
+                draftOverlayView = view
+                currentDraftText = text
+            } catch (e: Exception) {
+                // Ignore WindowManager errors
+            }
+        } else {
+            val view = draftOverlayView ?: return
+            val textView = view.findViewById<TextView>(R.id.draft_text)
+            textView.text = text
+            textView.maxWidth = maxBubbleWidth
+
+            view.findViewById<View>(R.id.draft_container).setOnClickListener {
+                onInsertClicked()
+            }
+
+            view.measure(
+                View.MeasureSpec.makeMeasureSpec(maxBubbleWidth, View.MeasureSpec.AT_MOST),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+            )
+
+            val bubbleWidth = view.measuredWidth.coerceIn(minBubbleWidth, maxBubbleWidth)
+            val bubbleHeight = view.measuredHeight.coerceAtLeast((40 * density).toInt())
+
+            val spacing = (8 * density).toInt()
+            val posX = (16 * density).toInt()
+            val posY = (inputRect.top - bubbleHeight - spacing).coerceAtLeast((48 * density).toInt())
+
+            val params = WindowManager.LayoutParams(
+                bubbleWidth,
+                bubbleHeight,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                x = posX
+                y = posY
+            }
+
+            try {
+                windowManager.updateViewLayout(view, params)
+                currentDraftText = text
+            } catch (e: Exception) {
+                // Ignore WindowManager errors
+            }
+        }
+    }
+
+    fun removeDraftOverlay() {
+        draftOverlayView?.let {
+            try {
+                windowManager.removeView(it)
+            } catch (e: Exception) {
+                // Ignore
+            }
+            draftOverlayView = null
+            currentDraftText = null
+        }
+    }
+
     fun removeAllOverlays() {
         for (bubble in activeBubbles.values) {
             try {
@@ -167,5 +279,6 @@ class OverlayManager(private val context: Context) {
             }
         }
         activeBubbles.clear()
+        removeDraftOverlay()
     }
 }
