@@ -7,6 +7,9 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.hardware.display.DisplayManager
@@ -218,6 +221,24 @@ class ScreenCaptureService : Service() {
                 bitmap.recycle() // Only recycle if createBitmap actually created a new copy
             }
             
+            val overlayRects = overlayManager.getActiveOverlayRects()
+            if (overlayRects.isNotEmpty()) {
+                val canvas = Canvas(croppedBitmap)
+                val paint = Paint().apply {
+                    color = Color.BLACK
+                    style = Paint.Style.FILL
+                }
+                for (overlayRect in overlayRects) {
+                    val expanded = Rect(
+                        (overlayRect.left - 4).coerceAtLeast(0),
+                        (overlayRect.top - 4).coerceAtLeast(0),
+                        (overlayRect.right + 4).coerceAtMost(croppedBitmap.width),
+                        (overlayRect.bottom + 4).coerceAtMost(croppedBitmap.height)
+                    )
+                    canvas.drawRect(expanded, paint)
+                }
+            }
+
             val inputImage = InputImage.fromBitmap(croppedBitmap, 0)
 
             textRecognizer.process(inputImage)
@@ -229,83 +250,82 @@ class ScreenCaptureService : Service() {
                         isProcessing = false
                         return@addOnSuccessListener
                     }
-                    val textBlocks = visionText.textBlocks
-                    if (textBlocks.isEmpty()) {
+
+                    val prefs = getSharedPreferences("translator_prefs", Context.MODE_PRIVATE)
+                    val configuredSource = prefs.getString("source_language", sourceLanguage) ?: sourceLanguage
+                    val configuredTarget = prefs.getString("target_language", targetLanguage) ?: targetLanguage
+
+                    val validBlocks = visionText.textBlocks.filter { block ->
+                        val rect = block.boundingBox
+                        val text = block.text
+                        rect != null && shouldTranslate(text) && !overlayRects.any { Rect.intersects(rect, it) }
+                    }
+
+                    if (validBlocks.isEmpty()) {
                         overlayManager.removeAllOverlays()
                         isProcessing = false
                         return@addOnSuccessListener
                     }
 
                     val translations = mutableListOf<Pair<Rect?, String>>()
-                    var pendingTranslations = textBlocks.size
+                    var pendingTranslations = validBlocks.size
 
-                    for (block in textBlocks) {
+                    for (block in validBlocks) {
                         val text = block.text
                         val rect = block.boundingBox
 
-                        languageIdentifier.identifyLanguage(text)
-                            .addOnSuccessListener { languageCode ->
-                                if (isDestroyed || !isRunning) {
-                                    pendingTranslations--
-                                    checkTranslationComplete(pendingTranslations, translations)
-                                    return@addOnSuccessListener
-                                }
-                                val bcp47Code = TranslateLanguage.fromLanguageTag(languageCode)
-                                
-                                val isTargetLanguage = bcp47Code == targetLanguage
-                                val isSourceLanguageMatch = sourceLanguage == "AUTO" || bcp47Code == sourceLanguage
-                                
-                                if (bcp47Code != null && !isTargetLanguage && isSourceLanguageMatch) {
-                                    try {
-                                        val translator = getTranslator(bcp47Code, targetLanguage)
-
-                                        translator.downloadModelIfNeeded()
-                                            .addOnSuccessListener {
-                                                if (isDestroyed || !isRunning) {
-                                                    pendingTranslations--
-                                                    checkTranslationComplete(pendingTranslations, translations)
-                                                    return@addOnSuccessListener
-                                                }
-                                                try {
-                                                    translator.translate(text)
-                                                        .addOnSuccessListener { translatedText ->
-                                                            if (isDestroyed || !isRunning) {
-                                                                pendingTranslations--
-                                                                checkTranslationComplete(pendingTranslations, translations)
-                                                                return@addOnSuccessListener
-                                                            }
-                                                            translations.add(Pair(rect, translatedText))
-                                                            pendingTranslations--
-                                                            checkTranslationComplete(pendingTranslations, translations)
-                                                        }
-                                                        .addOnFailureListener {
-                                                            pendingTranslations--
-                                                            checkTranslationComplete(pendingTranslations, translations)
-                                                        }
-                                                } catch (e: Exception) {
-                                                    Log.e("Translator", "Translation call failed", e)
-                                                    pendingTranslations--
-                                                    checkTranslationComplete(pendingTranslations, translations)
-                                                }
-                                            }
-                                            .addOnFailureListener {
-                                                pendingTranslations--
-                                                checkTranslationComplete(pendingTranslations, translations)
-                                            }
-                                    } catch (e: Exception) {
-                                        Log.e("Translator", "Translation initialization failed for $bcp47Code", e)
+                        if (configuredSource != "AUTO") {
+                            // User selected explicit source language (e.g. RO or EN)
+                            languageIdentifier.identifyLanguage(text)
+                                .addOnSuccessListener { detected ->
+                                    if (isDestroyed || !isRunning) {
+                                        pendingTranslations--
+                                        checkTranslationComplete(pendingTranslations, translations)
+                                        return@addOnSuccessListener
+                                    }
+                                    val detectedBcp = TranslateLanguage.fromLanguageTag(detected)
+                                    if (detectedBcp == configuredTarget) {
+                                        // Already in target language, skip
+                                        pendingTranslations--
+                                        checkTranslationComplete(pendingTranslations, translations)
+                                        return@addOnSuccessListener
+                                    }
+                                    translateBlock(configuredSource, configuredTarget, text, rect, translations) {
                                         pendingTranslations--
                                         checkTranslationComplete(pendingTranslations, translations)
                                     }
-                                } else {
+                                }
+                                .addOnFailureListener {
+                                    translateBlock(configuredSource, configuredTarget, text, rect, translations) {
+                                        pendingTranslations--
+                                        checkTranslationComplete(pendingTranslations, translations)
+                                    }
+                                }
+                        } else {
+                            // Auto-detect language
+                            languageIdentifier.identifyLanguage(text)
+                                .addOnSuccessListener { languageCode ->
+                                    if (isDestroyed || !isRunning) {
+                                        pendingTranslations--
+                                        checkTranslationComplete(pendingTranslations, translations)
+                                        return@addOnSuccessListener
+                                    }
+                                    val bcp47Code = TranslateLanguage.fromLanguageTag(languageCode)
+                                    if (bcp47Code != null && bcp47Code != configuredTarget && languageCode != "und") {
+                                        translateBlock(bcp47Code, configuredTarget, text, rect, translations) {
+                                            pendingTranslations--
+                                            checkTranslationComplete(pendingTranslations, translations)
+                                        }
+                                    } else {
+                                        pendingTranslations--
+                                        checkTranslationComplete(pendingTranslations, translations)
+                                    }
+                                }
+                                .addOnFailureListener {
                                     pendingTranslations--
                                     checkTranslationComplete(pendingTranslations, translations)
                                 }
-                            }
-                            .addOnFailureListener {
-                                pendingTranslations--
-                                checkTranslationComplete(pendingTranslations, translations)
-                            }
+                        }
                     }
                 }
                 .addOnFailureListener {
@@ -318,6 +338,73 @@ class ScreenCaptureService : Service() {
         } finally {
             image.close()
         }
+    }
+
+    private fun translateBlock(
+        sourceLang: String,
+        targetLang: String,
+        text: String,
+        rect: Rect?,
+        translations: MutableList<Pair<Rect?, String>>,
+        onComplete: () -> Unit
+    ) {
+        try {
+            val translator = getTranslator(sourceLang, targetLang)
+            translator.downloadModelIfNeeded()
+                .addOnSuccessListener {
+                    if (isDestroyed || !isRunning) {
+                        onComplete()
+                        return@addOnSuccessListener
+                    }
+                    try {
+                        translator.translate(text)
+                            .addOnSuccessListener { translatedText ->
+                                if (!isDestroyed && isRunning && translatedText.isNotBlank()) {
+                                    translations.add(Pair(rect, translatedText))
+                                }
+                                onComplete()
+                            }
+                            .addOnFailureListener {
+                                onComplete()
+                            }
+                    } catch (e: Exception) {
+                        Log.e("Translator", "Translation call failed", e)
+                        onComplete()
+                    }
+                }
+                .addOnFailureListener {
+                    onComplete()
+                }
+        } catch (e: Exception) {
+            Log.e("Translator", "Translator initialization failed for $sourceLang->$targetLang", e)
+            onComplete()
+        }
+    }
+
+    private fun shouldTranslate(text: String): Boolean {
+        val trimmed = text.trim()
+        if (trimmed.length < 2) return false
+
+        // Filter out URLs
+        if (trimmed.startsWith("http://", ignoreCase = true) ||
+            trimmed.startsWith("https://", ignoreCase = true) ||
+            trimmed.startsWith("www.", ignoreCase = true) ||
+            trimmed.contains("bit.ly/", ignoreCase = true) ||
+            trimmed.contains("facebook.com/share", ignoreCase = true)) {
+            return false
+        }
+
+        // Filter out pure timestamps e.g. "5:16 μ.μ.", "12:55", "3:23 pm", "7:17"
+        if (trimmed.matches(Regex("""^\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?$""", RegexOption.IGNORE_CASE))) {
+            return false
+        }
+
+        // Must contain at least one letter
+        if (!trimmed.any { it.isLetter() }) {
+            return false
+        }
+
+        return true
     }
 
     private fun checkTranslationComplete(pending: Int, translations: List<Pair<Rect?, String>>) {

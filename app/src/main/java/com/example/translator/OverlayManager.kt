@@ -12,35 +12,54 @@ import android.widget.TextView
 class OverlayManager(private val context: Context) {
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val inflater = LayoutInflater.from(context)
-    
-    // Map of text hash to View to reuse bubbles
-    private val activeOverlays = mutableMapOf<String, View>()
+
+    private data class ActiveBubble(
+        val view: View,
+        var text: String,
+        var targetRect: Rect,
+        var overlayBounds: Rect
+    )
+
+    // Map of bubble ID to ActiveBubble
+    private val activeBubbles = mutableMapOf<String, ActiveBubble>()
+
+    @Synchronized
+    fun getActiveOverlayRects(): List<Rect> {
+        return activeBubbles.values.map { Rect(it.overlayBounds) }
+    }
 
     // Called on Main Thread
     fun updateOverlays(results: List<Pair<Rect?, String>>) {
-        val newHashes = mutableSetOf<String>()
+        val updatedIds = mutableSetOf<String>()
 
         for ((rect, translatedText) in results) {
             if (rect == null || translatedText.isBlank()) continue
-            
-            val hash = translatedText.hashCode().toString() + rect.flattenToString()
-            newHashes.add(hash)
 
-            if (!activeOverlays.containsKey(hash)) {
-                addBubble(rect, translatedText, hash)
+            val matchedId = findMatchingBubble(rect)
+            if (matchedId != null) {
+                // Existing bubble near this message
+                val bubble = activeBubbles[matchedId]!!
+                bubble.targetRect = rect
+                if (bubble.text != translatedText) {
+                    bubble.text = translatedText
+                    updateBubble(bubble, rect, translatedText)
+                }
+                updatedIds.add(matchedId)
             } else {
-                // If view exists, just update position in case it shifted slightly
-                updateBubblePosition(activeOverlays[hash]!!, rect)
+                // New bubble
+                val newId = System.currentTimeMillis().toString() + "_" + activeBubbles.size
+                addBubble(rect, translatedText, newId)
+                updatedIds.add(newId)
             }
         }
 
-        // Remove old overlays that are no longer on screen
-        val iterator = activeOverlays.iterator()
+        // Remove old overlays that are no longer present on screen
+        val iterator = activeBubbles.iterator()
         while (iterator.hasNext()) {
             val entry = iterator.next()
-            if (!newHashes.contains(entry.key)) {
+            if (!updatedIds.contains(entry.key)) {
                 try {
-                    windowManager.removeView(entry.value)
+                    windowManager.removeView(entry.value.view)
                 } catch (e: Exception) {
                     // Ignore if already removed
                 }
@@ -49,45 +68,104 @@ class OverlayManager(private val context: Context) {
         }
     }
 
-    private fun addBubble(rect: Rect, text: String, hash: String) {
+    private fun findMatchingBubble(targetRect: Rect): String? {
+        val density = context.resources.displayMetrics.density
+        val proximityThreshold = (40 * density).toInt()
+
+        for ((id, bubble) in activeBubbles) {
+            val dx = Math.abs(bubble.targetRect.centerX() - targetRect.centerX())
+            val dy = Math.abs(bubble.targetRect.centerY() - targetRect.centerY())
+            if (dx < proximityThreshold && dy < proximityThreshold) {
+                return id
+            }
+        }
+        return null
+    }
+
+    private fun addBubble(targetRect: Rect, text: String, id: String) {
         val view = inflater.inflate(R.layout.bubble_overlay, null)
-        view.findViewById<TextView>(R.id.translated_text).text = text
-        
-        view.alpha = 0.95f 
+        val (params, overlayBounds) = calculateBubbleLayout(targetRect, view, text)
+
+        try {
+            windowManager.addView(view, params)
+            activeBubbles[id] = ActiveBubble(view, text, targetRect, overlayBounds)
+        } catch (e: Exception) {
+            // WindowManager addView error handling
+        }
+    }
+
+    private fun updateBubble(bubble: ActiveBubble, targetRect: Rect, text: String) {
+        val (params, overlayBounds) = calculateBubbleLayout(targetRect, bubble.view, text)
+        bubble.overlayBounds = overlayBounds
+
+        try {
+            windowManager.updateViewLayout(bubble.view, params)
+        } catch (e: Exception) {
+            // WindowManager updateViewLayout error handling
+        }
+    }
+
+    private fun calculateBubbleLayout(targetRect: Rect, view: View, text: String): Pair<WindowManager.LayoutParams, Rect> {
+        val metrics = context.resources.displayMetrics
+        val screenWidth = metrics.widthPixels
+        val density = metrics.density
+
+        val maxBubbleWidth = (screenWidth * 0.85f).toInt()
+        val minBubbleWidth = (80 * density).toInt()
+
+        val textView = view.findViewById<TextView>(R.id.translated_text)
+        textView.text = text
+        textView.maxWidth = maxBubbleWidth
+
+        view.measure(
+            View.MeasureSpec.makeMeasureSpec(maxBubbleWidth, View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+        )
+
+        val bubbleWidth = view.measuredWidth.coerceIn(minBubbleWidth, maxBubbleWidth)
+        val bubbleHeight = view.measuredHeight.coerceAtLeast((32 * density).toInt())
+
+        // Vertical spacing between original message and translated bubble
+        val spacing = (6 * density).toInt()
+
+        // Position ABOVE the original message bubble
+        val safeMargin = (12 * density).toInt()
+        val maxX = (screenWidth - bubbleWidth - safeMargin).coerceAtLeast(safeMargin)
+        val posX = targetRect.left.coerceIn(safeMargin, maxX)
+        var posY = targetRect.top - bubbleHeight - spacing
+
+        // If too close to status bar (top < 48dp), position BELOW the message bubble instead
+        val topSafetyMargin = (48 * density).toInt()
+        if (posY < topSafetyMargin) {
+            posY = targetRect.bottom + spacing
+        }
 
         val params = WindowManager.LayoutParams(
-            rect.width(),
-            rect.height(),
+            bubbleWidth,
+            bubbleHeight,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_SECURE,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = rect.left
-            y = rect.top
+            x = posX
+            y = posY
         }
 
-        windowManager.addView(view, params)
-        activeOverlays[hash] = view
+        val overlayBounds = Rect(posX, posY, posX + bubbleWidth, posY + bubbleHeight)
+        return Pair(params, overlayBounds)
     }
-    
-    private fun updateBubblePosition(view: View, rect: Rect) {
-        val params = view.layoutParams as WindowManager.LayoutParams
-        params.x = rect.left
-        params.y = rect.top
-        params.width = rect.width()
-        params.height = rect.height()
-        windowManager.updateViewLayout(view, params)
-    }
-    
+
     fun removeAllOverlays() {
-        for (view in activeOverlays.values) {
+        for (bubble in activeBubbles.values) {
             try {
-                windowManager.removeView(view)
+                windowManager.removeView(bubble.view)
             } catch (e: Exception) {
                 // Ignore if already removed
             }
         }
-        activeOverlays.clear()
+        activeBubbles.clear()
     }
 }
