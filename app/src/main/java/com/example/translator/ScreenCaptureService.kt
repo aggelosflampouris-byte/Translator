@@ -175,7 +175,9 @@ class ScreenCaptureService : Service() {
             val cropHeight = height.coerceAtMost(bitmap.height)
             
             val croppedBitmap = Bitmap.createBitmap(bitmap, 0, 0, cropWidth, cropHeight)
-            bitmap.recycle() // Prevent OOM by recycling the large uncropped buffer
+            if (croppedBitmap !== bitmap) {
+                bitmap.recycle() // Only recycle if createBitmap actually created a new copy
+            }
             
             val inputImage = InputImage.fromBitmap(croppedBitmap, 0)
 
