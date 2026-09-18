@@ -137,19 +137,49 @@ class ScreenCaptureService : Service() {
     }
 
     private fun processImage(image: Image, width: Int, height: Int) {
-        val planes = image.planes
-        val buffer = planes[0].buffer
-        val pixelStride = planes[0].pixelStride
-        val rowStride = planes[0].rowStride
-        val rowPadding = rowStride - pixelStride * width
+        try {
+            val planes = image.planes
+            if (planes.isEmpty()) {
+                image.close()
+                isProcessing = false
+                return
+            }
+            val buffer = planes[0].buffer
+            val pixelStride = planes[0].pixelStride
+            val rowStride = planes[0].rowStride
+            
+            // Use actual image dimensions in case they differ from VirtualDisplay dimensions
+            val imgWidth = image.width
+            val imgHeight = image.height
+            
+            if (pixelStride == 0 || imgWidth == 0 || imgHeight == 0) {
+                image.close()
+                isProcessing = false
+                return
+            }
 
-        // Create bitmap
-        val bitmap = Bitmap.createBitmap(width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888)
-        bitmap.copyPixelsFromBuffer(buffer)
-        image.close()
+            val rowPadding = rowStride - pixelStride * imgWidth
+            val bitmapWidth = imgWidth + rowPadding / pixelStride
 
-        val croppedBitmap = Bitmap.createBitmap(bitmap, 0, 0, width, height)
-        val inputImage = InputImage.fromBitmap(croppedBitmap, 0)
+            if (bitmapWidth <= 0 || imgHeight <= 0) {
+                image.close()
+                isProcessing = false
+                return
+            }
+
+            // Create bitmap
+            val bitmap = Bitmap.createBitmap(bitmapWidth, imgHeight, Bitmap.Config.ARGB_8888)
+            bitmap.copyPixelsFromBuffer(buffer)
+            image.close()
+
+            // Ensure we don't crop outside the bitmap bounds
+            val cropWidth = width.coerceAtMost(bitmap.width)
+            val cropHeight = height.coerceAtMost(bitmap.height)
+            
+            val croppedBitmap = Bitmap.createBitmap(bitmap, 0, 0, cropWidth, cropHeight)
+            bitmap.recycle() // Prevent OOM by recycling the large uncropped buffer
+            
+            val inputImage = InputImage.fromBitmap(croppedBitmap, 0)
 
         textRecognizer.process(inputImage)
             .addOnSuccessListener { visionText ->
@@ -204,6 +234,10 @@ class ScreenCaptureService : Service() {
                 Log.e("Translator", "OCR Failed", it)
                 isProcessing = false
             }
+        } catch (e: Exception) {
+            Log.e("Translator", "Error processing image: \${e.message}", e)
+            isProcessing = false
+        }
     }
 
     private fun checkTranslationComplete(pending: Int, translations: List<Pair<Rect?, String>>) {
