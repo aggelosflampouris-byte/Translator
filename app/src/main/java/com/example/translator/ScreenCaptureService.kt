@@ -80,25 +80,36 @@ class ScreenCaptureService : Service() {
             return START_NOT_STICKY
         }
 
-        intent?.getStringExtra("sourceLanguage")?.let { sourceLanguage = it }
-        intent?.getStringExtra("targetLanguage")?.let { targetLanguage = it }
-
-        val resultCode = intent?.getIntExtra("resultCode", 0) ?: 0
-        val data = intent?.getParcelableExtra<Intent>("data")
-
-        if (resultCode != 0 && data != null) {
-            val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            mediaProjection = projectionManager.getMediaProjection(resultCode, data)
-        }
-
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
             startForeground(1, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
         } else {
             startForeground(1, notification)
         }
 
-        if (mediaProjection != null) {
-            setupVirtualDisplay()
+        intent?.getStringExtra("sourceLanguage")?.let { sourceLanguage = it }
+        intent?.getStringExtra("targetLanguage")?.let { targetLanguage = it }
+
+        val resultCode = intent?.getIntExtra("resultCode", 0) ?: 0
+        val data = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            intent?.getParcelableExtra("data", Intent::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent?.getParcelableExtra("data")
+        }
+
+        if (resultCode != 0 && data != null && mediaProjection == null) {
+            val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            val mp = projectionManager.getMediaProjection(resultCode, data)
+            if (mp != null) {
+                mediaProjection = mp
+                mp.registerCallback(object : MediaProjection.Callback() {
+                    override fun onStop() {
+                        super.onStop()
+                        stopSelf()
+                    }
+                }, handler)
+                setupVirtualDisplay()
+            }
         }
         
         return START_NOT_STICKY
@@ -106,13 +117,25 @@ class ScreenCaptureService : Service() {
 
     private fun setupVirtualDisplay() {
         val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        val metrics = DisplayMetrics()
-        windowManager.defaultDisplay.getRealMetrics(metrics)
+        val width: Int
+        val height: Int
+        val density: Int
 
-        // Use a slightly lower resolution for better performance in OCR
-        val density = metrics.densityDpi
-        val width = metrics.widthPixels
-        val height = metrics.heightPixels
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            val windowMetrics = windowManager.currentWindowMetrics
+            val bounds = windowMetrics.bounds
+            width = bounds.width()
+            height = bounds.height()
+            density = resources.configuration.densityDpi
+        } else {
+            @Suppress("DEPRECATION")
+            val metrics = DisplayMetrics()
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.getRealMetrics(metrics)
+            width = metrics.widthPixels
+            height = metrics.heightPixels
+            density = metrics.densityDpi
+        }
 
         imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
         virtualDisplay = mediaProjection?.createVirtualDisplay(
@@ -280,8 +303,11 @@ class ScreenCaptureService : Service() {
         super.onDestroy()
         isRunning = false
         virtualDisplay?.release()
+        virtualDisplay = null
         imageReader?.close()
+        imageReader = null
         mediaProjection?.stop()
+        mediaProjection = null
         overlayManager.removeAllOverlays()
         
         // Clean up ML Kit resources to prevent memory leaks

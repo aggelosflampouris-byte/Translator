@@ -10,9 +10,9 @@ android {
     defaultConfig {
         applicationId = "com.example.translator"
         minSdk = 24
-        targetSdk = 36
-        versionCode = 23
-        versionName = "1.0.23"
+        targetSdk = 33
+        versionCode = 24
+        versionName = "1.0.24"
     }
 
     buildTypes {
