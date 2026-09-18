@@ -39,7 +39,11 @@ class OverlayManager(private val context: Context) {
         while (iterator.hasNext()) {
             val entry = iterator.next()
             if (!newHashes.contains(entry.key)) {
-                windowManager.removeView(entry.value)
+                try {
+                    windowManager.removeView(entry.value)
+                } catch (e: Exception) {
+                    // Ignore if already removed
+                }
                 iterator.remove()
             }
         }
@@ -78,7 +82,11 @@ class OverlayManager(private val context: Context) {
     
     fun removeAllOverlays() {
         for (view in activeOverlays.values) {
-            windowManager.removeView(view)
+            try {
+                windowManager.removeView(view)
+            } catch (e: Exception) {
+                // Ignore if already removed
+            }
         }
         activeOverlays.clear()
     }

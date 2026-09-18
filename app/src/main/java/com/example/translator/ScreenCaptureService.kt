@@ -142,7 +142,6 @@ class ScreenCaptureService : Service() {
         try {
             val planes = image.planes
             if (planes.isEmpty()) {
-                image.close()
                 isProcessing = false
                 return
             }
@@ -155,7 +154,6 @@ class ScreenCaptureService : Service() {
             val imgHeight = image.height
             
             if (pixelStride == 0 || imgWidth == 0 || imgHeight == 0) {
-                image.close()
                 isProcessing = false
                 return
             }
@@ -164,7 +162,6 @@ class ScreenCaptureService : Service() {
             val bitmapWidth = imgWidth + rowPadding / pixelStride
 
             if (bitmapWidth <= 0 || imgHeight <= 0) {
-                image.close()
                 isProcessing = false
                 return
             }
@@ -172,7 +169,6 @@ class ScreenCaptureService : Service() {
             // Create bitmap
             val bitmap = Bitmap.createBitmap(bitmapWidth, imgHeight, Bitmap.Config.ARGB_8888)
             bitmap.copyPixelsFromBuffer(buffer)
-            image.close()
 
             // Ensure we don't crop outside the bitmap bounds
             val cropWidth = width.coerceAtMost(bitmap.width)
@@ -239,6 +235,8 @@ class ScreenCaptureService : Service() {
         } catch (e: Exception) {
             Log.e("Translator", "Error processing image: \${e.message}", e)
             isProcessing = false
+        } finally {
+            image.close()
         }
     }
 
