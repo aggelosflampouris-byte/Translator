@@ -25,6 +25,7 @@ import androidx.core.app.NotificationCompat
 import com.google.mlkit.nl.languageid.LanguageIdentification
 import com.google.mlkit.nl.translate.TranslateLanguage
 import com.google.mlkit.nl.translate.Translation
+import com.google.mlkit.nl.translate.Translator
 import com.google.mlkit.nl.translate.TranslatorOptions
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
@@ -123,6 +124,18 @@ class ScreenCaptureService : Service() {
         }, handler)
     }
 
+    private val translators = mutableMapOf<String, Translator>()
+
+    private fun getTranslator(languageCode: String): Translator {
+        return translators.getOrPut(languageCode) {
+            val options = TranslatorOptions.Builder()
+                .setSourceLanguage(languageCode)
+                .setTargetLanguage(TranslateLanguage.ENGLISH)
+                .build()
+            Translation.getClient(options)
+        }
+    }
+
     private fun processImage(image: Image, width: Int, height: Int) {
         val planes = image.planes
         val buffer = planes[0].buffer
@@ -157,11 +170,7 @@ class ScreenCaptureService : Service() {
                     languageIdentifier.identifyLanguage(text)
                         .addOnSuccessListener { languageCode ->
                             if (languageCode != "und" && languageCode != "en") {
-                                val options = TranslatorOptions.Builder()
-                                    .setSourceLanguage(languageCode)
-                                    .setTargetLanguage(TranslateLanguage.ENGLISH)
-                                    .build()
-                                val translator = Translation.getClient(options)
+                                val translator = getTranslator(languageCode)
 
                                 translator.downloadModelIfNeeded()
                                     .addOnSuccessListener {
@@ -213,5 +222,11 @@ class ScreenCaptureService : Service() {
         imageReader?.close()
         mediaProjection?.stop()
         overlayManager.removeAllOverlays()
+        
+        // Clean up ML Kit resources to prevent memory leaks
+        translators.values.forEach { it.close() }
+        translators.clear()
+        textRecognizer.close()
+        languageIdentifier.close()
     }
 }

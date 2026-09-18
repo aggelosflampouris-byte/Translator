@@ -15,13 +15,14 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
-import androidx.navigation3.runtime.NavKey
-import com.example.translator.ScreenCaptureService
-
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.navigation3.runtime.NavKey
+import com.example.translator.ScreenCaptureService
+import com.example.translator.TranslationAccessibilityService
+import kotlinx.coroutines.delay
 
 @Composable
 fun MainScreen(
@@ -30,54 +31,38 @@ fun MainScreen(
 ) {
   val context = LocalContext.current
   val lifecycleOwner = LocalLifecycleOwner.current
-  
-  // State for permissions
+  val snackbarHostState = remember { SnackbarHostState() }
+
+  // Permission state — refreshed on every resume
   var canDrawOverlays by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
   var isAccessibilityEnabled by remember { mutableStateOf(checkAccessibilityEnabled(context)) }
-  var showPermissionDialog by remember { mutableStateOf(false) }
 
-  // Check permissions on launch, resume, and continuously poll to fix Android's async service binding race condition
+  // Refresh permissions when activity resumes (user may have just returned from Settings)
   DisposableEffect(lifecycleOwner) {
       val observer = LifecycleEventObserver { _, event ->
           if (event == Lifecycle.Event.ON_RESUME) {
               canDrawOverlays = Settings.canDrawOverlays(context)
               isAccessibilityEnabled = checkAccessibilityEnabled(context)
-              if (!canDrawOverlays || !isAccessibilityEnabled) {
-                  showPermissionDialog = true
-              } else {
-                  showPermissionDialog = false
-              }
           }
       }
       lifecycleOwner.lifecycle.addObserver(observer)
-      onDispose {
-          lifecycleOwner.lifecycle.removeObserver(observer)
-      }
+      onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
   }
 
-  LaunchedEffect(Unit) {
-      while(true) {
-          if (!isAccessibilityEnabled) {
+  // Poll for accessibility service binding (async — can take a few seconds after enabling)
+  LaunchedEffect(isAccessibilityEnabled) {
+      if (!isAccessibilityEnabled) {
+          while (true) {
+              delay(500)
               if (checkAccessibilityEnabled(context)) {
                   isAccessibilityEnabled = true
-                  if (canDrawOverlays) {
-                      showPermissionDialog = false
-                  }
+                  break
               }
           }
-          if (!canDrawOverlays) {
-              if (Settings.canDrawOverlays(context)) {
-                  canDrawOverlays = true
-                  if (isAccessibilityEnabled) {
-                      showPermissionDialog = false
-                  }
-              }
-          }
-          kotlinx.coroutines.delay(500)
       }
   }
 
-  // Launcher for MediaProjection
+  // Launcher for MediaProjection screen capture consent
   val mediaProjectionLauncher = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.StartActivityForResult()
   ) { result ->
@@ -94,108 +79,131 @@ fun MainScreen(
     }
   }
 
-  if (showPermissionDialog) {
-      AlertDialog(
-          onDismissRequest = { showPermissionDialog = false },
-          title = { Text("Permissions Required") },
-          text = { Text("The Translator app requires 'Display over other apps' and 'Accessibility' permissions to function. Please grant them on the next screens.") },
-          confirmButton = {
-              TextButton(onClick = {
-                  showPermissionDialog = false
-                  if (!canDrawOverlays) {
-                      val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
-                      context.startActivity(intent)
-                  } else if (!isAccessibilityEnabled) {
-                      val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                      context.startActivity(intent)
-                  }
-              }) {
-                  Text("Grant Permissions")
+  Scaffold(
+    snackbarHost = { SnackbarHost(snackbarHostState) }
+  ) { innerPadding ->
+    Column(
+      modifier = modifier
+          .fillMaxSize()
+          .padding(innerPadding)
+          .padding(16.dp),
+      horizontalAlignment = Alignment.CenterHorizontally,
+      verticalArrangement = Arrangement.Center
+    ) {
+      Text("Translator Control Panel", style = MaterialTheme.typography.headlineMedium)
+      Spacer(modifier = Modifier.height(32.dp))
+
+      // Per-permission status rows with individual Fix buttons
+      PermissionStatusRow(label = "Display over other apps", granted = canDrawOverlays) {
+          val intent = Intent(
+              Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+              Uri.parse("package:${context.packageName}")
+          )
+          context.startActivity(intent)
+      }
+      Spacer(modifier = Modifier.height(8.dp))
+      PermissionStatusRow(label = "Accessibility service", granted = isAccessibilityEnabled) {
+          val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+          context.startActivity(intent)
+      }
+
+      // Restricted settings guidance — only shown when accessibility is not yet enabled
+      if (!isAccessibilityEnabled) {
+          Spacer(modifier = Modifier.height(16.dp))
+          Card(
+              modifier = Modifier.fillMaxWidth(),
+              colors = CardDefaults.cardColors(
+                  containerColor = MaterialTheme.colorScheme.errorContainer
+              )
+          ) {
+              Column(modifier = Modifier.padding(16.dp)) {
+                  Text(
+                      "⚠️ Android 13+ Restricted Settings",
+                      style = MaterialTheme.typography.titleSmall,
+                      color = MaterialTheme.colorScheme.onErrorContainer
+                  )
+                  Spacer(modifier = Modifier.height(4.dp))
+                  Text(
+                      "If you see 'App access denied', open App Info → tap ⋮ → " +
+                      "'Allow restricted settings', authenticate, then return here.",
+                      style = MaterialTheme.typography.bodySmall,
+                      color = MaterialTheme.colorScheme.onErrorContainer
+                  )
+                  Spacer(modifier = Modifier.height(8.dp))
+                  OutlinedButton(
+                      onClick = {
+                          val intent = Intent(
+                              Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                              Uri.parse("package:${context.packageName}")
+                          )
+                          context.startActivity(intent)
+                      }
+                  ) { Text("Open App Info") }
               }
           }
-      )
-  }
+      }
 
-  Column(
-    modifier = modifier.fillMaxSize().padding(16.dp),
-    horizontalAlignment = Alignment.CenterHorizontally,
-    verticalArrangement = Arrangement.Center
-  ) {
-    Text("Translator Control Panel", style = MaterialTheme.typography.headlineMedium)
-    Spacer(modifier = Modifier.height(32.dp))
+      Spacer(modifier = Modifier.height(32.dp))
 
-    // Restricted Settings Notice for Android 13+
-    if (!isAccessibilityEnabled) {
-        Card(
-            modifier = Modifier.padding(bottom = 16.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("⚠️ Restricted Settings (Android 13+)", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onErrorContainer)
-                Text(
-                    "You CANNOT enable Accessibility yet. You will get an 'App access denied' error. To fix this Android 13+ security lock on ANY device:\n\n" +
-                    "1. Tap 'Open App Info' below.\n" +
-                    "2. Look for 'Allow restricted settings'.\n" +
-                    "   • For most (Pixel/Samsung/Moto): Tap the 3 dots (⋮) in the top right -> 'Allow restricted settings'.\n" +
-                    "   • For Xiaomi/POCO/Redmi: Scroll to the very bottom of the page -> 'Allow restricted settings'.\n" +
-                    "3. Authenticate (fingerprint/PIN), then come back here to enable Accessibility.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onErrorContainer
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Button(
-                    onClick = {
-                        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                            data = Uri.parse("package:${context.packageName}")
-                        }
-                        context.startActivity(intent)
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.onErrorContainer, contentColor = MaterialTheme.colorScheme.errorContainer)
-                ) {
-                    Text("Open App Info")
-                }
-            }
-        }
-    }
-
-    Button(
-      onClick = {
-        if (!canDrawOverlays) {
-            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
-            context.startActivity(intent)
-        } else if (!isAccessibilityEnabled) {
-            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-            context.startActivity(intent)
-        } else {
-            val mediaProjectionManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+      // Start Translating — disabled (not hidden) until all permissions are granted.
+      // This prevents the button from silently redirecting the user to settings.
+      val allPermissionsGranted = canDrawOverlays && isAccessibilityEnabled
+      Button(
+        modifier = Modifier.fillMaxWidth(),
+        enabled = allPermissionsGranted,
+        onClick = {
+            val mediaProjectionManager =
+                context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             mediaProjectionLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
         }
+      ) {
+        Text(
+            if (allPermissionsGranted) "Start Translating"
+            else "Grant permissions above to start"
+        )
       }
-    ) {
-      Text("Start Translating")
-    }
-    
-    Button(
-      onClick = {
-         context.stopService(Intent(context, ScreenCaptureService::class.java))
-      },
-      modifier = Modifier.padding(top = 16.dp)
-    ) {
-      Text("Stop Translating")
+
+      Spacer(modifier = Modifier.height(12.dp))
+
+      OutlinedButton(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = { context.stopService(Intent(context, ScreenCaptureService::class.java)) }
+      ) {
+        Text("Stop Translating")
+      }
     }
   }
 }
 
+@Composable
+private fun PermissionStatusRow(label: String, granted: Boolean, onFix: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(if (granted) "✅" else "❌", modifier = Modifier.padding(end = 8.dp))
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+        }
+        if (!granted) {
+            TextButton(onClick = onFix) { Text("Fix") }
+        }
+    }
+}
+
 fun checkAccessibilityEnabled(context: Context): Boolean {
-    // Ultimate fallback: If the service itself says it's running, it's running!
-    if (com.example.translator.TranslationAccessibilityService.isSharedInstanceActive) {
+    // Ultimate fallback: if the live service instance is active, trust it
+    if (TranslationAccessibilityService.isSharedInstanceActive) {
         return true
     }
 
-    val expectedComponentName = android.content.ComponentName(context, com.example.translator.TranslationAccessibilityService::class.java)
-    val expectedString = expectedComponentName.flattenToString()
-    
-    // Method 1: Check Settings.Secure directly (most reliable on Xiaomi/Samsung)
+    val expectedComponentName = android.content.ComponentName(
+        context,
+        TranslationAccessibilityService::class.java
+    )
+
+    // Method 1: Read Settings.Secure directly (most reliable on OEM ROMs)
     val settingValue = Settings.Secure.getString(
         context.applicationContext.contentResolver,
         Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
@@ -204,18 +212,19 @@ fun checkAccessibilityEnabled(context: Context): Boolean {
         val splitter = android.text.TextUtils.SimpleStringSplitter(':')
         splitter.setString(settingValue)
         while (splitter.hasNext()) {
-            val accessibilityService = splitter.next()
-            if (accessibilityService.contains(context.packageName, ignoreCase = true)) {
+            if (splitter.next().contains(context.packageName, ignoreCase = true)) {
                 return true
             }
         }
     }
 
-    // Method 2: Fallback to AccessibilityManager
+    // Method 2: Fallback to AccessibilityManager query
     val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as android.view.accessibility.AccessibilityManager
-    val enabledServices = am.getEnabledAccessibilityServiceList(android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
-    return enabledServices.any { 
-        it.resolveInfo.serviceInfo.packageName == expectedComponentName.packageName && 
-        it.resolveInfo.serviceInfo.name == expectedComponentName.className 
+    val enabledServices = am.getEnabledAccessibilityServiceList(
+        android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_ALL_MASK
+    )
+    return enabledServices.any {
+        it.resolveInfo.serviceInfo.packageName == expectedComponentName.packageName &&
+        it.resolveInfo.serviceInfo.name == expectedComponentName.className
     }
 }
