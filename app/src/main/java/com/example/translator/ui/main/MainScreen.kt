@@ -165,6 +165,11 @@ fun MainScreen(
 }
 
 fun checkAccessibilityEnabled(context: Context): Boolean {
+    // Ultimate fallback: If the service itself says it's running, it's running!
+    if (com.example.translator.TranslationAccessibilityService.isSharedInstanceActive) {
+        return true
+    }
+
     val expectedComponentName = android.content.ComponentName(context, com.example.translator.TranslationAccessibilityService::class.java)
     val expectedString = expectedComponentName.flattenToString()
     

@@ -28,6 +28,22 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
     }
 
+    companion object {
+        var isSharedInstanceActive = false
+    }
+
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        Log.d("Translator", "Accessibility Service Connected")
+        isSharedInstanceActive = true
+    }
+
+    override fun onUnbind(intent: android.content.Intent?): Boolean {
+        Log.d("Translator", "Accessibility Service Unbound")
+        isSharedInstanceActive = false
+        return super.onUnbind(intent)
+    }
+
     override fun onInterrupt() {
         Log.d("Translator", "Accessibility Service interrupted")
     }
