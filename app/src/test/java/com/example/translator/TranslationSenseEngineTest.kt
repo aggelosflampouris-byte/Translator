@@ -80,6 +80,78 @@ class TranslationSenseEngineTest {
     }
 
     @Test
+    fun isEligibleSourceText_rejectsLatinAndGenericPrepositionsWhenSourceIsRomanian() {
+        assertFalse(
+            TranslationSenseEngine.isEligibleSourceText(
+                "Clamavi de Profundis",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
+                emptyList()
+            )
+        )
+
+        assertFalse(
+            TranslationSenseEngine.isEligibleSourceText(
+                "Clamavi de Profundis",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
+                listOf(IdentifiedLanguage("la", 0.88f))
+            )
+        )
+
+        assertFalse(
+            TranslationSenseEngine.isEligibleSourceText(
+                "de",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
+                emptyList()
+            )
+        )
+        assertFalse(
+            TranslationSenseEngine.isEligibleSourceText(
+                "la",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
+                emptyList()
+            )
+        )
+
+        assertFalse(
+            TranslationSenseEngine.isEligibleSourceText(
+                "Stremio",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
+                emptyList()
+            )
+        )
+        assertFalse(
+            TranslationSenseEngine.isEligibleSourceText(
+                "Stremio",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
+                listOf(IdentifiedLanguage("it", 0.75f))
+            )
+        )
+
+        assertTrue(
+            TranslationSenseEngine.isEligibleSourceText(
+                "De ce nu răspunzi?",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
+                emptyList()
+            )
+        )
+        assertTrue(
+            TranslationSenseEngine.isEligibleSourceText(
+                "ce faci de mâncare",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
+                emptyList()
+            )
+        )
+    }
+
+    @Test
     fun isIncomingMessage_identifiesLeftAndRightMessages() {
         val screenWidth = 1080
         assertTrue(TranslationSenseEngine.isIncomingMessage(36, 750, screenWidth))

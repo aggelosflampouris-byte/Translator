@@ -97,7 +97,12 @@ class TranslationAccessibilityService : AccessibilityService() {
         if (!FloatingBubbleService.isTranslatingActive) return
 
         val packageName = event.packageName?.toString() ?: ""
-        if (!isWhatsAppPackage(packageName)) return
+        if (!isWhatsAppPackage(packageName)) {
+            if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                overlayManager.removeAllOverlays()
+            }
+            return
+        }
 
         when (event.eventType) {
             AccessibilityEvent.TYPE_VIEW_SCROLLED,
@@ -192,26 +197,18 @@ class TranslationAccessibilityService : AccessibilityService() {
             Log.w("Translator", "Error querying rootInActiveWindow", e)
         }
 
-        try {
-            val windowList = windows
-            for (window in windowList) {
-                if (window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) {
-                    val root = window.root
-                    if (root != null) {
-                        return root
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            // Ignore
-        }
-
-        return rootInActiveWindow
+        // WhatsApp is NOT in the foreground! Strictly return null.
+        return null
     }
 
     private fun scanAndTranslateVisibleMessages(eventSource: AccessibilityNodeInfo? = null): Int {
         if (!FloatingBubbleService.isTranslatingActive) return 0
-        val rootNode = findWhatsAppRootNode(eventSource) ?: return 0
+        val rootNode = findWhatsAppRootNode(eventSource)
+        if (rootNode == null) {
+            // When user exits WhatsApp (e.g. to Home Screen, launcher, or another app), clear all overlays immediately
+            overlayManager.removeAllOverlays()
+            return 0
+        }
 
         val prefs = getSharedPreferences("translator_prefs", Context.MODE_PRIVATE)
         val configuredSource = prefs.getString("source_language", TranslateLanguage.ROMANIAN) ?: TranslateLanguage.ROMANIAN

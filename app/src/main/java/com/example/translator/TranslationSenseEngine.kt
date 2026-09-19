@@ -40,6 +40,8 @@ object TranslationSenseEngine {
         "totul", "tot"
     )
 
+    private val GENERIC_ROMANCE_PREPOSITIONS = setOf("de", "in", "e", "a", "la")
+
     /**
      * Determines whether a WhatsApp message bubble is an incoming message from the contact
      * rather than an outgoing message sent by the user.
@@ -104,21 +106,35 @@ object TranslationSenseEngine {
         }
 
         if (sourceLang == TranslateLanguage.ROMANIAN) {
-            // Definite Romanian indicators
-            val hasDiacritics = clean.any { it in "ăâîșțĂÂÎȘȚ" }
-            if (hasDiacritics) return true
-            if (romanianTokenCount > 0) return true
+            // 1. Definite Romanian diacritics
+            if (clean.any { it in "ăâîșțĂÂÎȘȚ" }) return true
 
-            // For Latin words without diacritics, verify absence of conflicting languages
-            val latinCharCount = clean.count { it in 'a'..'z' || it in 'A'..'Z' }
-            if (latinCharCount >= 2) {
-                val conflictingNonSource = candidates.firstOrNull {
-                    it.languageTag != TranslateLanguage.ROMANIAN && it.languageTag != "und" && it.confidence >= 0.60f
-                }
-                if (conflictingNonSource == null && englishTokenCount < 2) {
-                    return true
-                }
+            // 2. Reject known non-Romanian languages identified by ML Kit (Latin, English, Spanish, Italian, etc.)
+            val nonRomanianCandidate = candidates.firstOrNull {
+                it.languageTag in setOf("la", "en", "es", "it", "fr", "pt", "de") && it.confidence >= 0.20f
             }
+            if (nonRomanianCandidate != null) {
+                return false
+            }
+
+            // 3. Specific Romanian vocabulary (excluding generic Romance prepositions like "de", "in", "e", "a", "la")
+            val specificRomanianTokens = words.count { COMMON_ROMANIAN_WORDS.contains(it) && !GENERIC_ROMANCE_PREPOSITIONS.contains(it) }
+            if (specificRomanianTokens > 0) {
+                return true
+            }
+
+            // If only generic prepositions exist (e.g. "de" in "Clamavi de Profundis"), reject
+            val hasOnlyGenericPrepositions = romanianTokenCount > 0 && specificRomanianTokens == 0
+            if (hasOnlyGenericPrepositions) {
+                return false
+            }
+
+            // 4. ML Kit explicit Romanian identification
+            val roCandidate = candidates.firstOrNull { it.languageTag == "ro" || it.languageTag == "ron" }
+            if (roCandidate != null && roCandidate.confidence >= 0.35f) {
+                return true
+            }
+
             return false
         }
 
