@@ -247,15 +247,15 @@ class OverlayManager(private val context: Context) {
             }
 
             view.measure(
-                View.MeasureSpec.makeMeasureSpec(maxBubbleWidth, View.MeasureSpec.AT_MOST),
+                View.MeasureSpec.makeMeasureSpec(screenWidth - (20 * density).toInt(), View.MeasureSpec.EXACTLY),
                 View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
             )
 
-            val bubbleWidth = view.measuredWidth.coerceIn(minBubbleWidth, maxBubbleWidth)
-            val bubbleHeight = view.measuredHeight.coerceAtLeast((40 * density).toInt())
+            val bubbleWidth = screenWidth - (20 * density).toInt()
+            val bubbleHeight = view.measuredHeight.coerceAtLeast((42 * density).toInt())
 
-            val spacing = (8 * density).toInt()
-            val posX = (12 * density).toInt()
+            val spacing = (6 * density).toInt()
+            val posX = (10 * density).toInt()
             val posY = (inputRect.top - bubbleHeight - spacing).coerceAtLeast((48 * density).toInt())
 
             val overlayBounds = Rect(posX, posY, posX + bubbleWidth, posY + bubbleHeight)
@@ -327,15 +327,15 @@ class OverlayManager(private val context: Context) {
             }
 
             view.measure(
-                View.MeasureSpec.makeMeasureSpec(maxBubbleWidth, View.MeasureSpec.AT_MOST),
+                View.MeasureSpec.makeMeasureSpec(screenWidth - (20 * density).toInt(), View.MeasureSpec.EXACTLY),
                 View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
             )
 
-            val bubbleWidth = view.measuredWidth.coerceIn(minBubbleWidth, maxBubbleWidth)
-            val bubbleHeight = view.measuredHeight.coerceAtLeast((40 * density).toInt())
+            val bubbleWidth = screenWidth - (20 * density).toInt()
+            val bubbleHeight = view.measuredHeight.coerceAtLeast((42 * density).toInt())
 
-            val spacing = (8 * density).toInt()
-            val posX = (12 * density).toInt()
+            val spacing = (6 * density).toInt()
+            val posX = (10 * density).toInt()
             val posY = (inputRect.top - bubbleHeight - spacing).coerceAtLeast((48 * density).toInt())
 
             val overlayBounds = Rect(posX, posY, posX + bubbleWidth, posY + bubbleHeight)
@@ -384,7 +384,7 @@ class OverlayManager(private val context: Context) {
         }
     }
 
-    fun removeAllOverlays() {
+    fun removeAllMessageOverlays() {
         for (bubble in activeBubbles.values) {
             try {
                 windowManager.removeView(bubble.view)
@@ -393,6 +393,10 @@ class OverlayManager(private val context: Context) {
             }
         }
         activeBubbles.clear()
+    }
+
+    fun removeAllOverlays() {
+        removeAllMessageOverlays()
         removeDraftOverlay()
     }
 }

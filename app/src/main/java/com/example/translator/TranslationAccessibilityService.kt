@@ -12,6 +12,7 @@ import android.util.Log
 import android.util.LruCache
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.Toast
 import com.google.mlkit.nl.languageid.LanguageIdentification
 import com.google.mlkit.nl.translate.TranslateLanguage
@@ -166,6 +167,9 @@ class TranslationAccessibilityService : AccessibilityService() {
             AccessibilityEvent.TYPE_VIEW_SCROLLED,
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
+                if (!isKeyboardVisible()) {
+                    overlayManager.removeDraftOverlay()
+                }
                 scanJob?.cancel()
                 scanJob = serviceScope.launch {
                     delay(100)
@@ -256,6 +260,12 @@ class TranslationAccessibilityService : AccessibilityService() {
             return 0
         }
 
+        // When the soft keyboard is open, hide chat message bubbles so the screen is not overflooded
+        if (isKeyboardVisible()) {
+            overlayManager.removeAllMessageOverlays()
+            return 0
+        }
+
         val prefs = getSharedPreferences("translator_prefs", Context.MODE_PRIVATE)
         val configuredSource = prefs.getString("source_language", TranslateLanguage.ROMANIAN) ?: TranslateLanguage.ROMANIAN
         val configuredTarget = prefs.getString("target_language", TranslateLanguage.GREEK) ?: TranslateLanguage.GREEK
@@ -265,13 +275,13 @@ class TranslationAccessibilityService : AccessibilityService() {
         val bottomInset = (40 * density).toInt()
         val screenHeight = resources.displayMetrics.heightPixels
 
-        // When typing / keyboard is active, restrict message scans above the input bar and draft action pill
+        // When keyboard is closed, scan all messages up to the top of the input bar (with 5dp tolerance)
         val inputNode = findCurrentEditableNode()
         val effectiveBottom = if (inputNode != null) {
             val inputBounds = Rect()
             inputNode.getBoundsInScreen(inputBounds)
             if (inputBounds.top > topInset) {
-                inputBounds.top - (65 * density).toInt()
+                inputBounds.top + (5 * density).toInt()
             } else {
                 screenHeight - bottomInset
             }
@@ -457,6 +467,40 @@ class TranslationAccessibilityService : AccessibilityService() {
         return false
     }
 
+    private fun isKeyboardVisible(): Boolean {
+        try {
+            val windowList = windows
+            if (windowList != null) {
+                for (w in windowList) {
+                    if (w.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD) {
+                        val rect = Rect()
+                        w.getBoundsInScreen(rect)
+                        if (rect.height() > 100) return true
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // Fallback
+        }
+
+        try {
+            val input = findCurrentEditableNode()
+            if (input != null) {
+                val rect = Rect()
+                input.getBoundsInScreen(rect)
+                val screenHeight = resources.displayMetrics.heightPixels
+                val density = resources.displayMetrics.density
+                if (rect.bottom > 0 && (screenHeight - rect.bottom) > (180 * density).toInt()) {
+                    return true
+                }
+            }
+        } catch (e: Exception) {
+            // Ignore
+        }
+
+        return false
+    }
+
     private var lastInsertedText: String? = null
 
     private fun findCurrentEditableNode(): AccessibilityNodeInfo? {
@@ -494,10 +538,18 @@ class TranslationAccessibilityService : AccessibilityService() {
     }
 
     private fun handleOutgoingTyping(event: AccessibilityEvent) {
+        val prefs = getSharedPreferences("translator_prefs", Context.MODE_PRIVATE)
+        val isKeyboardTranslatorEnabled = prefs.getBoolean("keyboard_translator_enabled", false)
+        if (!isKeyboardTranslatorEnabled) {
+            overlayManager.removeDraftOverlay()
+            return
+        }
+
         val node = event.source ?: return
         if (!node.isEditable) return
 
         val rawText = node.text?.toString()?.trim() ?: ""
+        val hintText = node.hintText?.toString()?.trim() ?: ""
 
         if (rawText == lastInsertedText) {
             overlayManager.removeDraftOverlay()
@@ -505,15 +557,17 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
         lastInsertedText = null
 
-        if (rawText.length < 2 || !rawText.any { it.isLetter() }) {
+        // Ignore empty text and common hint/placeholder labels ("Μήνυμα", "message", "type a message")
+        if (rawText.length < 2 || !rawText.any { it.isLetter() } ||
+            rawText.equals(hintText, ignoreCase = true) ||
+            rawText.equals("μήνυμα", ignoreCase = true) ||
+            rawText.equals("μηνυμα", ignoreCase = true) ||
+            rawText.equals("message", ignoreCase = true) ||
+            rawText.equals("type a message", ignoreCase = true)) {
             overlayManager.removeDraftOverlay()
             return
         }
 
-        val inputRect = Rect()
-        node.getBoundsInScreen(inputRect)
-
-        val prefs = getSharedPreferences("translator_prefs", Context.MODE_PRIVATE)
         val configuredSource = prefs.getString("source_language", TranslateLanguage.ROMANIAN) ?: TranslateLanguage.ROMANIAN
         val configuredTarget = prefs.getString("target_language", TranslateLanguage.GREEK) ?: TranslateLanguage.GREEK
 
@@ -523,11 +577,34 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         typingJob?.cancel()
         typingJob = serviceScope.launch {
-            delay(250) // 250ms debounce while user is actively typing
+            delay(200) // 200ms debounce while user is actively typing
+
+            // When keyboard is active, ensure message overlays are removed so screen is not overflooded
+            overlayManager.removeAllMessageOverlays()
+
+            // Re-fetch fresh live editable node and bounds after keyboard animation has settled
+            val liveNode = findCurrentEditableNode() ?: node
+            val liveText = liveNode.text?.toString()?.trim() ?: rawText
+            val liveHint = liveNode.hintText?.toString()?.trim() ?: hintText
+            if (liveText.length < 2 || !liveText.any { it.isLetter() } ||
+                liveText.equals(liveHint, ignoreCase = true) ||
+                liveText.equals("μήνυμα", ignoreCase = true) ||
+                liveText.equals("μηνυμα", ignoreCase = true) ||
+                liveText.equals("message", ignoreCase = true) ||
+                liveText.equals("type a message", ignoreCase = true)) {
+                overlayManager.removeDraftOverlay()
+                return@launch
+            }
+
+            val inputRect = Rect()
+            liveNode.getBoundsInScreen(inputRect)
+            if (inputRect.top <= 0) {
+                node.getBoundsInScreen(inputRect)
+            }
 
             // 1. Pre-translation idiomatic & conversational check
             val idiomaticDraft = TranslationSenseEngine.resolveIdiomPreTranslation(
-                rawText,
+                liveText,
                 draftSourceLang,
                 draftTargetLang
             )
@@ -538,7 +615,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                     text = idiomaticDraft,
                     targetLangCode = langBadge,
                     onInsertClicked = {
-                        insertTranslatedTextIntoInput(idiomaticDraft, node)
+                        insertTranslatedTextIntoInput(idiomaticDraft, liveNode)
                     },
                     onDismissClicked = {
                         overlayManager.removeDraftOverlay()
@@ -548,10 +625,10 @@ class TranslationAccessibilityService : AccessibilityService() {
             }
 
             // 2. Machine translation with post-processing sense correction
-            translateText(draftSourceLang, draftTargetLang, rawText) { rawTranslatedDraft ->
-                if (rawTranslatedDraft != null && rawTranslatedDraft.isNotBlank() && rawTranslatedDraft != rawText) {
+            translateText(draftSourceLang, draftTargetLang, liveText) { rawTranslatedDraft ->
+                if (rawTranslatedDraft != null && rawTranslatedDraft.isNotBlank() && rawTranslatedDraft != liveText) {
                     val translatedDraft = TranslationSenseEngine.applyPostTranslationSenseLogic(
-                        originalText = rawText,
+                        originalText = liveText,
                         translatedText = rawTranslatedDraft,
                         sourceLang = draftSourceLang,
                         targetLang = draftTargetLang
@@ -562,7 +639,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                         text = translatedDraft,
                         targetLangCode = langBadge,
                         onInsertClicked = {
-                            insertTranslatedTextIntoInput(translatedDraft, node)
+                            insertTranslatedTextIntoInput(translatedDraft, liveNode)
                         },
                         onDismissClicked = {
                             overlayManager.removeDraftOverlay()

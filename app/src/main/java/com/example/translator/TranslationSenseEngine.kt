@@ -37,7 +37,9 @@ object TranslationSenseEngine {
         "pentru", "care", "cine", "dece", "de ce", "vreau", "stiu", "știu", "pot",
         "futut", "fute", "futu", "pula", "pizda", "dracu", "dracului", "negri", "negrii",
         "ingerule", "îngerule", "frumusețe", "hai", "pa", "pup", "te pup", "om", "oameni",
-        "totul", "tot"
+        "totul", "tot", "mesaj", "mesaje", "mesajul", "scuze", "noroc", "sanatate", "sănătate",
+        "vorbim", "sigur", "desigur", "bineinteles", "bineînțeles", "perfect", "bravo",
+        "trebuie", "vino", "stai", "asteapta", "așteaptă", "poate", "cred"
     )
 
     private val GENERIC_ROMANCE_PREPOSITIONS = setOf("de", "in", "e", "a", "la")
@@ -313,9 +315,20 @@ object TranslationSenseEngine {
             return if (address != null) "$address, όλα είναι καλά." else "Όλα είναι καλά."
         }
 
-        if (normalized == "unde esti" || normalized == "unde esti?") {
-            val address = extractLeadingAddressName(clean) ?: extractAddressName(clean)
-            return if (address != null) "$address, πού είσαι;" else "Πού είσαι;"
+        if (normalized == "mesaj" || normalized == "mesaj." || normalized == "mesaj!") {
+            return "Μήνυμα"
+        }
+
+        if (normalized.contains("scuze") || normalized.contains("imi cer scuze")) {
+            return "Συγγνώμη!"
+        }
+
+        if (normalized.contains("multumesc") || normalized.contains("mersi")) {
+            return "Ευχαριστώ!"
+        }
+
+        if (normalized.contains("cu placere")) {
+            return "Παρακαλώ!"
         }
 
         return null

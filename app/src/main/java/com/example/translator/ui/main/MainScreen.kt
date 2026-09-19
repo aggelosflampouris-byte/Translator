@@ -37,6 +37,9 @@ fun MainScreen(
   var targetLanguage by remember {
       mutableStateOf(prefs.getString("target_language", com.google.mlkit.nl.translate.TranslateLanguage.GREEK) ?: com.google.mlkit.nl.translate.TranslateLanguage.GREEK)
   }
+  var keyboardTranslatorEnabled by remember {
+      mutableStateOf(prefs.getBoolean("keyboard_translator_enabled", false))
+  }
 
   val supportedLanguages = remember { com.google.mlkit.nl.translate.TranslateLanguage.getAllLanguages() }
   var modelStatus by remember { mutableStateOf("Checking language models...") }
@@ -173,7 +176,45 @@ fun MainScreen(
           color = if (modelStatus.startsWith("✓")) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
       )
 
-      Spacer(modifier = Modifier.height(20.dp))
+      Spacer(modifier = Modifier.height(16.dp))
+
+      // Keyboard Translation Assistant Switch (Default OFF)
+      Card(
+          modifier = Modifier.fillMaxWidth(),
+          colors = CardDefaults.cardColors(
+              containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+          )
+      ) {
+          Row(
+              modifier = Modifier
+                  .fillMaxWidth()
+                  .padding(horizontal = 16.dp, vertical = 12.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween
+          ) {
+              Column(modifier = Modifier.weight(1f)) {
+                  Text(
+                      text = "Keyboard Translation Assistant",
+                      style = MaterialTheme.typography.titleSmall
+                  )
+                  Text(
+                      text = "Show translation pill above keyboard while typing",
+                      style = MaterialTheme.typography.bodySmall,
+                      color = MaterialTheme.colorScheme.onSurfaceVariant
+                  )
+              }
+              Spacer(modifier = Modifier.width(12.dp))
+              Switch(
+                  checked = keyboardTranslatorEnabled,
+                  onCheckedChange = { isChecked ->
+                      keyboardTranslatorEnabled = isChecked
+                      prefs.edit().putBoolean("keyboard_translator_enabled", isChecked).apply()
+                  }
+              )
+          }
+      }
+
+      Spacer(modifier = Modifier.height(16.dp))
 
       // Per-permission status rows with individual Fix buttons
       PermissionStatusRow(label = "Display over other apps", granted = canDrawOverlays) {

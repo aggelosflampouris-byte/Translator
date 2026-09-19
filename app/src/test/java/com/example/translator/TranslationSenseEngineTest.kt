@@ -393,6 +393,61 @@ class TranslationSenseEngineTest {
     }
 
     @Test
+    fun isEligibleSourceText_acceptsMesajAndBunaSeara() {
+        assertTrue(
+            TranslationSenseEngine.isEligibleSourceText(
+                "Mesaj",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
+                emptyList()
+            )
+        )
+        assertTrue(
+            TranslationSenseEngine.isEligibleSourceText(
+                "Bună seara!",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
+                emptyList()
+            )
+        )
+    }
+
+    @Test
+    fun resolveIdiomPreTranslation_resolvesMesajAndBunaSeara() {
+        val result1 = TranslationSenseEngine.resolveIdiomPreTranslation(
+            "Mesaj",
+            TranslateLanguage.ROMANIAN,
+            TranslateLanguage.GREEK
+        )
+        assertNotNull(result1)
+        assertEquals("Μήνυμα", result1)
+
+        val result2 = TranslationSenseEngine.resolveIdiomPreTranslation(
+            "Bună seara!",
+            TranslateLanguage.ROMANIAN,
+            TranslateLanguage.GREEK
+        )
+        assertNotNull(result2)
+        assertEquals("Καλησπέρα!", result2)
+
+        val result3 = TranslationSenseEngine.resolveIdiomPreTranslation(
+            "Scuze",
+            TranslateLanguage.ROMANIAN,
+            TranslateLanguage.GREEK
+        )
+        assertNotNull(result3)
+        assertEquals("Συγγνώμη!", result3)
+
+        val result4 = TranslationSenseEngine.resolveIdiomPreTranslation(
+            "Mersi",
+            TranslateLanguage.ROMANIAN,
+            TranslateLanguage.GREEK
+        )
+        assertNotNull(result4)
+        assertEquals("Ευχαριστώ!", result4)
+    }
+
+    @Test
     fun applyPostTranslationSenseLogic_fixesGreekAnteAndCurses() {
         val corrected1 = TranslationSenseEngine.applyPostTranslationSenseLogic(
             originalText = "Άντε γαμήσου Γιάννη",
