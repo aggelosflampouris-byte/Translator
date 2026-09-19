@@ -360,13 +360,9 @@ class TranslationAccessibilityService : AccessibilityService() {
             val cleanText = candidate.text
             val rect = candidate.bounds
 
-            val greekCount = cleanText.count { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }
-            val latinCount = cleanText.count { it in 'a'..'z' || it in 'A'..'Z' || it in "ăâîșțĂÂÎȘȚ" }
-            val (msgSource, msgTarget) = if (greekCount > latinCount) {
-                Pair(TranslateLanguage.GREEK, if (configuredSource != "AUTO") configuredSource else TranslateLanguage.ROMANIAN)
-            } else {
-                Pair(if (configuredSource != "AUTO") configuredSource else TranslateLanguage.ROMANIAN, configuredTarget)
-            }
+            // Message pills only translate from source to target; reverse translation is reserved for keyboard typing
+            val msgSource = if (configuredSource != "AUTO") configuredSource else TranslateLanguage.ROMANIAN
+            val msgTarget = configuredTarget
 
             // Check in-memory cache first for fast scroll rendering
             val cachedTranslation = translationCache.get(cleanText)
@@ -510,15 +506,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
 
         val cleanText = TranslationFilter.cleanMessageText(rawText)
-        val greekCount = cleanText.count { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }
-        val latinCount = cleanText.count { it in 'a'..'z' || it in 'A'..'Z' || it in "ăâîșțĂÂÎȘȚ" }
-        val effectiveTarget = if (greekCount > latinCount) {
-            if (configuredSource != "AUTO") configuredSource else TranslateLanguage.ROMANIAN
-        } else {
-            configuredTarget
-        }
-
-        if (cleanText.isNotBlank() && TranslationFilter.shouldTranslate(cleanText, effectiveTarget)) {
+        if (cleanText.isNotBlank() && TranslationFilter.shouldTranslate(cleanText, configuredTarget)) {
             val rect = Rect()
             node.getBoundsInScreen(rect)
 

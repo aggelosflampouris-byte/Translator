@@ -185,4 +185,16 @@ class TranslationFilterTest {
         assertFalse(TranslationFilter.shouldTranslate("6:51 μ.μ., Διαβάστηκε", TranslateLanguage.ROMANIAN))
         assertFalse(TranslationFilter.shouldTranslate("12:00, Παραδόθηκε", TranslateLanguage.ROMANIAN))
     }
+
+    @Test
+    fun shouldTranslate_rejectsTargetLanguageGreekMessages() {
+        // When configured target is Greek, Greek messages should never be translated to Romanian in pills
+        assertFalse(TranslationFilter.shouldTranslate("Σε γαμανε", TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.shouldTranslate("Αύριο οι δοκιμές", TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.shouldTranslate("Δοκιμάζω την εφαρμογή", TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.shouldTranslate("Σε καμω mute εδω", TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.shouldTranslate("Κανε ότι θες", TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.shouldTranslate("Στα υπόλοιπα σε αφήνω μόνο σοβαρά", TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.shouldTranslate("Οκοκ", TranslateLanguage.GREEK))
+    }
 }
