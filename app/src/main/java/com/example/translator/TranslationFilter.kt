@@ -12,7 +12,11 @@ object TranslationFilter {
     private val URL_PATH_REGEX = Regex("""^/?[a-zA-Z0-9_\-/%?&=.]+$""")
     private val TIMESTAMP_REGEX = Regex("""^\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?$""", RegexOption.IGNORE_CASE)
     private val WHATSAPP_STATUS_REGEX = Regex(
-        """[,.\s\n]+(delivered|read|sent|pending|παραδόθηκε|διαβάστηκε|στάλθηκε|σε εκκρεμότητα|trimis|citit|livrat|în așteptare|[✓✔\u2713\u2714\u2705]+)\s*$""",
+        """[,.\s\n]+(delivered|read|sent|pending|unread|παραδόθηκε|διαβάστηκε|στάλθηκε|σε εκκρεμότητα|trimis|citit|citiți|cititi|livrat|în așteptare|[✓✔\u2713\u2714\u2705]+)\s*$""",
+        RegexOption.IGNORE_CASE
+    )
+    private val STANDALONE_STATUS_REGEX = Regex(
+        """^([,.:\s\n]*(\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?)?[,.:\s\n]*(delivered|read|sent|pending|unread|παραδόθηκε|παραδοθηκε|διαβάστηκε|διαβαστηκε|στάλθηκε|σταλθηκε|σε εκκρεμότητα|σε εκκρεμοτητα|εκκρεμεί|εκκρεμει|trimis|citit|citiți|cititi|livrat|în așteptare|in asteptare|[✓✔\u2713\u2714\u2705]+)[,.:\s\n]*)+$""",
         RegexOption.IGNORE_CASE
     )
     private val TRAILING_TIMESTAMP_REGEX = Regex("""[\s\n]+\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?(\s*[✓✔\u2713\u2714\u2705]+)?\s*$""", RegexOption.IGNORE_CASE)
@@ -22,6 +26,14 @@ object TranslationFilter {
         "μήνυμα", "type a message", "message", "search", "αναζήτηση",
         "χθες", "σήμερα", "yesterday", "today", "online", "συνδέθηκε",
         "συνομιλίες", "ενημερώσεις", "κλήσεις", "chats", "updates", "calls"
+    )
+
+    private val MESSAGE_STATUS_TOKENS = setOf(
+        "διαβάστηκε", "διαβαστηκε", "παραδόθηκε", "παραδοθηκε", "στάλθηκε", "σταλθηκε",
+        "σε εκκρεμότητα", "σε εκκρεμοτητα", "εκκρεμεί", "εκκρεμει", "μη αναγνωσμένο", "μη αναγνωσμενο",
+        "read", "delivered", "sent", "pending", "unread",
+        "citit", "citiți", "cititi", "livrat", "trimis", "în așteptare", "in asteptare",
+        "leído", "leido", "entregado", "enviado", "pendiente"
     )
 
     /**
@@ -59,7 +71,18 @@ object TranslationFilter {
         }
 
         // Filter out common UI labels, status, and navigation markers
-        if (COMMON_UI_TOKENS.contains(trimmed.lowercase())) {
+        val lower = trimmed.lowercase()
+        if (COMMON_UI_TOKENS.contains(lower) || MESSAGE_STATUS_TOKENS.contains(lower)) {
+            return false
+        }
+
+        // Filter out standalone status or combined timestamp + delivery markers
+        if (lower.matches(STANDALONE_STATUS_REGEX)) {
+            return false
+        }
+
+        // Filter out checkmark symbols (e.g. "✓", "✓✓")
+        if (trimmed.all { it in "✓✔\u2713\u2714\u2705,.:\t\n " }) {
             return false
         }
 

@@ -159,4 +159,30 @@ class TranslationFilterTest {
             )
         )
     }
+
+    @Test
+    fun shouldTranslate_rejectsStandaloneAndCombinedStatusMarkers() {
+        // Greek standalone delivery markers
+        assertFalse(TranslationFilter.shouldTranslate("Διαβάστηκε", TranslateLanguage.ROMANIAN))
+        assertFalse(TranslationFilter.shouldTranslate("Παραδόθηκε", TranslateLanguage.ROMANIAN))
+        assertFalse(TranslationFilter.shouldTranslate("Στάλθηκε", TranslateLanguage.ROMANIAN))
+
+        // Romanian standalone delivery markers
+        assertFalse(TranslationFilter.shouldTranslate("Citit", TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.shouldTranslate("Citiți", TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.shouldTranslate("Livrat", TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.shouldTranslate("Trimis", TranslateLanguage.GREEK))
+
+        // English standalone delivery markers
+        assertFalse(TranslationFilter.shouldTranslate("Read", TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.shouldTranslate("Delivered", TranslateLanguage.GREEK))
+
+        // Checkmarks
+        assertFalse(TranslationFilter.shouldTranslate("✓✓", TranslateLanguage.ROMANIAN))
+        assertFalse(TranslationFilter.shouldTranslate("✔", TranslateLanguage.GREEK))
+
+        // Timestamp + status without message text
+        assertFalse(TranslationFilter.shouldTranslate("6:51 μ.μ., Διαβάστηκε", TranslateLanguage.ROMANIAN))
+        assertFalse(TranslationFilter.shouldTranslate("12:00, Παραδόθηκε", TranslateLanguage.ROMANIAN))
+    }
 }

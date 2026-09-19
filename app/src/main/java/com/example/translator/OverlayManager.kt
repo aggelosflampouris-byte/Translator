@@ -33,6 +33,8 @@ class OverlayManager(private val context: Context) {
         val updatedIds = mutableSetOf<String>()
 
         val draftBounds = currentDraftOverlayBounds
+        val acceptedBoundsInBatch = mutableListOf<Rect>()
+
         for (item in results) {
             val rect = item.first ?: continue
             val translatedText = item.second
@@ -40,6 +42,28 @@ class OverlayManager(private val context: Context) {
 
             // Never render message translation bubbles that overlap the active draft action pill or input bar
             if (draftBounds != null && Rect.intersects(draftBounds, rect)) {
+                continue
+            }
+
+            // Never render message translation bubbles that overlap already placed bubbles in this frame
+            var overlapsBatch = false
+            for (accepted in acceptedBoundsInBatch) {
+                if (Rect.intersects(accepted, rect)) {
+                    val intersection = Rect()
+                    if (intersection.setIntersect(accepted, rect)) {
+                        val intersectArea = intersection.width().toLong() * intersection.height()
+                        val minArea = Math.min(
+                            accepted.width().toLong() * accepted.height(),
+                            rect.width().toLong() * rect.height()
+                        )
+                        if (minArea > 0 && intersectArea > minArea * 0.20f) {
+                            overlapsBatch = true
+                            break
+                        }
+                    }
+                }
+            }
+            if (overlapsBatch) {
                 continue
             }
 
@@ -52,6 +76,7 @@ class OverlayManager(private val context: Context) {
                         continue
                     }
                     updateBubble(bubble, rect, translatedText)
+                    acceptedBoundsInBatch.add(bubble.overlayBounds)
                 }
                 updatedIds.add(matchedId)
             } else {
@@ -60,6 +85,7 @@ class OverlayManager(private val context: Context) {
                 if (draftBounds != null && Rect.intersects(draftBounds, overlayBounds)) {
                     continue
                 }
+                acceptedBoundsInBatch.add(overlayBounds)
                 // New bubble
                 val newId = System.currentTimeMillis().toString() + "_" + activeBubbles.size
                 addBubble(rect, translatedText, newId)

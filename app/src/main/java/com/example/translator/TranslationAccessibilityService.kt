@@ -183,7 +183,11 @@ class TranslationAccessibilityService : AccessibilityService() {
             }
             AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED,
             AccessibilityEvent.TYPE_VIEW_FOCUSED -> {
-                handleOutgoingTyping(event)
+                if (!isKeyboardVisible()) {
+                    overlayManager.removeDraftOverlay()
+                } else {
+                    handleOutgoingTyping(event)
+                }
             }
         }
     }
@@ -253,9 +257,13 @@ class TranslationAccessibilityService : AccessibilityService() {
         return null
     }
 
+    // Called on serviceScope background coroutine
     private fun scanAndTranslateVisibleMessages(eventSource: AccessibilityNodeInfo? = null): Int {
-        if (!FloatingBubbleService.isTranslatingActive) return 0
-        val rootNode = findWhatsAppRootNode(eventSource)
+        if (!FloatingBubbleService.isTranslatingActive) {
+            return 0
+        }
+
+        val rootNode = eventSource ?: rootInActiveWindow ?: findWhatsAppRootNode()
         if (rootNode == null) {
             if (!isWhatsAppInForeground()) {
                 overlayManager.removeAllOverlays()
@@ -267,7 +275,8 @@ class TranslationAccessibilityService : AccessibilityService() {
         val configuredSource = prefs.getString("source_language", TranslateLanguage.ROMANIAN) ?: TranslateLanguage.ROMANIAN
         val configuredTarget = prefs.getString("target_language", TranslateLanguage.GREEK) ?: TranslateLanguage.GREEK
 
-        // When the soft keyboard is open, hide chat message bubbles so the screen is not overflooded
+        // When the soft keyboard is open, hide chat message bubbles so the screen is not overflooded.
+        // When the soft keyboard is closed, ensure the typing draft overlay is removed.
         if (isKeyboardVisible()) {
             overlayManager.removeAllMessageOverlays()
             val isKeyboardTranslatorEnabled = prefs.getBoolean("keyboard_translator_enabled", false)
@@ -275,6 +284,8 @@ class TranslationAccessibilityService : AccessibilityService() {
                 handleOutgoingTyping()
             }
             return 0
+        } else {
+            overlayManager.removeDraftOverlay()
         }
 
         val candidates = mutableListOf<MessageCandidate>()
@@ -299,14 +310,16 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         collectMessageCandidates(rootNode, candidates, topInset, effectiveBottom, configuredSource, configuredTarget)
 
-        if (candidates.isEmpty()) {
+        val dedupedCandidates = filterOverlappingCandidates(candidates)
+
+        if (dedupedCandidates.isEmpty()) {
             return 0
         }
 
         val translations = mutableListOf<Pair<Rect?, String>>()
-        var pendingCount = candidates.size
+        var pendingCount = dedupedCandidates.size
 
-        for (candidate in candidates) {
+        for (candidate in dedupedCandidates) {
             val cleanText = candidate.text
             val rect = candidate.bounds
 
@@ -447,57 +460,120 @@ class TranslationAccessibilityService : AccessibilityService() {
             return true
         }
 
-        val rawText = node.text?.toString() ?: node.contentDescription?.toString()
-        if (!rawText.isNullOrBlank()) {
-            val cleanText = TranslationFilter.cleanMessageText(rawText)
-            val greekCount = cleanText.count { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }
-            val latinCount = cleanText.count { it in 'a'..'z' || it in 'A'..'Z' || it in "ăâîșțĂÂÎȘȚ" }
-            val effectiveTarget = if (greekCount > latinCount) {
-                if (configuredSource != "AUTO") configuredSource else TranslateLanguage.ROMANIAN
-            } else {
-                configuredTarget
+        // Real chat messages in WhatsApp are TextViews with non-null text.
+        // Ignore ImageViews, ImageButtons, and checkmark icons.
+        val className = node.className?.toString() ?: ""
+        if (className.contains("Image", ignoreCase = true) || className.contains("Button", ignoreCase = true)) {
+            return false
+        }
+
+        val rawText = node.text?.toString()
+        if (rawText.isNullOrBlank()) {
+            return false
+        }
+
+        val cleanText = TranslationFilter.cleanMessageText(rawText)
+        val greekCount = cleanText.count { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }
+        val latinCount = cleanText.count { it in 'a'..'z' || it in 'A'..'Z' || it in "ăâîșțĂÂÎȘȚ" }
+        val effectiveTarget = if (greekCount > latinCount) {
+            if (configuredSource != "AUTO") configuredSource else TranslateLanguage.ROMANIAN
+        } else {
+            configuredTarget
+        }
+
+        if (cleanText.isNotBlank() && TranslationFilter.shouldTranslate(cleanText, effectiveTarget)) {
+            val rect = Rect()
+            node.getBoundsInScreen(rect)
+
+            // Inspect parent message bubble container for accurate container bounds
+            val parent = node.parent
+            val screenWidth = resources.displayMetrics.widthPixels
+            val density = resources.displayMetrics.density
+            if (parent != null) {
+                val parentRect = Rect()
+                parent.getBoundsInScreen(parentRect)
+                if (parentRect.width() <= screenWidth * 0.92f &&
+                    parentRect.height() <= (250 * density).toInt() &&
+                    parentRect.contains(rect)) {
+                    rect.set(parentRect)
+                }
             }
 
-            if (cleanText.isNotBlank() && TranslationFilter.shouldTranslate(cleanText, effectiveTarget)) {
-                val rect = Rect()
-                node.getBoundsInScreen(rect)
+            // Validate chat message bubble (both incoming and sent outgoing messages, excluding centered date pills)
+            val isBubble = TranslationSenseEngine.isMessageBubble(rect.left, rect.right, screenWidth)
 
-                // Inspect parent message bubble container for accurate container bounds
-                val parent = node.parent
-                val screenWidth = resources.displayMetrics.widthPixels
-                val density = resources.displayMetrics.density
-                if (parent != null) {
-                    val parentRect = Rect()
-                    parent.getBoundsInScreen(parentRect)
-                    if (parentRect.width() <= screenWidth * 0.92f &&
-                        parentRect.height() <= (250 * density).toInt() &&
-                        parentRect.contains(rect)) {
-                        rect.set(parentRect)
-                    }
-                }
-
-                // Validate chat message bubble (both incoming and sent outgoing messages, excluding centered date pills)
-                val isBubble = TranslationSenseEngine.isMessageBubble(rect.left, rect.right, screenWidth)
-
-                if (isBubble && rect.width() > 10 && rect.height() > 10 && rect.top >= minY && rect.bottom <= maxY) {
-                    outList.add(MessageCandidate(cleanText, rect))
-                    return true
-                }
+            if (isBubble && rect.width() > (30 * density).toInt() && rect.height() > (16 * density).toInt() &&
+                rect.top >= minY && rect.bottom <= maxY) {
+                outList.add(MessageCandidate(cleanText, rect))
+                return true
             }
         }
 
         return false
     }
 
+    private fun filterOverlappingCandidates(candidates: List<MessageCandidate>): List<MessageCandidate> {
+        if (candidates.size <= 1) return candidates
+
+        val accepted = mutableListOf<MessageCandidate>()
+        // Longest text first so the full message body is accepted over any sub-fragments
+        val sorted = candidates.sortedByDescending { it.text.length }
+
+        for (candidate in sorted) {
+            val cRect = candidate.bounds
+            var overlaps = false
+            for (acc in accepted) {
+                val aRect = acc.bounds
+                if (Rect.intersects(aRect, cRect)) {
+                    val intersection = Rect()
+                    if (intersection.setIntersect(aRect, cRect)) {
+                        val intersectArea = intersection.width().toLong() * intersection.height()
+                        val cArea = cRect.width().toLong() * cRect.height()
+                        val aArea = aRect.width().toLong() * aRect.height()
+                        val minArea = Math.min(cArea, aArea)
+                        if (minArea > 0 && intersectArea > minArea * 0.20f) {
+                            overlaps = true
+                            break
+                        }
+                    }
+                }
+                val verticalCenterDist = Math.abs(
+                    (aRect.top + aRect.bottom) / 2 - (cRect.top + cRect.bottom) / 2
+                )
+                if (verticalCenterDist < 20 * resources.displayMetrics.density &&
+                    (aRect.contains(cRect) || cRect.contains(aRect))) {
+                    overlaps = true
+                    break
+                }
+            }
+            if (!overlaps) {
+                accepted.add(candidate)
+            }
+        }
+        return accepted
+    }
+
     private fun isKeyboardVisible(): Boolean {
+        val screenHeight = resources.displayMetrics.heightPixels
+        val density = resources.displayMetrics.density
+
+        // 1. Primary check: If WhatsApp input field is found, verify its vertical elevation
         try {
-            val windowList = windows
-            if (windowList != null) {
-                for (w in windowList) {
-                    if (w.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD) {
-                        val rect = Rect()
-                        w.getBoundsInScreen(rect)
-                        if (rect.height() > 100) return true
+            val input = findCurrentEditableNode()
+            if (input != null) {
+                val inputRect = Rect()
+                input.getBoundsInScreen(inputRect)
+                if (inputRect.bottom > 0) {
+                    val bottomOffset = screenHeight - inputRect.bottom
+                    // If input is docked near the bottom of the screen (above navigation bar only),
+                    // the soft keyboard is definitely closed.
+                    if (bottomOffset <= (120 * density).toInt()) {
+                        return false
+                    }
+                    // If input is displaced upwards above the keyboard by more than 150dp,
+                    // the soft keyboard is definitely open.
+                    if (bottomOffset > (150 * density).toInt()) {
+                        return true
                     }
                 }
             }
@@ -505,15 +581,20 @@ class TranslationAccessibilityService : AccessibilityService() {
             // Fallback
         }
 
+        // 2. Secondary check: AccessibilityWindowInfo for TYPE_INPUT_METHOD visibly on screen
         try {
-            val input = findCurrentEditableNode()
-            if (input != null) {
-                val rect = Rect()
-                input.getBoundsInScreen(rect)
-                val screenHeight = resources.displayMetrics.heightPixels
-                val density = resources.displayMetrics.density
-                if (rect.bottom > 0 && (screenHeight - rect.bottom) > (180 * density).toInt()) {
-                    return true
+            val windowList = windows
+            if (windowList != null) {
+                for (w in windowList) {
+                    if (w.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD) {
+                        val rect = Rect()
+                        w.getBoundsInScreen(rect)
+                        // Must be visibly on screen with top above the bottom navigation margin
+                        if (rect.top in 1 until (screenHeight - (120 * density).toInt()) &&
+                            rect.height() > (150 * density).toInt()) {
+                            return true
+                        }
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -562,7 +643,7 @@ class TranslationAccessibilityService : AccessibilityService() {
     private fun handleOutgoingTyping(event: AccessibilityEvent? = null) {
         val prefs = getSharedPreferences("translator_prefs", Context.MODE_PRIVATE)
         val isKeyboardTranslatorEnabled = prefs.getBoolean("keyboard_translator_enabled", false)
-        if (!isKeyboardTranslatorEnabled) {
+        if (!isKeyboardTranslatorEnabled || !isKeyboardVisible()) {
             overlayManager.removeDraftOverlay()
             return
         }
