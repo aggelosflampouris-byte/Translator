@@ -211,6 +211,7 @@ class OverlayManager(private val context: Context) {
         inputRect: Rect,
         text: String,
         targetLangCode: String = "RO",
+        showReplace: Boolean = true,
         onInsertClicked: () -> Unit,
         onDismissClicked: () -> Unit
     ) {
@@ -223,24 +224,28 @@ class OverlayManager(private val context: Context) {
         val screenWidth = metrics.widthPixels
         val density = metrics.density
 
-        val maxBubbleWidth = (screenWidth * 0.94f).toInt()
-        val minBubbleWidth = (160 * density).toInt()
-
         if (draftOverlayView == null) {
             val view = inflater.inflate(R.layout.draft_preview_overlay, null)
             val textView = view.findViewById<TextView>(R.id.draft_text)
             val badgeView = view.findViewById<TextView>(R.id.draft_badge)
             val labelView = view.findViewById<TextView>(R.id.draft_label)
+            val replaceBtn = view.findViewById<View>(R.id.draft_action_replace)
 
             textView.text = text
+            textView.setTextColor(if (showReplace) 0xFFF8FAFC.toInt() else 0xFF94A3B8.toInt())
             badgeView.text = "⇄ $targetLangCode"
-            labelView.text = "Translate to $targetLangCode"
+            labelView.text = if (showReplace) "Tap to replace in chat" else "Translate to $targetLangCode"
+            replaceBtn.visibility = if (showReplace) View.VISIBLE else View.GONE
 
-            view.findViewById<View>(R.id.draft_container).setOnClickListener {
-                onInsertClicked()
-            }
-            view.findViewById<View>(R.id.draft_action_replace).setOnClickListener {
-                onInsertClicked()
+            if (showReplace) {
+                view.findViewById<View>(R.id.draft_container).setOnClickListener {
+                    onInsertClicked()
+                }
+                replaceBtn.setOnClickListener {
+                    onInsertClicked()
+                }
+            } else {
+                view.findViewById<View>(R.id.draft_container).setOnClickListener(null)
             }
             view.findViewById<View>(R.id.draft_action_close).setOnClickListener {
                 onDismissClicked()
@@ -311,16 +316,23 @@ class OverlayManager(private val context: Context) {
             val textView = view.findViewById<TextView>(R.id.draft_text)
             val badgeView = view.findViewById<TextView>(R.id.draft_badge)
             val labelView = view.findViewById<TextView>(R.id.draft_label)
+            val replaceBtn = view.findViewById<View>(R.id.draft_action_replace)
 
             textView.text = text
+            textView.setTextColor(if (showReplace) 0xFFF8FAFC.toInt() else 0xFF94A3B8.toInt())
             badgeView.text = "⇄ $targetLangCode"
-            labelView.text = "Translate to $targetLangCode"
+            labelView.text = if (showReplace) "Tap to replace in chat" else "Translate to $targetLangCode"
+            replaceBtn.visibility = if (showReplace) View.VISIBLE else View.GONE
 
-            view.findViewById<View>(R.id.draft_container).setOnClickListener {
-                onInsertClicked()
-            }
-            view.findViewById<View>(R.id.draft_action_replace).setOnClickListener {
-                onInsertClicked()
+            if (showReplace) {
+                view.findViewById<View>(R.id.draft_container).setOnClickListener {
+                    onInsertClicked()
+                }
+                replaceBtn.setOnClickListener {
+                    onInsertClicked()
+                }
+            } else {
+                view.findViewById<View>(R.id.draft_container).setOnClickListener(null)
             }
             view.findViewById<View>(R.id.draft_action_close).setOnClickListener {
                 onDismissClicked()

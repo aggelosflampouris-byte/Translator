@@ -178,6 +178,11 @@ object TranslationSenseEngine {
             return false
         }
 
+        if (sourceLang == TranslateLanguage.GREEK) {
+            val greekLetters = clean.count { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }
+            if (greekLetters > 0) return true
+        }
+
         // Generic fallback for other configured source languages
         val matchingCandidate = candidates.firstOrNull { it.languageTag == sourceLang }
         return matchingCandidate != null && matchingCandidate.confidence >= 0.20f
@@ -342,6 +347,7 @@ object TranslationSenseEngine {
 
         // 0. Vulgar, Curses, Insults & Slang Expressions
         if (normalized.contains("γαμησου") || normalized.contains("γαμηθεις") ||
+            normalized.contains("γαμιεσαι") || normalized.contains("γαμιουνται") ||
             normalized.contains("αντε γαμησου") || normalized.contains("αντε και γαμησου") ||
             normalized.contains("να πας να γαμηθεις") || normalized.contains("αντε στο διαολο") ||
             normalized.contains("στο διαολο") || normalized.contains("αντε χεσου")) {
@@ -515,7 +521,9 @@ object TranslationSenseEngine {
             val name = extractGreekName(originalText)
 
             // Fix ML Kit dropping Greek curses / producing "Ante [name]"
-            if (origNorm.contains("γαμησου") || origNorm.contains("γαμηθεις") || origNorm.contains("αντε γαμησου")) {
+            if (origNorm.contains("γαμησου") || origNorm.contains("γαμηθεις") ||
+                origNorm.contains("γαμιεσαι") || origNorm.contains("γαμιουνται") ||
+                origNorm.contains("αντε γαμησου")) {
                 return if (name != null) "Du-te dracului, $name!" else "Du-te dracului!"
             }
             if (origNorm.contains("μαλακα") || origNorm.contains("μαλακας")) {
@@ -559,7 +567,7 @@ object TranslationSenseEngine {
     private val GREEK_STOPWORDS = setOf(
         "πως", "εισαι", "τι", "κανεις", "φιλε", "μου", "αδερφε", "ολα", "καλα", "που",
         "καλημερα", "καλησπερα", "καληνυχτα", "και", "να", "το", "σε", "με", "για",
-        "αντε", "ρε", "μαλακα", "μαλακας", "γαμησου", "γαμηθεις", "διαολο", "χεσου",
+        "αντε", "ρε", "μαλακα", "μαλακας", "γαμησου", "γαμηθεις", "γαμιεσαι", "γαμιουνται", "διαολο", "χεσου",
         "πολλα", "χρονια", "ευτυχισμενο", "νεο", "ετος", "τωρα", "εδω", "εκει",
         "αυριο", "σημερα", "χθες", "ελα", "μπραβο", "ευχαριστω", "παρακαλω", "ναι", "οχι",
         "συγνωμη", "συγγνωμη", "γεια", "σου", "σας", "εγω", "εσυ", "αυτος", "αυτη", "αυτο"

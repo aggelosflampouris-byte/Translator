@@ -169,6 +169,11 @@ class TranslationAccessibilityService : AccessibilityService() {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                 if (!isKeyboardVisible()) {
                     overlayManager.removeDraftOverlay()
+                } else {
+                    val prefs = getSharedPreferences("translator_prefs", Context.MODE_PRIVATE)
+                    if (prefs.getBoolean("keyboard_translator_enabled", false)) {
+                        handleOutgoingTyping()
+                    }
                 }
                 scanJob?.cancel()
                 scanJob = serviceScope.launch {
@@ -178,9 +183,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             }
             AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED,
             AccessibilityEvent.TYPE_VIEW_FOCUSED -> {
-                if (event.source?.isEditable == true) {
-                    handleOutgoingTyping(event)
-                }
+                handleOutgoingTyping(event)
             }
         }
     }
@@ -260,15 +263,20 @@ class TranslationAccessibilityService : AccessibilityService() {
             return 0
         }
 
-        // When the soft keyboard is open, hide chat message bubbles so the screen is not overflooded
-        if (isKeyboardVisible()) {
-            overlayManager.removeAllMessageOverlays()
-            return 0
-        }
-
         val prefs = getSharedPreferences("translator_prefs", Context.MODE_PRIVATE)
         val configuredSource = prefs.getString("source_language", TranslateLanguage.ROMANIAN) ?: TranslateLanguage.ROMANIAN
         val configuredTarget = prefs.getString("target_language", TranslateLanguage.GREEK) ?: TranslateLanguage.GREEK
+
+        // When the soft keyboard is open, hide chat message bubbles so the screen is not overflooded
+        if (isKeyboardVisible()) {
+            overlayManager.removeAllMessageOverlays()
+            val isKeyboardTranslatorEnabled = prefs.getBoolean("keyboard_translator_enabled", false)
+            if (isKeyboardTranslatorEnabled) {
+                handleOutgoingTyping()
+            }
+            return 0
+        }
+
         val candidates = mutableListOf<MessageCandidate>()
         val density = resources.displayMetrics.density
         val topInset = (48 * density).toInt()
@@ -289,7 +297,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             screenHeight - bottomInset
         }
 
-        collectMessageCandidates(rootNode, candidates, topInset, effectiveBottom, configuredTarget)
+        collectMessageCandidates(rootNode, candidates, topInset, effectiveBottom, configuredSource, configuredTarget)
 
         if (candidates.isEmpty()) {
             return 0
@@ -301,6 +309,14 @@ class TranslationAccessibilityService : AccessibilityService() {
         for (candidate in candidates) {
             val cleanText = candidate.text
             val rect = candidate.bounds
+
+            val greekCount = cleanText.count { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }
+            val latinCount = cleanText.count { it in 'a'..'z' || it in 'A'..'Z' || it in "ăâîșțĂÂÎȘȚ" }
+            val (msgSource, msgTarget) = if (greekCount > latinCount) {
+                Pair(TranslateLanguage.GREEK, if (configuredSource != "AUTO") configuredSource else TranslateLanguage.ROMANIAN)
+            } else {
+                Pair(if (configuredSource != "AUTO") configuredSource else TranslateLanguage.ROMANIAN, configuredTarget)
+            }
 
             // Check in-memory cache first for fast scroll rendering
             val cachedTranslation = translationCache.get(cleanText)
@@ -314,8 +330,8 @@ class TranslationAccessibilityService : AccessibilityService() {
             // 1. Pre-translation idiom and sense resolution (e.g. holidays, slang, common questions)
             val idiomaticTranslation = TranslationSenseEngine.resolveIdiomPreTranslation(
                 cleanText,
-                configuredSource,
-                configuredTarget
+                msgSource,
+                msgTarget
             )
             if (idiomaticTranslation != null) {
                 translationCache.put(cleanText, idiomaticTranslation)
@@ -330,25 +346,24 @@ class TranslationAccessibilityService : AccessibilityService() {
                 .addOnSuccessListener { candidatesList ->
                     val isEligible = TranslationSenseEngine.isEligibleSourceText(
                         cleanText,
-                        configuredSource,
-                        configuredTarget,
+                        msgSource,
+                        msgTarget,
                         candidatesList
                     )
                     if (!isEligible) {
-                        // Drop non-source text (English links/previews, Greek text, etc.)
+                        // Drop non-source text (English links/previews, etc.)
                         pendingCount--
                         checkBatchComplete(pendingCount, translations)
                         return@addOnSuccessListener
                     }
 
-                    val sourceCode = if (configuredSource != "AUTO") configuredSource else TranslateLanguage.ROMANIAN
-                    translateText(sourceCode, configuredTarget, cleanText) { rawTranslated ->
+                    translateText(msgSource, msgTarget, cleanText) { rawTranslated ->
                         if (rawTranslated != null) {
                             val senseCorrected = TranslationSenseEngine.applyPostTranslationSenseLogic(
                                 cleanText,
                                 rawTranslated,
-                                sourceCode,
-                                configuredTarget
+                                msgSource,
+                                msgTarget
                             )
                             translationCache.put(cleanText, senseCorrected)
                             translations.add(Pair(rect, senseCorrected))
@@ -360,28 +375,26 @@ class TranslationAccessibilityService : AccessibilityService() {
                 .addOnFailureListener {
                     val isEligible = TranslationSenseEngine.isEligibleSourceText(
                         cleanText,
-                        configuredSource,
-                        configuredTarget,
+                        msgSource,
+                        msgTarget,
                         emptyList()
                     )
-                    if (!isEligible) {
-                        pendingCount--
-                        checkBatchComplete(pendingCount, translations)
-                        return@addOnFailureListener
-                    }
-
-                    val sourceCode = if (configuredSource != "AUTO") configuredSource else TranslateLanguage.ROMANIAN
-                    translateText(sourceCode, configuredTarget, cleanText) { rawTranslated ->
-                        if (rawTranslated != null) {
-                            val senseCorrected = TranslationSenseEngine.applyPostTranslationSenseLogic(
-                                cleanText,
-                                rawTranslated,
-                                sourceCode,
-                                configuredTarget
-                            )
-                            translationCache.put(cleanText, senseCorrected)
-                            translations.add(Pair(rect, senseCorrected))
+                    if (isEligible) {
+                        translateText(msgSource, msgTarget, cleanText) { rawTranslated ->
+                            if (rawTranslated != null) {
+                                val senseCorrected = TranslationSenseEngine.applyPostTranslationSenseLogic(
+                                    cleanText,
+                                    rawTranslated,
+                                    msgSource,
+                                    msgTarget
+                                )
+                                translationCache.put(cleanText, senseCorrected)
+                                translations.add(Pair(rect, senseCorrected))
+                            }
+                            pendingCount--
+                            checkBatchComplete(pendingCount, translations)
                         }
+                    } else {
                         pendingCount--
                         checkBatchComplete(pendingCount, translations)
                     }
@@ -412,6 +425,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         outList: MutableList<MessageCandidate>,
         minY: Int,
         maxY: Int,
+        configuredSource: String,
         configuredTarget: String
     ): Boolean {
         if (node.isEditable) {
@@ -422,7 +436,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         var childFound = false
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            val found = collectMessageCandidates(child, outList, minY, maxY, configuredTarget)
+            val found = collectMessageCandidates(child, outList, minY, maxY, configuredSource, configuredTarget)
             if (found) {
                 childFound = true
             }
@@ -436,7 +450,15 @@ class TranslationAccessibilityService : AccessibilityService() {
         val rawText = node.text?.toString() ?: node.contentDescription?.toString()
         if (!rawText.isNullOrBlank()) {
             val cleanText = TranslationFilter.cleanMessageText(rawText)
-            if (cleanText.isNotBlank() && TranslationFilter.shouldTranslate(cleanText, configuredTarget)) {
+            val greekCount = cleanText.count { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }
+            val latinCount = cleanText.count { it in 'a'..'z' || it in 'A'..'Z' || it in "ăâîșțĂÂÎȘȚ" }
+            val effectiveTarget = if (greekCount > latinCount) {
+                if (configuredSource != "AUTO") configuredSource else TranslateLanguage.ROMANIAN
+            } else {
+                configuredTarget
+            }
+
+            if (cleanText.isNotBlank() && TranslationFilter.shouldTranslate(cleanText, effectiveTarget)) {
                 val rect = Rect()
                 node.getBoundsInScreen(rect)
 
@@ -537,7 +559,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         return null
     }
 
-    private fun handleOutgoingTyping(event: AccessibilityEvent) {
+    private fun handleOutgoingTyping(event: AccessibilityEvent? = null) {
         val prefs = getSharedPreferences("translator_prefs", Context.MODE_PRIVATE)
         val isKeyboardTranslatorEnabled = prefs.getBoolean("keyboard_translator_enabled", false)
         if (!isKeyboardTranslatorEnabled) {
@@ -545,8 +567,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             return
         }
 
-        val node = event.source ?: return
-        if (!node.isEditable) return
+        val node = findCurrentEditableNode() ?: (if (event?.source?.isEditable == true) event.source else null) ?: return
 
         val rawText = node.text?.toString()?.trim() ?: ""
         val hintText = node.hintText?.toString()?.trim() ?: ""
@@ -557,49 +578,76 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
         lastInsertedText = null
 
-        // Ignore empty text and common hint/placeholder labels ("Μήνυμα", "message", "type a message")
-        if (rawText.length < 2 || !rawText.any { it.isLetter() } ||
+        val configuredSource = prefs.getString("source_language", TranslateLanguage.ROMANIAN) ?: TranslateLanguage.ROMANIAN
+        val configuredTarget = prefs.getString("target_language", TranslateLanguage.GREEK) ?: TranslateLanguage.GREEK
+
+        val draftSourceLang = if (configuredSource != "AUTO") configuredTarget else TranslateLanguage.GREEK
+        val draftTargetLang = if (configuredSource != "AUTO") configuredSource else TranslateLanguage.ROMANIAN
+        val langBadge = draftTargetLang.uppercase()
+
+        val isPlaceholder = rawText.length < 2 || !rawText.any { it.isLetter() } ||
             rawText.equals(hintText, ignoreCase = true) ||
             rawText.equals("μήνυμα", ignoreCase = true) ||
             rawText.equals("μηνυμα", ignoreCase = true) ||
             rawText.equals("message", ignoreCase = true) ||
-            rawText.equals("type a message", ignoreCase = true)) {
-            overlayManager.removeDraftOverlay()
+            rawText.equals("type a message", ignoreCase = true)
+
+        val inputRect = Rect()
+        node.getBoundsInScreen(inputRect)
+
+        if (isPlaceholder) {
+            if (inputRect.top > 0) {
+                overlayManager.updateDraftOverlay(
+                    inputRect = inputRect,
+                    text = "Type message...",
+                    targetLangCode = langBadge,
+                    showReplace = false,
+                    onInsertClicked = {},
+                    onDismissClicked = {
+                        overlayManager.removeDraftOverlay()
+                    }
+                )
+            }
             return
         }
 
-        val configuredSource = prefs.getString("source_language", TranslateLanguage.ROMANIAN) ?: TranslateLanguage.ROMANIAN
-        val configuredTarget = prefs.getString("target_language", TranslateLanguage.GREEK) ?: TranslateLanguage.GREEK
-
-        // Symmetrical reverse translation: translate user draft from target language into recipient's source language
-        val draftSourceLang = if (configuredSource != "AUTO") configuredTarget else TranslateLanguage.GREEK
-        val draftTargetLang = if (configuredSource != "AUTO") configuredSource else TranslateLanguage.ROMANIAN
-
         typingJob?.cancel()
         typingJob = serviceScope.launch {
-            delay(200) // 200ms debounce while user is actively typing
+            delay(150) // 150ms debounce while user is typing
 
-            // When keyboard is active, ensure message overlays are removed so screen is not overflooded
             overlayManager.removeAllMessageOverlays()
 
-            // Re-fetch fresh live editable node and bounds after keyboard animation has settled
             val liveNode = findCurrentEditableNode() ?: node
             val liveText = liveNode.text?.toString()?.trim() ?: rawText
             val liveHint = liveNode.hintText?.toString()?.trim() ?: hintText
-            if (liveText.length < 2 || !liveText.any { it.isLetter() } ||
+
+            val livePlaceholder = liveText.length < 2 || !liveText.any { it.isLetter() } ||
                 liveText.equals(liveHint, ignoreCase = true) ||
                 liveText.equals("μήνυμα", ignoreCase = true) ||
                 liveText.equals("μηνυμα", ignoreCase = true) ||
                 liveText.equals("message", ignoreCase = true) ||
-                liveText.equals("type a message", ignoreCase = true)) {
-                overlayManager.removeDraftOverlay()
-                return@launch
+                liveText.equals("type a message", ignoreCase = true)
+
+            val freshRect = Rect()
+            liveNode.getBoundsInScreen(freshRect)
+            if (freshRect.top <= 0) {
+                node.getBoundsInScreen(freshRect)
             }
 
-            val inputRect = Rect()
-            liveNode.getBoundsInScreen(inputRect)
-            if (inputRect.top <= 0) {
-                node.getBoundsInScreen(inputRect)
+            if (livePlaceholder) {
+                if (freshRect.top > 0) {
+                    overlayManager.updateDraftOverlay(
+                        inputRect = freshRect,
+                        text = "Type message...",
+                        targetLangCode = langBadge,
+                        showReplace = false,
+                        onInsertClicked = {},
+                        onDismissClicked = {
+                            overlayManager.removeDraftOverlay()
+                        }
+                    )
+                }
+                return@launch
             }
 
             // 1. Pre-translation idiomatic & conversational check
@@ -609,11 +657,11 @@ class TranslationAccessibilityService : AccessibilityService() {
                 draftTargetLang
             )
             if (idiomaticDraft != null) {
-                val langBadge = draftTargetLang.uppercase()
                 overlayManager.updateDraftOverlay(
-                    inputRect = inputRect,
+                    inputRect = freshRect,
                     text = idiomaticDraft,
                     targetLangCode = langBadge,
+                    showReplace = true,
                     onInsertClicked = {
                         insertTranslatedTextIntoInput(idiomaticDraft, liveNode)
                     },
@@ -633,11 +681,11 @@ class TranslationAccessibilityService : AccessibilityService() {
                         sourceLang = draftSourceLang,
                         targetLang = draftTargetLang
                     )
-                    val langBadge = draftTargetLang.uppercase()
                     overlayManager.updateDraftOverlay(
-                        inputRect = inputRect,
+                        inputRect = freshRect,
                         text = translatedDraft,
                         targetLangCode = langBadge,
+                        showReplace = true,
                         onInsertClicked = {
                             insertTranslatedTextIntoInput(translatedDraft, liveNode)
                         },

@@ -465,5 +465,32 @@ class TranslationSenseEngineTest {
         )
         assertEquals("Hai pleacă acum", corrected2)
     }
+
+    @Test
+    fun resolveGreekCursesAndInsults_resolvesGianniGamiesai() {
+        val result = TranslationSenseEngine.resolveIdiomPreTranslation(
+            "Γιάννη γαμιέσαι",
+            TranslateLanguage.GREEK,
+            TranslateLanguage.ROMANIAN
+        )
+        assertNotNull(result)
+        assertEquals("Du-te dracului, Giannis!", result)
+
+        val isEligible = TranslationSenseEngine.isEligibleSourceText(
+            "Γιάννη γαμιέσαι",
+            TranslateLanguage.GREEK,
+            TranslateLanguage.ROMANIAN,
+            emptyList()
+        )
+        assertTrue(isEligible)
+
+        val postResult = TranslationSenseEngine.applyPostTranslationSenseLogic(
+            originalText = "Γιάννη γαμιέσαι",
+            translatedText = "Giannis se fute",
+            sourceLang = TranslateLanguage.GREEK,
+            targetLang = TranslateLanguage.ROMANIAN
+        )
+        assertEquals("Du-te dracului, Giannis!", postResult)
+    }
 }
 
