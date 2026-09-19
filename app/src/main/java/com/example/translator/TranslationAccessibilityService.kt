@@ -172,8 +172,11 @@ class TranslationAccessibilityService : AccessibilityService() {
                     scanAndTranslateVisibleMessages(event.source)
                 }
             }
-            AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> {
-                handleOutgoingTyping(event)
+            AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED,
+            AccessibilityEvent.TYPE_VIEW_FOCUSED -> {
+                if (event.source?.isEditable == true) {
+                    handleOutgoingTyping(event)
+                }
             }
         }
     }
@@ -441,12 +444,55 @@ class TranslationAccessibilityService : AccessibilityService() {
         return false
     }
 
+    private var lastInsertedText: String? = null
+
+    private fun findCurrentEditableNode(): AccessibilityNodeInfo? {
+        try {
+            val focused = findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            if (focused != null && focused.isEditable) {
+                return focused
+            }
+        } catch (e: Exception) {
+            // Ignore
+        }
+
+        try {
+            val activeRoot = rootInActiveWindow
+            val focused = activeRoot?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            if (focused != null && focused.isEditable) {
+                return focused
+            }
+        } catch (e: Exception) {
+            // Ignore
+        }
+
+        val root = findWhatsAppRootNode() ?: return null
+        return findFirstEditableChild(root)
+    }
+
+    private fun findFirstEditableChild(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        if (node.isEditable) return node
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = findFirstEditableChild(child)
+            if (found != null) return found
+        }
+        return null
+    }
+
     private fun handleOutgoingTyping(event: AccessibilityEvent) {
         val node = event.source ?: return
         if (!node.isEditable) return
 
         val rawText = node.text?.toString()?.trim() ?: ""
-        if (rawText.isBlank()) {
+
+        if (rawText == lastInsertedText) {
+            overlayManager.removeDraftOverlay()
+            return
+        }
+        lastInsertedText = null
+
+        if (rawText.length < 2 || !rawText.any { it.isLetter() }) {
             overlayManager.removeDraftOverlay()
             return
         }
@@ -458,20 +504,28 @@ class TranslationAccessibilityService : AccessibilityService() {
         val configuredSource = prefs.getString("source_language", TranslateLanguage.ROMANIAN) ?: TranslateLanguage.ROMANIAN
         val configuredTarget = prefs.getString("target_language", TranslateLanguage.GREEK) ?: TranslateLanguage.GREEK
 
-        // Symmetrical reverse translation: translate user draft into the recipient's language
+        // Symmetrical reverse translation: translate user draft from target language into recipient's source language
         val draftSourceLang = if (configuredSource != "AUTO") configuredTarget else TranslateLanguage.GREEK
         val draftTargetLang = if (configuredSource != "AUTO") configuredSource else TranslateLanguage.ROMANIAN
 
         typingJob?.cancel()
         typingJob = serviceScope.launch {
-            delay(300) // 300ms debounce while user is actively typing
+            delay(250) // 250ms debounce while user is actively typing
 
             translateText(draftSourceLang, draftTargetLang, rawText) { translatedDraft ->
-                if (translatedDraft != null && translatedDraft.isNotBlank()) {
-                    overlayManager.updateDraftOverlay(inputRect, translatedDraft) {
-                        // On tap draft preview: replace WhatsApp input box with translated draft
-                        insertTranslatedTextIntoInput(node, translatedDraft)
-                    }
+                if (translatedDraft != null && translatedDraft.isNotBlank() && translatedDraft != rawText) {
+                    val langBadge = draftTargetLang.uppercase()
+                    overlayManager.updateDraftOverlay(
+                        inputRect = inputRect,
+                        text = translatedDraft,
+                        targetLangCode = langBadge,
+                        onInsertClicked = {
+                            insertTranslatedTextIntoInput(translatedDraft, node)
+                        },
+                        onDismissClicked = {
+                            overlayManager.removeDraftOverlay()
+                        }
+                    )
                 } else {
                     overlayManager.removeDraftOverlay()
                 }
@@ -479,21 +533,43 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun insertTranslatedTextIntoInput(node: AccessibilityNodeInfo, text: String) {
+    private fun insertTranslatedTextIntoInput(text: String, fallbackNode: AccessibilityNodeInfo? = null) {
         try {
-            val arguments = Bundle().apply {
-                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
-            }
-            val success = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
-            if (!success) {
-                // Fallback to clipboard if direct action is restricted
+            val node = findCurrentEditableNode() ?: fallbackNode
+            if (node != null) {
+                lastInsertedText = text
+                val arguments = Bundle().apply {
+                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+                }
+                val success = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
+                if (success) {
+                    val selArgs = Bundle().apply {
+                        putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, text.length)
+                        putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, text.length)
+                    }
+                    node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, selArgs)
+                    mainHandler.post {
+                        Toast.makeText(this, "Replaced in chat", Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    // Fallback to clipboard if direct action is restricted
+                    val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText("Translated Text", text))
+                    mainHandler.post {
+                        Toast.makeText(this, "Copied to clipboard (Tap Paste in chat)", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } else {
                 val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 clipboard.setPrimaryClip(ClipData.newPlainText("Translated Text", text))
-                Toast.makeText(this, "Copied to clipboard (Tap Paste in chat)", Toast.LENGTH_SHORT).show()
+                mainHandler.post {
+                    Toast.makeText(this, "Copied to clipboard (Tap Paste in chat)", Toast.LENGTH_SHORT).show()
+                }
             }
             overlayManager.removeDraftOverlay()
         } catch (e: Exception) {
             Log.e("Translator", "Failed to set text in input", e)
+            overlayManager.removeDraftOverlay()
         }
     }
 

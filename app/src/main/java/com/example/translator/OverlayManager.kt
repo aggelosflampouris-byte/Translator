@@ -191,7 +191,13 @@ class OverlayManager(private val context: Context) {
     private var draftOverlayView: View? = null
     private var currentDraftText: String? = null
 
-    fun updateDraftOverlay(inputRect: Rect, text: String, onInsertClicked: () -> Unit) {
+    fun updateDraftOverlay(
+        inputRect: Rect,
+        text: String,
+        targetLangCode: String = "RO",
+        onInsertClicked: () -> Unit,
+        onDismissClicked: () -> Unit
+    ) {
         if (text.isBlank()) {
             removeDraftOverlay()
             return
@@ -201,17 +207,27 @@ class OverlayManager(private val context: Context) {
         val screenWidth = metrics.widthPixels
         val density = metrics.density
 
-        val maxBubbleWidth = (screenWidth * 0.90f).toInt()
-        val minBubbleWidth = (120 * density).toInt()
+        val maxBubbleWidth = (screenWidth * 0.94f).toInt()
+        val minBubbleWidth = (160 * density).toInt()
 
         if (draftOverlayView == null) {
             val view = inflater.inflate(R.layout.draft_preview_overlay, null)
             val textView = view.findViewById<TextView>(R.id.draft_text)
+            val badgeView = view.findViewById<TextView>(R.id.draft_badge)
+            val labelView = view.findViewById<TextView>(R.id.draft_label)
+
             textView.text = text
-            textView.maxWidth = maxBubbleWidth
+            badgeView.text = "⇄ $targetLangCode"
+            labelView.text = "Translate to $targetLangCode"
 
             view.findViewById<View>(R.id.draft_container).setOnClickListener {
                 onInsertClicked()
+            }
+            view.findViewById<View>(R.id.draft_action_replace).setOnClickListener {
+                onInsertClicked()
+            }
+            view.findViewById<View>(R.id.draft_action_close).setOnClickListener {
+                onDismissClicked()
             }
 
             view.measure(
@@ -223,7 +239,7 @@ class OverlayManager(private val context: Context) {
             val bubbleHeight = view.measuredHeight.coerceAtLeast((40 * density).toInt())
 
             val spacing = (8 * density).toInt()
-            val posX = (16 * density).toInt()
+            val posX = (12 * density).toInt()
             val posY = (inputRect.top - bubbleHeight - spacing).coerceAtLeast((48 * density).toInt())
 
             val params = WindowManager.LayoutParams(
@@ -259,11 +275,21 @@ class OverlayManager(private val context: Context) {
         } else {
             val view = draftOverlayView ?: return
             val textView = view.findViewById<TextView>(R.id.draft_text)
+            val badgeView = view.findViewById<TextView>(R.id.draft_badge)
+            val labelView = view.findViewById<TextView>(R.id.draft_label)
+
             textView.text = text
-            textView.maxWidth = maxBubbleWidth
+            badgeView.text = "⇄ $targetLangCode"
+            labelView.text = "Translate to $targetLangCode"
 
             view.findViewById<View>(R.id.draft_container).setOnClickListener {
                 onInsertClicked()
+            }
+            view.findViewById<View>(R.id.draft_action_replace).setOnClickListener {
+                onInsertClicked()
+            }
+            view.findViewById<View>(R.id.draft_action_close).setOnClickListener {
+                onDismissClicked()
             }
 
             view.measure(
@@ -275,20 +301,14 @@ class OverlayManager(private val context: Context) {
             val bubbleHeight = view.measuredHeight.coerceAtLeast((40 * density).toInt())
 
             val spacing = (8 * density).toInt()
-            val posX = (16 * density).toInt()
+            val posX = (12 * density).toInt()
             val posY = (inputRect.top - bubbleHeight - spacing).coerceAtLeast((48 * density).toInt())
 
-            val params = WindowManager.LayoutParams(
-                bubbleWidth,
-                bubbleHeight,
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-                PixelFormat.TRANSLUCENT
-            ).apply {
-                gravity = Gravity.TOP or Gravity.START
-                x = posX
-                y = posY
-            }
+            val params = view.layoutParams as WindowManager.LayoutParams
+            params.width = bubbleWidth
+            params.height = bubbleHeight
+            params.x = posX
+            params.y = posY
 
             try {
                 windowManager.updateViewLayout(view, params)
