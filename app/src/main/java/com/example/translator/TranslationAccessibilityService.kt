@@ -51,8 +51,9 @@ class TranslationAccessibilityService : AccessibilityService() {
                     service.overlayManager.removeAllOverlays()
                     service.typingJob?.cancel()
                     service.scanJob?.cancel()
+                    service.activeScanLoopJob?.cancel()
                 } else {
-                    service.requestScan()
+                    service.startActiveScanning()
                 }
             }
         }
@@ -62,6 +63,8 @@ class TranslationAccessibilityService : AccessibilityService() {
         val text: String,
         val bounds: Rect
     )
+
+    private var activeScanLoopJob: Job? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -102,8 +105,8 @@ class TranslationAccessibilityService : AccessibilityService() {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                 scanJob?.cancel()
                 scanJob = serviceScope.launch {
-                    delay(120)
-                    scanAndTranslateVisibleMessages(event.source)
+                    delay(100)
+                    scanAndTranslateVisibleMessages()
                 }
             }
             AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> {
@@ -112,29 +115,44 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun requestScan() {
-        scanJob?.cancel()
-        scanJob = serviceScope.launch {
-            val intervals = listOf(50L, 250L, 600L, 1200L)
-            for (delayMs in intervals) {
-                delay(delayMs)
-                if (!FloatingBubbleService.isTranslatingActive) break
-                val found = scanAndTranslateVisibleMessages()
-                if (found > 0) {
+    private fun startActiveScanning() {
+        activeScanLoopJob?.cancel()
+        activeScanLoopJob = serviceScope.launch {
+            // Immediate rapid scans
+            val initialDelays = listOf(50L, 200L, 500L, 1000L)
+            for (d in initialDelays) {
+                delay(d)
+                if (!FloatingBubbleService.isTranslatingActive) return@launch
+                val count = scanAndTranslateVisibleMessages()
+                if (count > 0) {
                     break
                 }
+            }
+
+            // Continuous polling while active (every 1.5s) to catch new messages or delayed models
+            while (FloatingBubbleService.isTranslatingActive) {
+                delay(1500L)
+                if (!FloatingBubbleService.isTranslatingActive) break
+                scanAndTranslateVisibleMessages()
             }
         }
     }
 
     private fun findWhatsAppRootNode(eventSource: AccessibilityNodeInfo? = null): AccessibilityNodeInfo? {
-        if (eventSource != null && isWhatsAppPackage(eventSource.packageName?.toString())) {
-            var current: AccessibilityNodeInfo = eventSource
-            while (true) {
-                val parent = current.parent ?: break
-                current = parent
+        if (eventSource != null) {
+            try {
+                val pkg = eventSource.packageName?.toString() ?: ""
+                if (isWhatsAppPackage(pkg)) {
+                    var current: AccessibilityNodeInfo = eventSource
+                    while (true) {
+                        val parent = current.parent ?: break
+                        current = parent
+                    }
+                    return current
+                }
+            } catch (e: Exception) {
+                // Ignore recycled node
             }
-            return current
         }
 
         try {
@@ -145,17 +163,50 @@ class TranslationAccessibilityService : AccessibilityService() {
                 if (isWhatsAppPackage(pkg)) {
                     return root
                 }
+                if (pkg.isEmpty() && root.childCount > 0) {
+                    val childPkg = root.getChild(0)?.packageName?.toString() ?: ""
+                    if (isWhatsAppPackage(childPkg)) {
+                        return root
+                    }
+                }
             }
         } catch (e: Exception) {
             Log.w("Translator", "Error querying windows in accessibility service", e)
         }
 
-        val active = rootInActiveWindow
-        if (active != null && isWhatsAppPackage(active.packageName?.toString())) {
-            return active
+        try {
+            val active = rootInActiveWindow
+            if (active != null) {
+                val pkg = active.packageName?.toString() ?: ""
+                if (isWhatsAppPackage(pkg)) {
+                    return active
+                }
+                if (pkg.isEmpty() && active.childCount > 0) {
+                    val childPkg = active.getChild(0)?.packageName?.toString() ?: ""
+                    if (isWhatsAppPackage(childPkg)) {
+                        return active
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("Translator", "Error querying rootInActiveWindow", e)
         }
 
-        return null
+        try {
+            val windowList = windows
+            for (window in windowList) {
+                if (window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) {
+                    val root = window.root
+                    if (root != null) {
+                        return root
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // Ignore
+        }
+
+        return rootInActiveWindow
     }
 
     private fun scanAndTranslateVisibleMessages(eventSource: AccessibilityNodeInfo? = null): Int {
@@ -268,11 +319,18 @@ class TranslationAccessibilityService : AccessibilityService() {
         return candidates.size
     }
 
+    private var lastFeedbackToastTime = 0L
+
     private fun checkBatchComplete(pending: Int, results: List<Pair<Rect?, String>>) {
         if (pending <= 0) {
             mainHandler.post {
                 if (FloatingBubbleService.isTranslatingActive) {
                     overlayManager.updateOverlays(results)
+                    val now = System.currentTimeMillis()
+                    if (results.isNotEmpty() && now - lastFeedbackToastTime > 5000) {
+                        lastFeedbackToastTime = now
+                        Toast.makeText(this, "Translated ${results.size} message(s)", Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
         }
@@ -310,7 +368,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             if (cleanText.isNotBlank() && TranslationFilter.shouldTranslate(cleanText, configuredTarget)) {
                 val rect = Rect()
                 node.getBoundsInScreen(rect)
-                if (rect.width() > 10 && rect.height() > 10 && rect.top >= minY && rect.bottom <= maxY) {
+                if (rect.width() > 10 && rect.height() > 10 && rect.top >= minY && rect.top <= maxY) {
                     outList.add(MessageCandidate(cleanText, rect))
                     return true
                 }

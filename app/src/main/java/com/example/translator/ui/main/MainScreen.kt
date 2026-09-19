@@ -60,6 +60,12 @@ fun MainScreen(
   }
 
   LaunchedEffect(sourceLanguage, targetLanguage) {
+      if (!prefs.contains("source_language")) {
+          prefs.edit().putString("source_language", sourceLanguage).apply()
+      }
+      if (!prefs.contains("target_language")) {
+          prefs.edit().putString("target_language", targetLanguage).apply()
+      }
       ensureModelsDownloaded(sourceLanguage, targetLanguage)
   }
 
