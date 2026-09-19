@@ -92,14 +92,72 @@ class TranslationAccessibilityService : AccessibilityService() {
         return pkg != null && (pkg == "com.whatsapp" || pkg == "com.whatsapp.w4b" || pkg.startsWith("com.whatsapp"))
     }
 
+    private fun isIgnoredPackage(pkg: String?): Boolean {
+        if (pkg.isNullOrBlank()) return true
+        if (pkg == applicationContext.packageName) return true
+        if (pkg == "android" || pkg == "com.android.systemui") return true
+        val lower = pkg.lowercase()
+        if (lower.contains("keyboard") || lower.contains("honeyboard") || lower.contains("inputmethod") || lower.contains("ime")) {
+            return true
+        }
+        return false
+    }
+
+    private fun isWhatsAppNodeTree(node: AccessibilityNodeInfo?, depth: Int = 0): Boolean {
+        if (node == null) return false
+        val pkg = node.packageName?.toString() ?: ""
+        if (isWhatsAppPackage(pkg)) return true
+        if (depth >= 3) return false
+        for (i in 0 until Math.min(node.childCount, 6)) {
+            val child = node.getChild(i) ?: continue
+            if (isWhatsAppNodeTree(child, depth + 1)) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun isWhatsAppInForeground(): Boolean {
+        try {
+            val active = rootInActiveWindow
+            if (active != null && isWhatsAppNodeTree(active)) {
+                return true
+            }
+        } catch (e: Exception) {
+            // Ignore
+        }
+
+        try {
+            val windowList = windows
+            for (window in windowList) {
+                if (window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) {
+                    val root = window.root ?: continue
+                    if (isWhatsAppNodeTree(root)) {
+                        return true
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // Ignore
+        }
+
+        return false
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         if (!FloatingBubbleService.isTranslatingActive) return
 
         val packageName = event.packageName?.toString() ?: ""
+        if (isIgnoredPackage(packageName)) {
+            return
+        }
+
         if (!isWhatsAppPackage(packageName)) {
             if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-                overlayManager.removeAllOverlays()
+                if (!isWhatsAppInForeground()) {
+                    overlayManager.removeAllOverlays()
+                }
             }
             return
         }
@@ -111,7 +169,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                 scanJob?.cancel()
                 scanJob = serviceScope.launch {
                     delay(100)
-                    scanAndTranslateVisibleMessages()
+                    scanAndTranslateVisibleMessages(event.source)
                 }
             }
             AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> {
@@ -146,8 +204,7 @@ class TranslationAccessibilityService : AccessibilityService() {
     private fun findWhatsAppRootNode(eventSource: AccessibilityNodeInfo? = null): AccessibilityNodeInfo? {
         if (eventSource != null) {
             try {
-                val pkg = eventSource.packageName?.toString() ?: ""
-                if (isWhatsAppPackage(pkg)) {
+                if (isWhatsAppNodeTree(eventSource)) {
                     var current: AccessibilityNodeInfo = eventSource
                     while (true) {
                         val parent = current.parent ?: break
@@ -161,16 +218,20 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
 
         try {
+            val active = rootInActiveWindow
+            if (active != null && isWhatsAppNodeTree(active)) {
+                return active
+            }
+        } catch (e: Exception) {
+            Log.w("Translator", "Error querying rootInActiveWindow", e)
+        }
+
+        try {
             val windowList = windows
             for (window in windowList) {
-                val root = window.root ?: continue
-                val pkg = root.packageName?.toString() ?: ""
-                if (isWhatsAppPackage(pkg)) {
-                    return root
-                }
-                if (pkg.isEmpty() && root.childCount > 0) {
-                    val childPkg = root.getChild(0)?.packageName?.toString() ?: ""
-                    if (isWhatsAppPackage(childPkg)) {
+                if (window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) {
+                    val root = window.root ?: continue
+                    if (isWhatsAppNodeTree(root)) {
                         return root
                     }
                 }
@@ -179,25 +240,6 @@ class TranslationAccessibilityService : AccessibilityService() {
             Log.w("Translator", "Error querying windows in accessibility service", e)
         }
 
-        try {
-            val active = rootInActiveWindow
-            if (active != null) {
-                val pkg = active.packageName?.toString() ?: ""
-                if (isWhatsAppPackage(pkg)) {
-                    return active
-                }
-                if (pkg.isEmpty() && active.childCount > 0) {
-                    val childPkg = active.getChild(0)?.packageName?.toString() ?: ""
-                    if (isWhatsAppPackage(childPkg)) {
-                        return active
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.w("Translator", "Error querying rootInActiveWindow", e)
-        }
-
-        // WhatsApp is NOT in the foreground! Strictly return null.
         return null
     }
 
@@ -205,8 +247,9 @@ class TranslationAccessibilityService : AccessibilityService() {
         if (!FloatingBubbleService.isTranslatingActive) return 0
         val rootNode = findWhatsAppRootNode(eventSource)
         if (rootNode == null) {
-            // When user exits WhatsApp (e.g. to Home Screen, launcher, or another app), clear all overlays immediately
-            overlayManager.removeAllOverlays()
+            if (!isWhatsAppInForeground()) {
+                overlayManager.removeAllOverlays()
+            }
             return 0
         }
 
@@ -223,7 +266,6 @@ class TranslationAccessibilityService : AccessibilityService() {
         collectMessageCandidates(rootNode, candidates, topInset, screenHeight - bottomInset, configuredTarget)
 
         if (candidates.isEmpty()) {
-            overlayManager.removeAllOverlays()
             return 0
         }
 

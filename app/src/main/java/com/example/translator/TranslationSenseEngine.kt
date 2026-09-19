@@ -109,30 +109,44 @@ object TranslationSenseEngine {
             // 1. Definite Romanian diacritics
             if (clean.any { it in "ăâîșțĂÂÎȘȚ" }) return true
 
-            // 2. Reject known non-Romanian languages identified by ML Kit (Latin, English, Spanish, Italian, etc.)
-            val nonRomanianCandidate = candidates.firstOrNull {
-                it.languageTag in setOf("la", "en", "es", "it", "fr", "pt", "de") && it.confidence >= 0.20f
-            }
-            if (nonRomanianCandidate != null) {
-                return false
-            }
-
-            // 3. Specific Romanian vocabulary (excluding generic Romance prepositions like "de", "in", "e", "a", "la")
+            // 2. Specific Romanian vocabulary (excluding generic Romance prepositions like "de", "in", "e", "a", "la")
             val specificRomanianTokens = words.count { COMMON_ROMANIAN_WORDS.contains(it) && !GENERIC_ROMANCE_PREPOSITIONS.contains(it) }
             if (specificRomanianTokens > 0) {
-                return true
+                val strongNonRomanian = candidates.firstOrNull { (it.languageTag == "en" || it.languageTag == "la") && it.confidence >= 0.70f }
+                if (strongNonRomanian == null && englishTokenCount < 2) {
+                    return true
+                }
             }
 
-            // If only generic prepositions exist (e.g. "de" in "Clamavi de Profundis"), reject
+            // 3. Reject generic Romance prepositions alone (e.g. "de" in "Clamavi de Profundis")
             val hasOnlyGenericPrepositions = romanianTokenCount > 0 && specificRomanianTokens == 0
             if (hasOnlyGenericPrepositions) {
                 return false
             }
 
-            // 4. ML Kit explicit Romanian identification
+            // 4. Reject known non-Romanian languages identified by ML Kit (Latin, English, Spanish, Italian, etc.)
+            val nonRomanianCandidate = candidates.firstOrNull {
+                it.languageTag in setOf("la", "en", "es", "it", "fr", "pt", "de") && it.confidence >= 0.35f
+            }
+            if (nonRomanianCandidate != null) {
+                return false
+            }
+
+            // 5. ML Kit explicit Romanian identification
             val roCandidate = candidates.firstOrNull { it.languageTag == "ro" || it.languageTag == "ron" }
-            if (roCandidate != null && roCandidate.confidence >= 0.35f) {
+            if (roCandidate != null && roCandidate.confidence >= 0.25f) {
                 return true
+            }
+
+            // 6. Multi-word sentences in Latin script without conflicting languages
+            val latinLetters = clean.count { it in 'a'..'z' || it in 'A'..'Z' }
+            if (latinLetters >= 4 && words.size >= 2) {
+                val conflictingLang = candidates.firstOrNull {
+                    it.languageTag != TranslateLanguage.ROMANIAN && it.languageTag != "und" && it.confidence >= 0.50f
+                }
+                if (conflictingLang == null && englishTokenCount < 2 && candidates.none { it.languageTag == "la" && it.confidence >= 0.25f }) {
+                    return true
+                }
             }
 
             return false
