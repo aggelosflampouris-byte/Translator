@@ -431,10 +431,10 @@ class TranslationAccessibilityService : AccessibilityService() {
                     }
                 }
 
-                // Strictly filter incoming messages (left-aligned) and exclude outgoing/centered pills
-                val isIncoming = TranslationSenseEngine.isIncomingMessage(rect.left, rect.right, screenWidth)
+                // Validate chat message bubble (both incoming and sent outgoing messages, excluding centered date pills)
+                val isBubble = TranslationSenseEngine.isMessageBubble(rect.left, rect.right, screenWidth)
 
-                if (isIncoming && rect.width() > 10 && rect.height() > 10 && rect.top >= minY && rect.top <= maxY) {
+                if (isBubble && rect.width() > 10 && rect.height() > 10 && rect.top >= minY && rect.top <= maxY) {
                     outList.add(MessageCandidate(cleanText, rect))
                     return true
                 }

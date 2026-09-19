@@ -11,13 +11,12 @@ object TranslationFilter {
 
     private val URL_PATH_REGEX = Regex("""^/?[a-zA-Z0-9_\-/%?&=.]+$""")
     private val TIMESTAMP_REGEX = Regex("""^\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?$""", RegexOption.IGNORE_CASE)
-    private val TRAILING_TIMESTAMP_REGEX = Regex("""[\s\n]+\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?\s*$""", RegexOption.IGNORE_CASE)
-    private val PERCENTAGE_REGEX = Regex("""^\d{1,3}%$""")
-
     private val WHATSAPP_STATUS_REGEX = Regex(
-        """[,.\s\n]+(delivered|read|sent|pending|παραδόθηκε|διαβάστηκε|στάλθηκε|σε εκκρεμότητα|trimis|citit|livrat|în așteptare)\s*$""",
+        """[,.\s\n]+(delivered|read|sent|pending|παραδόθηκε|διαβάστηκε|στάλθηκε|σε εκκρεμότητα|trimis|citit|livrat|în așteptare|[✓✔\u2713\u2714\u2705]+)\s*$""",
         RegexOption.IGNORE_CASE
     )
+    private val TRAILING_TIMESTAMP_REGEX = Regex("""[\s\n]+\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?(\s*[✓✔\u2713\u2714\u2705]+)?\s*$""", RegexOption.IGNORE_CASE)
+    private val PERCENTAGE_REGEX = Regex("""^\d{1,3}%$""")
 
     private val COMMON_UI_TOKENS = setOf(
         "μήνυμα", "type a message", "message", "search", "αναζήτηση",

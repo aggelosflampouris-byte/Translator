@@ -314,4 +314,46 @@ class TranslationSenseEngineTest {
         )
         assertEquals("Πώς είσαι φίλε μου Γιάννη;", elCorrected)
     }
+
+    @Test
+    fun isMessageBubble_acceptsIncomingAndOutgoingBubblesAndRejectsDatePills() {
+        val screenWidth = 1080
+        // Incoming message (left margin)
+        assertTrue(TranslationSenseEngine.isMessageBubble(36, 750, screenWidth))
+        // Outgoing message (wide, e.g. "Cum ești prietenul meu Giannis")
+        assertTrue(TranslationSenseEngine.isMessageBubble(340, 1036, screenWidth))
+        // Outgoing message (medium, e.g. "Salut, Giannis!")
+        assertTrue(TranslationSenseEngine.isMessageBubble(500, 1036, screenWidth))
+        // Outgoing message (short, e.g. "Ce faci?")
+        assertTrue(TranslationSenseEngine.isMessageBubble(650, 1036, screenWidth))
+        // Centered date pill (e.g. "Σήμερα")
+        assertFalse(TranslationSenseEngine.isMessageBubble(450, 630, screenWidth))
+    }
+
+    @Test
+    fun resolveIdiomPreTranslation_resolvesRomanianSentMessagesToGreek() {
+        val result1 = TranslationSenseEngine.resolveIdiomPreTranslation(
+            "Cum ești prietenul meu Giannis",
+            TranslateLanguage.ROMANIAN,
+            TranslateLanguage.GREEK
+        )
+        assertNotNull(result1)
+        assertEquals("Πώς είσαι, φίλε μου Γιάννη;", result1)
+
+        val result2 = TranslationSenseEngine.resolveIdiomPreTranslation(
+            "Salut, Giannis!",
+            TranslateLanguage.ROMANIAN,
+            TranslateLanguage.GREEK
+        )
+        assertNotNull(result2)
+        assertEquals("Γεια σου, Γιάννη!", result2)
+
+        val result3 = TranslationSenseEngine.resolveIdiomPreTranslation(
+            "Ce faci?",
+            TranslateLanguage.ROMANIAN,
+            TranslateLanguage.GREEK
+        )
+        assertNotNull(result3)
+        assertEquals("Τι κάνεις;", result3)
+    }
 }

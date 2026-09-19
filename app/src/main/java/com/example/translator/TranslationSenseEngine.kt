@@ -62,6 +62,29 @@ object TranslationSenseEngine {
     }
 
     /**
+     * Determines whether a recognized rectangle corresponds to a chat message bubble
+     * (either incoming on the left or sent outgoing on the right), while filtering out
+     * centered date pills (e.g. "Σήμερα", "Πέμπτη") and full-width background chrome.
+     */
+    fun isMessageBubble(rectLeft: Int, rectRight: Int, screenWidth: Int): Boolean {
+        if (screenWidth <= 0) return true
+        val width = rectRight - rectLeft
+        val hasReasonableWidth = width < (screenWidth * 0.95f) && width > 20
+        if (!hasReasonableWidth) return false
+
+        // Incoming message: hugs left margin (< 25% of screen width)
+        val isIncoming = rectLeft < (screenWidth * 0.25f)
+        // Outgoing message: hugs right margin (> 78% of screen width)
+        val isOutgoing = rectRight > (screenWidth * 0.78f)
+
+        return isIncoming || isOutgoing
+    }
+
+    fun isMessageBubble(rect: Rect, screenWidth: Int): Boolean {
+        return isMessageBubble(rect.left, rect.right, screenWidth)
+    }
+
+    /**
      * Enforces strict source-language eligibility.
      * Ensures only text genuinely written in [sourceLang] is translated,
      * and strictly rejects English preview cards, Greek text, and web links.
@@ -239,9 +262,50 @@ object TranslationSenseEngine {
         }
 
         // 3. Conversational Questions & Statements
-        if (normalized.contains("ce faci") || normalized.contains("ce mai faci")) {
-            val address = extractLeadingAddressName(clean) ?: extractAddressName(clean)
-            return if (address != null) "$address, τι κάνεις;" else "Τι κάνεις;"
+        if (normalized.contains("cum esti") || normalized.contains("ce faci") || normalized.contains("ce mai faci")) {
+            val leadingAddress = extractLeadingAddressName(clean)
+            val hasFriend = normalized.contains("prieten") || normalized.contains("prietene") || normalized.contains("prietenul meu")
+            val hasBrother = normalized.contains("frate")
+            val name = extractRomanianName(clean)
+
+            val question = if (normalized.contains("cum esti")) "Πώς είσαι" else if (normalized.contains("ce mai faci")) "Τι γίνεται" else "Τι κάνεις"
+
+            if (leadingAddress != null) {
+                return "$leadingAddress, ${question.lowercase()};"
+            }
+
+            val salutation = when {
+                hasFriend && name != null -> "φίλε μου $name"
+                hasFriend -> "φίλε μου"
+                hasBrother && name != null -> "αδερφέ μου $name"
+                hasBrother -> "αδερφέ μου"
+                name != null -> name
+                else -> null
+            }
+
+            return if (salutation != null) "$question, $salutation;" else "$question;"
+        }
+
+        // 4. Greetings
+        if (normalized.contains("buna dimineata")) {
+            val name = extractRomanianName(clean)
+            return if (name != null) "Καλημέρα, $name!" else "Καλημέρα!"
+        }
+        if (normalized.contains("buna seara")) {
+            val name = extractRomanianName(clean)
+            return if (name != null) "Καλησπέρα, $name!" else "Καλησπέρα!"
+        }
+        if (normalized.contains("noapte buna")) {
+            val name = extractRomanianName(clean)
+            return if (name != null) "Καληνύχτα, $name!" else "Καληνύχτα!"
+        }
+        if (normalized.startsWith("buna ziua")) {
+            val name = extractRomanianName(clean)
+            return if (name != null) "Γεια σας, $name!" else "Γεια σας!"
+        }
+        if (normalized.startsWith("salut") || normalized.startsWith("buna")) {
+            val name = extractRomanianName(clean)
+            return if (name != null) "Γεια σου, $name!" else "Γεια σου!"
         }
 
         if (normalized.contains("totul e bine") || normalized.contains("totul este bine")) {
@@ -459,7 +523,11 @@ object TranslationSenseEngine {
         if (parts.size >= 2) {
             val last = parts.last()
             val cleanName = last.replace(Regex("""[.!?:;]+$"""), "").trim()
-            if (cleanName.length in 2..20 && !cleanName.contains(" ")) {
+            val norm = cleanName.lowercase().replace("ă", "a").replace("â", "a").replace("î", "i").replace("ș", "s").replace("ț", "t")
+            if (norm in setOf("ingerule", "ingerul", "angel", "angelos")) {
+                return formatGreekVocativeName(cleanName)
+            }
+            if (cleanName.length in 2..20 && !cleanName.contains(" ") && !COMMON_ROMANIAN_WORDS.contains(norm)) {
                 return formatGreekVocativeName(cleanName)
             }
         }
@@ -471,8 +539,52 @@ object TranslationSenseEngine {
         if (parts.size >= 2) {
             val first = parts.first()
             val cleanName = first.replace(Regex("""[.!?:;]+$"""), "").trim()
-            if (cleanName.length in 2..20 && !cleanName.contains(" ")) {
+            val norm = cleanName.lowercase().replace("ă", "a").replace("â", "a").replace("î", "i").replace("ș", "s").replace("ț", "t")
+            if (norm in setOf("ingerule", "ingerul", "angel", "angelos")) {
                 return formatGreekVocativeName(cleanName)
+            }
+            if (cleanName.length in 2..20 && !cleanName.contains(" ") && !COMMON_ROMANIAN_WORDS.contains(norm)) {
+                return formatGreekVocativeName(cleanName)
+            }
+        }
+        return null
+    }
+
+    private fun extractRomanianName(text: String): String? {
+        val leading = extractLeadingAddressName(text)
+        if (leading != null) return leading
+
+        val trailing = extractAddressName(text)
+        if (trailing != null) return trailing
+
+        val words = text.replace(Regex("""[;?!,.]+"""), " ")
+            .split(Regex("""\s+"""))
+            .filter { it.isNotBlank() }
+
+        for (word in words) {
+            val norm = word.lowercase()
+                .replace("ă", "a").replace("â", "a").replace("î", "i")
+                .replace("ș", "s").replace("ț", "t")
+            val known = when (norm) {
+                "giannis", "ioannis", "γιάννης", "γιαννη" -> "Γιάννη"
+                "angel", "angelos", "ingerule", "ingerul", "άγγελος" -> "Άγγελε"
+                "george", "georgios", "γιώργος" -> "Γιώργο"
+                "nikos", "nikolaos", "νίκος" -> "Νίκο"
+                "costas", "kostas", "κώστας" -> "Κώστα"
+                "dimitris", "dimitrios", "δημήτρης" -> "Δημήτρη"
+                "mihai", "mihalis", "μιχάλης" -> "Μιχάλη"
+                "maria", "μαρία" -> "Μαρία"
+                "elena", "έλενα" -> "Έλενα"
+                else -> null
+            }
+            if (known != null) return known
+        }
+
+        val lastWord = words.lastOrNull()
+        if (lastWord != null && lastWord.length >= 3 && lastWord.first().isUpperCase()) {
+            val normLast = lastWord.lowercase()
+            if (!COMMON_ROMANIAN_WORDS.contains(normLast)) {
+                return formatGreekVocativeName(lastWord)
             }
         }
         return null
@@ -487,6 +599,9 @@ object TranslationSenseEngine {
             "nikos", "nikolaos", "νίκος" -> "Νίκο"
             "costas", "kostas", "κώστας" -> "Κώστα"
             "dimitris", "dimitrios", "δημήτρης" -> "Δημήτρη"
+            "mihai", "mihalis", "μιχάλης" -> "Μιχάλη"
+            "maria", "μαρία" -> "Μαρία"
+            "elena", "έλενα" -> "Έλενα"
             else -> name
         }
     }
