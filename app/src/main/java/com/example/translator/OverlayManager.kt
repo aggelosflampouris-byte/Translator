@@ -161,15 +161,18 @@ class OverlayManager(private val context: Context) {
         val view = inflater.inflate(R.layout.bubble_overlay, null)
         val (params, overlayBounds) = calculateBubbleLayout(targetRect, view, text)
 
+        view.alpha = 0f
         try {
             params.type = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
             windowManager.addView(view, params)
+            view.animate().alpha(1f).setDuration(150).start()
             activeBubbles[id] = ActiveBubble(view, text, targetRect, overlayBounds)
         } catch (e: Exception) {
             android.util.Log.w("Translator", "addBubble with TYPE_ACCESSIBILITY_OVERLAY failed, trying TYPE_APPLICATION_OVERLAY", e)
             try {
                 params.type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
                 windowManager.addView(view, params)
+                view.animate().alpha(1f).setDuration(150).start()
                 activeBubbles[id] = ActiveBubble(view, text, targetRect, overlayBounds)
             } catch (e2: Exception) {
                 android.util.Log.e("Translator", "OverlayManager failed to addView for bubble $id", e2)

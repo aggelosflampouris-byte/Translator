@@ -28,6 +28,30 @@ object TranslationFilter {
         "συνομιλίες", "ενημερώσεις", "κλήσεις", "chats", "updates", "calls"
     )
 
+    private val SYSTEM_NOTICE_PHRASES = listOf(
+        "end-to-end encrypted",
+        "κρυπτογραφημένα από άκρο σε άκρο",
+        "κρυπτογραφημενα απο ακρο σε ακρο",
+        "criptate de la un capăt la altul",
+        "criptate de la un capat la altul",
+        "waiting for this message",
+        "αναμονή για αυτό το μήνυμα",
+        "αναμονη για αυτο το μηνυμα",
+        "în așteptarea acestui mesaj",
+        "in asteptarea acestui mesaj",
+        "missed voice call",
+        "missed video call",
+        "αναπάντητη φωνητική κλήση",
+        "αναπαντητη φωνητικη κληση",
+        "αναπάντητη βιντεοκλήση",
+        "αναπαντητη βιντεοκληση",
+        "apel vocal nepreluat",
+        "apel video nepreluat",
+        "disappearing messages",
+        "αυτοκαταστρεφόμενα μηνύματα",
+        "mesaje temporare"
+    )
+
     private val MESSAGE_STATUS_TOKENS = setOf(
         "διαβάστηκε", "διαβαστηκε", "παραδόθηκε", "παραδοθηκε", "στάλθηκε", "σταλθηκε",
         "σε εκκρεμότητα", "σε εκκρεμοτητα", "εκκρεμεί", "εκκρεμει", "μη αναγνωσμένο", "μη αναγνωσμενο",
@@ -73,6 +97,11 @@ object TranslationFilter {
         // Filter out common UI labels, status, and navigation markers
         val lower = trimmed.lowercase()
         if (COMMON_UI_TOKENS.contains(lower) || MESSAGE_STATUS_TOKENS.contains(lower)) {
+            return false
+        }
+
+        // Filter out WhatsApp system and call notices
+        if (SYSTEM_NOTICE_PHRASES.any { lower.contains(it) }) {
             return false
         }
 

@@ -36,8 +36,29 @@ class TranslationAccessibilityService : AccessibilityService() {
     private var typingJob: Job? = null
     private var scanJob: Job? = null
 
-    // LRU cache for translated messages to prevent re-translating during scroll
-    private val translationCache = LruCache<String, String>(200)
+    // LRU cache backed by SharedPreferences persistent storage for instant scroll and restart restoration
+    private val translationCache = LruCache<String, String>(500)
+    private val persistentCache by lazy {
+        getSharedPreferences("translation_persistent_cache", Context.MODE_PRIVATE)
+    }
+
+    private fun getCachedTranslation(text: String): String? {
+        val inMemory = translationCache.get(text)
+        if (inMemory != null) return inMemory
+
+        val persisted = persistentCache.getString(text, null)
+        if (persisted != null) {
+            translationCache.put(text, persisted)
+            return persisted
+        }
+        return null
+    }
+
+    private fun putCachedTranslation(text: String, translation: String) {
+        translationCache.put(text, translation)
+        persistentCache.edit().putString(text, translation).apply()
+    }
+
     private val translators = mutableMapOf<String, Translator>()
 
     companion object {
@@ -364,8 +385,8 @@ class TranslationAccessibilityService : AccessibilityService() {
             val msgSource = if (configuredSource != "AUTO") configuredSource else TranslateLanguage.ROMANIAN
             val msgTarget = configuredTarget
 
-            // Check in-memory cache first for fast scroll rendering
-            val cachedTranslation = translationCache.get(cleanText)
+            // Check cache first (in-memory + persistent) for fast scroll rendering
+            val cachedTranslation = getCachedTranslation(cleanText)
             if (cachedTranslation != null) {
                 translations.add(Pair(rect, cachedTranslation))
                 pendingCount--
@@ -380,7 +401,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                 msgTarget
             )
             if (idiomaticTranslation != null) {
-                translationCache.put(cleanText, idiomaticTranslation)
+                putCachedTranslation(cleanText, idiomaticTranslation)
                 translations.add(Pair(rect, idiomaticTranslation))
                 pendingCount--
                 checkBatchComplete(pendingCount, translations)
@@ -411,7 +432,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                                 msgSource,
                                 msgTarget
                             )
-                            translationCache.put(cleanText, senseCorrected)
+                            putCachedTranslation(cleanText, senseCorrected)
                             translations.add(Pair(rect, senseCorrected))
                         }
                         pendingCount--
@@ -434,7 +455,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                                     msgSource,
                                     msgTarget
                                 )
-                                translationCache.put(cleanText, senseCorrected)
+                                putCachedTranslation(cleanText, senseCorrected)
                                 translations.add(Pair(rect, senseCorrected))
                             }
                             pendingCount--
@@ -540,9 +561,10 @@ class TranslationAccessibilityService : AccessibilityService() {
     private fun filterOverlappingCandidates(candidates: List<MessageCandidate>): List<MessageCandidate> {
         if (candidates.size <= 1) return candidates
 
-        val accepted = mutableListOf<MessageCandidate>()
+        val accepted = ArrayList<MessageCandidate>(candidates.size)
         // Longest text first so the full message body is accepted over any sub-fragments
         val sorted = candidates.sortedByDescending { it.text.length }
+        val tempIntersection = Rect()
 
         for (candidate in sorted) {
             val cRect = candidate.bounds
@@ -550,9 +572,8 @@ class TranslationAccessibilityService : AccessibilityService() {
             for (acc in accepted) {
                 val aRect = acc.bounds
                 if (Rect.intersects(aRect, cRect)) {
-                    val intersection = Rect()
-                    if (intersection.setIntersect(aRect, cRect)) {
-                        val intersectArea = intersection.width().toLong() * intersection.height()
+                    if (tempIntersection.setIntersect(aRect, cRect)) {
+                        val intersectArea = tempIntersection.width().toLong() * tempIntersection.height()
                         val cArea = cRect.width().toLong() * cRect.height()
                         val aArea = aRect.width().toLong() * aRect.height()
                         val minArea = Math.min(cArea, aArea)

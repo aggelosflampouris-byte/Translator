@@ -5,6 +5,8 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -15,6 +17,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.navigation3.runtime.NavKey
+import com.example.translator.BuildConfig
 import com.example.translator.FloatingBubbleService
 import com.example.translator.ScreenCaptureService
 import com.example.translator.TranslationAccessibilityService
@@ -58,7 +61,7 @@ fun MainScreen(
               modelStatus = "✓ Language Models Ready (Offline)"
           }
           .addOnFailureListener {
-              modelStatus = "⚠️ Model download pending (Check internet)"
+              modelStatus = "✗ Model download error. Check internet."
           }
   }
 
@@ -148,16 +151,68 @@ fun MainScreen(
   Scaffold(
     snackbarHost = { SnackbarHost(snackbarHostState) }
   ) { innerPadding ->
+    val scrollState = rememberScrollState()
     Column(
       modifier = modifier
           .fillMaxSize()
           .padding(innerPadding)
-          .padding(16.dp),
+          .padding(horizontal = 16.dp, vertical = 20.dp)
+          .verticalScroll(scrollState),
       horizontalAlignment = Alignment.CenterHorizontally,
-      verticalArrangement = Arrangement.Center
+      verticalArrangement = Arrangement.Top
     ) {
       Text("Translator Control Panel", style = MaterialTheme.typography.headlineMedium)
-      Spacer(modifier = Modifier.height(32.dp))
+      Spacer(modifier = Modifier.height(16.dp))
+
+      // App Info Section Card with Version and (In Development)
+      Card(
+          modifier = Modifier.fillMaxWidth(),
+          colors = CardDefaults.cardColors(
+              containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+          )
+      ) {
+          Column(
+              modifier = Modifier
+                  .fillMaxWidth()
+                  .padding(14.dp)
+          ) {
+              Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.SpaceBetween,
+                  verticalAlignment = Alignment.CenterVertically
+              ) {
+                  Text(
+                      text = "App Info",
+                      style = MaterialTheme.typography.titleSmall,
+                      color = MaterialTheme.colorScheme.onPrimaryContainer
+                  )
+                  Surface(
+                      color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                      shape = MaterialTheme.shapes.small
+                  ) {
+                      Text(
+                          text = "v${BuildConfig.VERSION_NAME} (In Development)",
+                          style = MaterialTheme.typography.labelSmall,
+                          color = MaterialTheme.colorScheme.primary,
+                          modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                      )
+                  }
+              }
+              Spacer(modifier = Modifier.height(8.dp))
+              Text(
+                  text = "• Translation Engine: Google ML Kit (On-Device)",
+                  style = MaterialTheme.typography.bodySmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant
+              )
+              Text(
+                  text = "• Scope: WhatsApp Chat Messages & Soft Keyboard",
+                  style = MaterialTheme.typography.bodySmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant
+              )
+          }
+      }
+
+      Spacer(modifier = Modifier.height(20.dp))
 
       // Language Selection
       LanguageDropdown("Source Language", sourceLanguage, listOf("AUTO") + supportedLanguages) {

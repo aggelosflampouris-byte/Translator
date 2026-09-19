@@ -197,4 +197,14 @@ class TranslationFilterTest {
         assertFalse(TranslationFilter.shouldTranslate("Στα υπόλοιπα σε αφήνω μόνο σοβαρά", TranslateLanguage.GREEK))
         assertFalse(TranslationFilter.shouldTranslate("Οκοκ", TranslateLanguage.GREEK))
     }
+
+    @Test
+    fun shouldTranslate_rejectsWhatsAppSystemNotices() {
+        assertFalse(TranslationFilter.shouldTranslate("Messages and calls are end-to-end encrypted", TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.shouldTranslate("Τα μηνύματα και οι κλήσεις είναι κρυπτογραφημένα από άκρο σε άκρο", TranslateLanguage.ROMANIAN))
+        assertFalse(TranslationFilter.shouldTranslate("Mesajele și apelurile sunt criptate de la un capăt la altul", TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.shouldTranslate("Missed voice call", TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.shouldTranslate("Αναπάντητη φωνητική κλήση", TranslateLanguage.ROMANIAN))
+        assertFalse(TranslationFilter.shouldTranslate("Waiting for this message. This may take a while.", TranslateLanguage.GREEK))
+    }
 }
