@@ -67,12 +67,24 @@ class OverlayManager(private val context: Context) {
                 continue
             }
 
-            val matchedId = findMatchingBubble(rect)
+            val mainBubbleBounds = FloatingBubbleService.currentBubbleBounds
+            if (mainBubbleBounds != null && Rect.intersects(mainBubbleBounds, rect)) {
+                // If targetRect directly overlaps main floating bubble, avoid placing bubble over it
+                val screenWidth = context.resources.displayMetrics.widthPixels
+                if (mainBubbleBounds.left > screenWidth / 2 && rect.left >= mainBubbleBounds.left) {
+                    continue
+                }
+            }
+
+            val matchedId = findMatchingBubble(rect, translatedText)
             if (matchedId != null) {
                 // Update existing bubble
                 val bubble = activeBubbles[matchedId]
                 if (bubble != null) {
                     if (draftBounds != null && Rect.intersects(draftBounds, bubble.overlayBounds)) {
+                        continue
+                    }
+                    if (mainBubbleBounds != null && Rect.intersects(mainBubbleBounds, bubble.overlayBounds)) {
                         continue
                     }
                     updateBubble(bubble, rect, translatedText)
@@ -83,6 +95,9 @@ class OverlayManager(private val context: Context) {
                 val view = inflater.inflate(R.layout.bubble_overlay, null)
                 val (params, overlayBounds) = calculateBubbleLayout(rect, view, translatedText)
                 if (draftBounds != null && Rect.intersects(draftBounds, overlayBounds)) {
+                    continue
+                }
+                if (mainBubbleBounds != null && Rect.intersects(mainBubbleBounds, overlayBounds)) {
                     continue
                 }
                 acceptedBoundsInBatch.add(overlayBounds)
@@ -108,11 +123,30 @@ class OverlayManager(private val context: Context) {
         }
     }
 
-    private fun findMatchingBubble(targetRect: Rect): String? {
+    private fun findMatchingBubble(targetRect: Rect, text: String): String? {
         val density = context.resources.displayMetrics.density
-        // Tight threshold to avoid grouping distinct consecutive messages together
-        val proximityThreshold = (10 * density).toInt()
 
+        // 1. Text match: If an active bubble already displays this exact translation,
+        // it is the same message moving during scroll - reuse its view!
+        var bestId: String? = null
+        var minVerticalDist = Int.MAX_VALUE
+
+        for ((id, bubble) in activeBubbles) {
+            if (bubble.text == text) {
+                val dTop = Math.abs(bubble.targetRect.top - targetRect.top)
+                if (dTop < minVerticalDist) {
+                    minVerticalDist = dTop
+                    bestId = id
+                }
+            }
+        }
+
+        if (bestId != null && minVerticalDist < (600 * density).toInt()) {
+            return bestId
+        }
+
+        // 2. Spatial match fallback
+        val proximityThreshold = (15 * density).toInt()
         for ((id, bubble) in activeBubbles) {
             val dTop = Math.abs(bubble.targetRect.top - targetRect.top)
             val dLeft = Math.abs(bubble.targetRect.left - targetRect.left)
@@ -159,9 +193,47 @@ class OverlayManager(private val context: Context) {
 
     private fun calculateBubbleLayout(targetRect: Rect, view: View, text: String): Pair<WindowManager.LayoutParams, Rect> {
         val density = context.resources.displayMetrics.density
+        val screenWidth = context.resources.displayMetrics.widthPixels
 
         // Fit directly ON the incoming message bubble
-        val bubbleWidth = targetRect.width()
+        var bubbleWidth = targetRect.width()
+        var posX = targetRect.left
+        val posY = targetRect.top
+
+        // Avoid overlapping the floating translator main bubble
+        val mainBubbleBounds = FloatingBubbleService.currentBubbleBounds
+        if (mainBubbleBounds != null) {
+            val safetyMargin = (8 * density).toInt()
+            val reservedRect = Rect(
+                mainBubbleBounds.left - safetyMargin,
+                mainBubbleBounds.top - safetyMargin,
+                mainBubbleBounds.right + safetyMargin,
+                mainBubbleBounds.bottom + safetyMargin
+            )
+
+            // Check if vertical ranges overlap
+            val verticalOverlap = (posY < reservedRect.bottom && posY + targetRect.height() > reservedRect.top)
+            if (verticalOverlap) {
+                if (mainBubbleBounds.left > screenWidth / 2) {
+                    val maxRight = reservedRect.left
+                    if (posX + bubbleWidth > maxRight) {
+                        val adjustedWidth = maxRight - posX
+                        if (adjustedWidth >= (60 * density).toInt()) {
+                            bubbleWidth = adjustedWidth
+                        }
+                    }
+                } else {
+                    val minLeft = reservedRect.right
+                    if (posX < minLeft) {
+                        val adjustedWidth = (posX + bubbleWidth) - minLeft
+                        if (adjustedWidth >= (60 * density).toInt()) {
+                            posX = minLeft
+                            bubbleWidth = adjustedWidth
+                        }
+                    }
+                }
+            }
+        }
 
         view.layoutParams = android.view.ViewGroup.LayoutParams(
             bubbleWidth,
@@ -203,15 +275,12 @@ class OverlayManager(private val context: Context) {
         // Height fits on the incoming message text box (at least matching the original bubble height)
         val bubbleHeight = Math.max(targetRect.height(), trueContentHeight)
 
-        // Fit directly ON the incoming message text box
-        val posX = targetRect.left
-        val posY = targetRect.top
-
         val params = WindowManager.LayoutParams(
             bubbleWidth,
             bubbleHeight,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT

@@ -29,6 +29,17 @@ class FloatingBubbleService : Service() {
         var instance: FloatingBubbleService? = null
             private set
 
+        val currentBubbleBounds: android.graphics.Rect?
+            get() {
+                val inst = instance ?: return null
+                val p = inst.layoutParams ?: return null
+                val density = inst.resources.displayMetrics.density
+                val defaultSize = (54 * density).toInt()
+                val w = inst.sphereView?.width?.takeIf { it > 0 } ?: p.width.takeIf { it > 0 } ?: defaultSize
+                val h = inst.sphereView?.height?.takeIf { it > 0 } ?: p.height.takeIf { it > 0 } ?: defaultSize
+                return android.graphics.Rect(p.x, p.y, p.x + w, p.y + h)
+            }
+
         const val ACTION_TOGGLE_ACTIVE = "com.example.translator.ACTION_TOGGLE_ACTIVE"
         const val ACTION_STOP_SERVICE = "com.example.translator.ACTION_STOP_SERVICE"
     }

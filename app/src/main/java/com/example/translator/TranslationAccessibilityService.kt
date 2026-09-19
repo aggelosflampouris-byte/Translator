@@ -104,6 +104,13 @@ class TranslationAccessibilityService : AccessibilityService() {
         return false
     }
 
+    private fun isKeyboardPackage(pkg: String?): Boolean {
+        if (pkg.isNullOrBlank()) return false
+        val lower = pkg.lowercase()
+        return lower.contains("keyboard") || lower.contains("honeyboard") ||
+               lower.contains("inputmethod") || lower.contains("ime")
+    }
+
     private fun isWhatsAppNodeTree(node: AccessibilityNodeInfo?, depth: Int = 0): Boolean {
         if (node == null) return false
         val pkg = node.packageName?.toString() ?: ""
@@ -121,8 +128,14 @@ class TranslationAccessibilityService : AccessibilityService() {
     private fun isWhatsAppInForeground(): Boolean {
         try {
             val active = rootInActiveWindow
-            if (active != null && isWhatsAppNodeTree(active)) {
-                return true
+            if (active != null) {
+                val pkg = active.packageName?.toString() ?: ""
+                if (isWhatsAppPackage(pkg) || isWhatsAppNodeTree(active)) {
+                    return true
+                }
+                if (pkg.isNotBlank() && !isKeyboardPackage(pkg)) {
+                    return false
+                }
             }
         } catch (e: Exception) {
             // Ignore
@@ -130,11 +143,11 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         try {
             val windowList = windows
-            for (window in windowList) {
-                if (window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) {
-                    val root = window.root ?: continue
-                    if (isWhatsAppNodeTree(root)) {
-                        return true
+            if (windowList != null) {
+                for (window in windowList) {
+                    if (window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION && window.isActive) {
+                        val root = window.root ?: continue
+                        return isWhatsAppPackage(root.packageName?.toString()) || isWhatsAppNodeTree(root)
                     }
                 }
             }
@@ -150,13 +163,26 @@ class TranslationAccessibilityService : AccessibilityService() {
         if (!FloatingBubbleService.isTranslatingActive) return
 
         val packageName = event.packageName?.toString() ?: ""
+
+        // Instant app exit cleanup:
+        // If event comes from an external package (Home launcher, other app, SystemUI, etc.),
+        // check immediately whether WhatsApp is no longer in the foreground.
+        if (!isWhatsAppPackage(packageName) && !isKeyboardPackage(packageName)) {
+            if (!isWhatsAppInForeground()) {
+                mainHandler.post {
+                    overlayManager.removeAllOverlays()
+                }
+                return
+            }
+        }
+
         if (isIgnoredPackage(packageName)) {
             return
         }
 
         if (!isWhatsAppPackage(packageName)) {
-            if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-                if (!isWhatsAppInForeground()) {
+            if (!isWhatsAppInForeground()) {
+                mainHandler.post {
                     overlayManager.removeAllOverlays()
                 }
             }
@@ -164,7 +190,18 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
 
         when (event.eventType) {
-            AccessibilityEvent.TYPE_VIEW_SCROLLED,
+            AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
+                if (!isKeyboardVisible()) {
+                    overlayManager.removeDraftOverlay()
+                }
+                // Fast tracking during scroll: minimal 16ms frame debounce
+                // Existing bubbles reuse their views via updateViewLayout with zero lag!
+                scanJob?.cancel()
+                scanJob = serviceScope.launch {
+                    delay(16)
+                    scanAndTranslateVisibleMessages(event.source)
+                }
+            }
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                 if (!isKeyboardVisible()) {
@@ -177,7 +214,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                 }
                 scanJob?.cancel()
                 scanJob = serviceScope.launch {
-                    delay(100)
+                    delay(40)
                     scanAndTranslateVisibleMessages(event.source)
                 }
             }
