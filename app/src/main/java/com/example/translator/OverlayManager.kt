@@ -32,20 +32,34 @@ class OverlayManager(private val context: Context) {
     fun updateOverlays(results: List<Pair<Rect?, String>>) {
         val updatedIds = mutableSetOf<String>()
 
-        for ((rect, translatedText) in results) {
-            if (rect == null || translatedText.isBlank()) continue
+        val draftBounds = currentDraftOverlayBounds
+        for (item in results) {
+            val rect = item.first ?: continue
+            val translatedText = item.second
+            if (translatedText.isBlank()) continue
+
+            // Never render message translation bubbles that overlap the active draft action pill or input bar
+            if (draftBounds != null && Rect.intersects(draftBounds, rect)) {
+                continue
+            }
 
             val matchedId = findMatchingBubble(rect)
             if (matchedId != null) {
-                // Existing bubble near this message
-                val bubble = activeBubbles[matchedId]!!
-                bubble.targetRect = rect
-                if (bubble.text != translatedText) {
-                    bubble.text = translatedText
+                // Update existing bubble
+                val bubble = activeBubbles[matchedId]
+                if (bubble != null) {
+                    if (draftBounds != null && Rect.intersects(draftBounds, bubble.overlayBounds)) {
+                        continue
+                    }
                     updateBubble(bubble, rect, translatedText)
                 }
                 updatedIds.add(matchedId)
             } else {
+                val view = inflater.inflate(R.layout.bubble_overlay, null)
+                val (params, overlayBounds) = calculateBubbleLayout(rect, view, translatedText)
+                if (draftBounds != null && Rect.intersects(draftBounds, overlayBounds)) {
+                    continue
+                }
                 // New bubble
                 val newId = System.currentTimeMillis().toString() + "_" + activeBubbles.size
                 addBubble(rect, translatedText, newId)
@@ -190,6 +204,8 @@ class OverlayManager(private val context: Context) {
 
     private var draftOverlayView: View? = null
     private var currentDraftText: String? = null
+    var currentDraftOverlayBounds: Rect? = null
+        private set
 
     fun updateDraftOverlay(
         inputRect: Rect,
@@ -241,6 +257,24 @@ class OverlayManager(private val context: Context) {
             val spacing = (8 * density).toInt()
             val posX = (12 * density).toInt()
             val posY = (inputRect.top - bubbleHeight - spacing).coerceAtLeast((48 * density).toInt())
+
+            val overlayBounds = Rect(posX, posY, posX + bubbleWidth, posY + bubbleHeight)
+            currentDraftOverlayBounds = overlayBounds
+
+            // Immediately purge any message bubbles that collide with the active draft action pill or input bar
+            val iterator = activeBubbles.iterator()
+            while (iterator.hasNext()) {
+                val entry = iterator.next()
+                if (Rect.intersects(overlayBounds, entry.value.overlayBounds) ||
+                    (inputRect.width() > 0 && Rect.intersects(inputRect, entry.value.overlayBounds))) {
+                    try {
+                        windowManager.removeView(entry.value.view)
+                    } catch (e: Exception) {
+                        // Ignore
+                    }
+                    iterator.remove()
+                }
+            }
 
             val params = WindowManager.LayoutParams(
                 bubbleWidth,
@@ -304,6 +338,24 @@ class OverlayManager(private val context: Context) {
             val posX = (12 * density).toInt()
             val posY = (inputRect.top - bubbleHeight - spacing).coerceAtLeast((48 * density).toInt())
 
+            val overlayBounds = Rect(posX, posY, posX + bubbleWidth, posY + bubbleHeight)
+            currentDraftOverlayBounds = overlayBounds
+
+            // Immediately purge any message bubbles that collide with the active draft action pill or input bar
+            val iterator = activeBubbles.iterator()
+            while (iterator.hasNext()) {
+                val entry = iterator.next()
+                if (Rect.intersects(overlayBounds, entry.value.overlayBounds) ||
+                    (inputRect.width() > 0 && Rect.intersects(inputRect, entry.value.overlayBounds))) {
+                    try {
+                        windowManager.removeView(entry.value.view)
+                    } catch (e: Exception) {
+                        // Ignore
+                    }
+                    iterator.remove()
+                }
+            }
+
             val params = view.layoutParams as WindowManager.LayoutParams
             params.width = bubbleWidth
             params.height = bubbleHeight
@@ -320,6 +372,7 @@ class OverlayManager(private val context: Context) {
     }
 
     fun removeDraftOverlay() {
+        currentDraftOverlayBounds = null
         draftOverlayView?.let {
             try {
                 windowManager.removeView(it)

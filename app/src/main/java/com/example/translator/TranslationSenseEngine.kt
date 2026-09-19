@@ -327,6 +327,52 @@ object TranslationSenseEngine {
 
         val name = extractGreekName(clean)
 
+        // 0. Vulgar, Curses, Insults & Slang Expressions
+        if (normalized.contains("γαμησου") || normalized.contains("γαμηθεις") ||
+            normalized.contains("αντε γαμησου") || normalized.contains("αντε και γαμησου") ||
+            normalized.contains("να πας να γαμηθεις") || normalized.contains("αντε στο διαολο") ||
+            normalized.contains("στο διαολο") || normalized.contains("αντε χεσου")) {
+            return if (name != null) "Du-te dracului, $name!" else "Du-te dracului!"
+        }
+
+        if (normalized.contains("μαλακα") || normalized.contains("μαλακας") || normalized.contains("μαλακες")) {
+            if (normalized.contains("αντε ρε") || normalized.contains("αντε")) {
+                return if (name != null) "Hai mă, prostule, $name!" else "Hai mă, prostule!"
+            }
+            if (normalized.contains("εισαι")) {
+                return if (name != null) "Ești prost, $name!" else "Ești prost!"
+            }
+            return if (name != null) "Prostule, $name!" else "Prostule!"
+        }
+
+        if (normalized.contains("γαμωτο") || normalized.contains("γαμω το")) {
+            return "La dracu!"
+        }
+
+        if (normalized.contains("την πατησες") || normalized.contains("την πατησαμε")) {
+            return if (name != null) "Te-ai futut, $name!" else "Te-ai futut!"
+        }
+
+        if (normalized.contains("σε πηδηξαν") || normalized.contains("σε πηδηξαν μαυροι")) {
+            return if (name != null) "Te-au futut negrii, $name!" else "Te-au futut negrii!"
+        }
+
+        if (normalized.contains("τι στο διαολο") || normalized.contains("τι στο πουτσο")) {
+            return "Ce dracu?"
+        }
+
+        if (normalized.contains("δεν γαμιεται")) {
+            return "Dă-o dracului!"
+        }
+
+        if (normalized.contains("χεστηκα") || normalized.contains("στα αρχιδια μου")) {
+            return "Mă doare-n cot!"
+        }
+
+        if (normalized.contains("παρατα με") || normalized.contains("ασε με ησυχο")) {
+            return if (name != null) "Lasă-mă în pace, $name!" else "Lasă-mă în pace!"
+        }
+
         // 1. "Πως εισαι φιλε μου Γιαννη", "Τι κανεις φιλε μου", etc.
         if (normalized.contains("πως εισαι") || normalized.contains("τι κανεις") ||
             normalized.contains("τι γινεται") || normalized.contains("πως παει")) {
@@ -452,6 +498,24 @@ object TranslationSenseEngine {
 
         if (sourceLang == TranslateLanguage.GREEK && targetLang == TranslateLanguage.ROMANIAN) {
             var result = translatedText.trim()
+            val origNorm = normalizeGreek(originalText.trim())
+            val name = extractGreekName(originalText)
+
+            // Fix ML Kit dropping Greek curses / producing "Ante [name]"
+            if (origNorm.contains("γαμησου") || origNorm.contains("γαμηθεις") || origNorm.contains("αντε γαμησου")) {
+                return if (name != null) "Du-te dracului, $name!" else "Du-te dracului!"
+            }
+            if (origNorm.contains("μαλακα") || origNorm.contains("μαλακας")) {
+                if (name != null) return "Hai mă, prostule, $name!"
+                return "Prostule!"
+            }
+
+            // Fix ML Kit mistranslating Greek "Άντε" as Italian "Ante"
+            if (result.startsWith("Ante ", ignoreCase = true)) {
+                result = result.replaceFirst(Regex("""^Ante\s+""", RegexOption.IGNORE_CASE), "Hai ")
+            }
+            result = result.replace(Regex("""\bAnte\b""", RegexOption.IGNORE_CASE), "Hai")
+
             // Fix "prietenul meu" to vocative "prietene" in direct address contexts
             result = result.replace(Regex("""\b(esti|ești)\s+prietenul\s+meu\b""", RegexOption.IGNORE_CASE), "ești, prietene")
             result = result.replace(Regex("""\bprietenul\s+meu\s+([A-Z][a-zA-Z]+)""", RegexOption.IGNORE_CASE), "prietene $1")
@@ -481,7 +545,11 @@ object TranslationSenseEngine {
 
     private val GREEK_STOPWORDS = setOf(
         "πως", "εισαι", "τι", "κανεις", "φιλε", "μου", "αδερφε", "ολα", "καλα", "που",
-        "καλημερα", "καλησπερα", "καληνυχτα", "και", "να", "το", "σε", "με", "για"
+        "καλημερα", "καλησπερα", "καληνυχτα", "και", "να", "το", "σε", "με", "για",
+        "αντε", "ρε", "μαλακα", "μαλακας", "γαμησου", "γαμηθεις", "διαολο", "χεσου",
+        "πολλα", "χρονια", "ευτυχισμενο", "νεο", "ετος", "τωρα", "εδω", "εκει",
+        "αυριο", "σημερα", "χθες", "ελα", "μπραβο", "ευχαριστω", "παρακαλω", "ναι", "οχι",
+        "συγνωμη", "συγγνωμη", "γεια", "σου", "σας", "εγω", "εσυ", "αυτος", "αυτη", "αυτο"
     )
 
     private fun extractGreekName(text: String): String? {
@@ -508,13 +576,24 @@ object TranslationSenseEngine {
             if (known != null) return known
         }
 
-        // 2. Fallback to capitalized name
-        for (word in listOfNotNull(words.lastOrNull(), words.firstOrNull())) {
-            val norm = normalizeGreek(word)
-            if (word.length >= 3 && word.first().isUpperCase() && !GREEK_STOPWORDS.contains(norm)) {
-                return word
+        // 2. Fallback: last word in sentence if capitalized and not a stopword
+        val lastWord = words.lastOrNull()
+        if (lastWord != null && lastWord.length >= 3 && lastWord.first().isUpperCase()) {
+            val norm = normalizeGreek(lastWord)
+            if (!GREEK_STOPWORDS.contains(norm)) {
+                return lastWord
             }
         }
+
+        // 3. Fallback: first word ONLY if explicitly separated by a comma (e.g., "Γιάννη, πώς είσαι;")
+        val firstWord = words.firstOrNull()
+        if (firstWord != null && text.trim().startsWith("$firstWord,", ignoreCase = true) && firstWord.length >= 3) {
+            val norm = normalizeGreek(firstWord)
+            if (!GREEK_STOPWORDS.contains(norm)) {
+                return firstWord
+            }
+        }
+
         return null
     }
 

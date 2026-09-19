@@ -356,4 +356,59 @@ class TranslationSenseEngineTest {
         assertNotNull(result3)
         assertEquals("Τι κάνεις;", result3)
     }
+
+    @Test
+    fun resolveIdiomPreTranslation_resolvesGreekSlangAndCurses() {
+        val result1 = TranslationSenseEngine.resolveIdiomPreTranslation(
+            "Άντε γαμήσου Γιάννη",
+            TranslateLanguage.GREEK,
+            TranslateLanguage.ROMANIAN
+        )
+        assertNotNull(result1)
+        assertEquals("Du-te dracului, Giannis!", result1)
+
+        val result2 = TranslationSenseEngine.resolveIdiomPreTranslation(
+            "Άντε ρε μαλάκα",
+            TranslateLanguage.GREEK,
+            TranslateLanguage.ROMANIAN
+        )
+        assertNotNull(result2)
+        assertEquals("Hai mă, prostule!", result2)
+
+        val result3 = TranslationSenseEngine.resolveIdiomPreTranslation(
+            "Γαμώτο",
+            TranslateLanguage.GREEK,
+            TranslateLanguage.ROMANIAN
+        )
+        assertNotNull(result3)
+        assertEquals("La dracu!", result3)
+
+        val result4 = TranslationSenseEngine.resolveIdiomPreTranslation(
+            "Σε πήδηξαν μαύροι",
+            TranslateLanguage.GREEK,
+            TranslateLanguage.ROMANIAN
+        )
+        assertNotNull(result4)
+        assertEquals("Te-au futut negrii!", result4)
+    }
+
+    @Test
+    fun applyPostTranslationSenseLogic_fixesGreekAnteAndCurses() {
+        val corrected1 = TranslationSenseEngine.applyPostTranslationSenseLogic(
+            originalText = "Άντε γαμήσου Γιάννη",
+            translatedText = "Ante giannis",
+            sourceLang = TranslateLanguage.GREEK,
+            targetLang = TranslateLanguage.ROMANIAN
+        )
+        assertEquals("Du-te dracului, Giannis!", corrected1)
+
+        val corrected2 = TranslationSenseEngine.applyPostTranslationSenseLogic(
+            originalText = "Άντε φύγε τώρα",
+            translatedText = "Ante pleacă acum",
+            sourceLang = TranslateLanguage.GREEK,
+            targetLang = TranslateLanguage.ROMANIAN
+        )
+        assertEquals("Hai pleacă acum", corrected2)
+    }
 }
+

@@ -259,14 +259,27 @@ class TranslationAccessibilityService : AccessibilityService() {
         val prefs = getSharedPreferences("translator_prefs", Context.MODE_PRIVATE)
         val configuredSource = prefs.getString("source_language", TranslateLanguage.ROMANIAN) ?: TranslateLanguage.ROMANIAN
         val configuredTarget = prefs.getString("target_language", TranslateLanguage.GREEK) ?: TranslateLanguage.GREEK
-
         val candidates = mutableListOf<MessageCandidate>()
         val density = resources.displayMetrics.density
         val topInset = (48 * density).toInt()
         val bottomInset = (40 * density).toInt()
         val screenHeight = resources.displayMetrics.heightPixels
 
-        collectMessageCandidates(rootNode, candidates, topInset, screenHeight - bottomInset, configuredTarget)
+        // When typing / keyboard is active, restrict message scans above the input bar and draft action pill
+        val inputNode = findCurrentEditableNode()
+        val effectiveBottom = if (inputNode != null) {
+            val inputBounds = Rect()
+            inputNode.getBoundsInScreen(inputBounds)
+            if (inputBounds.top > topInset) {
+                inputBounds.top - (65 * density).toInt()
+            } else {
+                screenHeight - bottomInset
+            }
+        } else {
+            screenHeight - bottomInset
+        }
+
+        collectMessageCandidates(rootNode, candidates, topInset, effectiveBottom, configuredTarget)
 
         if (candidates.isEmpty()) {
             return 0
@@ -434,7 +447,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                 // Validate chat message bubble (both incoming and sent outgoing messages, excluding centered date pills)
                 val isBubble = TranslationSenseEngine.isMessageBubble(rect.left, rect.right, screenWidth)
 
-                if (isBubble && rect.width() > 10 && rect.height() > 10 && rect.top >= minY && rect.top <= maxY) {
+                if (isBubble && rect.width() > 10 && rect.height() > 10 && rect.top >= minY && rect.bottom <= maxY) {
                     outList.add(MessageCandidate(cleanText, rect))
                     return true
                 }
