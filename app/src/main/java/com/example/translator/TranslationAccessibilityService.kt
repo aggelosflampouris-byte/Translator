@@ -512,8 +512,37 @@ class TranslationAccessibilityService : AccessibilityService() {
         typingJob = serviceScope.launch {
             delay(250) // 250ms debounce while user is actively typing
 
-            translateText(draftSourceLang, draftTargetLang, rawText) { translatedDraft ->
-                if (translatedDraft != null && translatedDraft.isNotBlank() && translatedDraft != rawText) {
+            // 1. Pre-translation idiomatic & conversational check
+            val idiomaticDraft = TranslationSenseEngine.resolveIdiomPreTranslation(
+                rawText,
+                draftSourceLang,
+                draftTargetLang
+            )
+            if (idiomaticDraft != null) {
+                val langBadge = draftTargetLang.uppercase()
+                overlayManager.updateDraftOverlay(
+                    inputRect = inputRect,
+                    text = idiomaticDraft,
+                    targetLangCode = langBadge,
+                    onInsertClicked = {
+                        insertTranslatedTextIntoInput(idiomaticDraft, node)
+                    },
+                    onDismissClicked = {
+                        overlayManager.removeDraftOverlay()
+                    }
+                )
+                return@launch
+            }
+
+            // 2. Machine translation with post-processing sense correction
+            translateText(draftSourceLang, draftTargetLang, rawText) { rawTranslatedDraft ->
+                if (rawTranslatedDraft != null && rawTranslatedDraft.isNotBlank() && rawTranslatedDraft != rawText) {
+                    val translatedDraft = TranslationSenseEngine.applyPostTranslationSenseLogic(
+                        originalText = rawText,
+                        translatedText = rawTranslatedDraft,
+                        sourceLang = draftSourceLang,
+                        targetLang = draftTargetLang
+                    )
                     val langBadge = draftTargetLang.uppercase()
                     overlayManager.updateDraftOverlay(
                         inputRect = inputRect,

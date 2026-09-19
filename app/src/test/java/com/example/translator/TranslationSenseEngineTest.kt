@@ -249,4 +249,69 @@ class TranslationSenseEngineTest {
         assertFalse(corrected.contains("είσαι πατήσαμε"))
         assertTrue(corrected.contains("μαύροι") || corrected.contains("από μαύρους"))
     }
+
+    @Test
+    fun isIncomingMessage_rejectsWideOutgoingMessages() {
+        val screenWidth = 1080
+        // Outgoing message bubble: "Cum esti prietenul meu Giannis" (left ~340, right ~1036)
+        assertFalse(TranslationSenseEngine.isIncomingMessage(340, 1036, screenWidth))
+        // Long outgoing message expanding left (left ~220, right ~1045)
+        assertFalse(TranslationSenseEngine.isIncomingMessage(220, 1045, screenWidth))
+    }
+
+    @Test
+    fun resolveIdiomPreTranslation_resolvesGreekToRomanianConversationalExpressions() {
+        val result1 = TranslationSenseEngine.resolveIdiomPreTranslation(
+            "Πως εισαι φιλε μου Γιαννη",
+            TranslateLanguage.GREEK,
+            TranslateLanguage.ROMANIAN
+        )
+        assertNotNull(result1)
+        assertEquals("Cum ești, prietene Giannis?", result1)
+
+        val result2 = TranslationSenseEngine.resolveIdiomPreTranslation(
+            "Τι κανεις φιλε μου",
+            TranslateLanguage.GREEK,
+            TranslateLanguage.ROMANIAN
+        )
+        assertNotNull(result2)
+        assertEquals("Ce faci, prietene?", result2)
+
+        val result3 = TranslationSenseEngine.resolveIdiomPreTranslation(
+            "Καλημερα",
+            TranslateLanguage.GREEK,
+            TranslateLanguage.ROMANIAN
+        )
+        assertNotNull(result3)
+        assertEquals("Bună dimineața!", result3)
+
+        val result4 = TranslationSenseEngine.resolveIdiomPreTranslation(
+            "Χρονια πολλα και καλη χρονια, Γιαννη",
+            TranslateLanguage.GREEK,
+            TranslateLanguage.ROMANIAN
+        )
+        assertNotNull(result4)
+        assertEquals("La mulți ani și un An Nou fericit, Giannis!", result4)
+    }
+
+    @Test
+    fun applyPostTranslationSenseLogic_correctsVocativeForms() {
+        // Greek -> Romanian: "prietenul meu" -> "prietene" in direct address
+        val roCorrected = TranslationSenseEngine.applyPostTranslationSenseLogic(
+            originalText = "Πως εισαι φιλε μου Γιαννη",
+            translatedText = "Cum esti prietenul meu Giannis",
+            sourceLang = TranslateLanguage.GREEK,
+            targetLang = TranslateLanguage.ROMANIAN
+        )
+        assertEquals("Cum ești, prietene Giannis?", roCorrected)
+
+        // Romanian -> Greek: "ο φίλος μου Γιάννης" -> "φίλε μου Γιάννη"
+        val elCorrected = TranslationSenseEngine.applyPostTranslationSenseLogic(
+            originalText = "Cum esti prietenul meu Giannis?",
+            translatedText = "Πώς είσαι ο φίλος μου Γιάννης;",
+            sourceLang = TranslateLanguage.ROMANIAN,
+            targetLang = TranslateLanguage.GREEK
+        )
+        assertEquals("Πώς είσαι φίλε μου Γιάννη;", elCorrected)
+    }
 }

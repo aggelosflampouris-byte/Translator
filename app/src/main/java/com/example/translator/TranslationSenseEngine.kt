@@ -50,10 +50,11 @@ object TranslationSenseEngine {
      */
     fun isIncomingMessage(rectLeft: Int, rectRight: Int, screenWidth: Int): Boolean {
         if (screenWidth <= 0) return true
+        val isLeftAligned = rectLeft < (screenWidth * 0.22f)
+        val isNotRightHugging = rectRight < (screenWidth * 0.88f)
         val width = rectRight - rectLeft
-        val isLeftAligned = rectLeft < (screenWidth * 0.35f)
         val hasReasonableWidth = width < (screenWidth * 0.95f) && width > 20
-        return isLeftAligned && hasReasonableWidth
+        return isLeftAligned && isNotRightHugging && hasReasonableWidth
     }
 
     fun isIncomingMessage(rect: Rect, screenWidth: Int): Boolean {
@@ -161,15 +162,25 @@ object TranslationSenseEngine {
      * Resolves known idioms, holiday greetings, and slang expressions before submitting to ML Kit.
      * Prevents literal or nonsensical machine translations for cultural phrases.
      */
+    /**
+     * Resolves known idioms, holiday greetings, and conversational expressions before submitting to ML Kit.
+     * Prevents literal or nonsensical machine translations for cultural phrases.
+     */
     fun resolveIdiomPreTranslation(
         text: String,
         sourceLang: String,
         targetLang: String
     ): String? {
-        if (sourceLang != TranslateLanguage.ROMANIAN || targetLang != TranslateLanguage.GREEK) {
-            return null
+        if (sourceLang == TranslateLanguage.ROMANIAN && targetLang == TranslateLanguage.GREEK) {
+            return resolveRomanianToGreekIdioms(text)
         }
+        if (sourceLang == TranslateLanguage.GREEK && targetLang == TranslateLanguage.ROMANIAN) {
+            return resolveGreekToRomanianIdioms(text)
+        }
+        return null
+    }
 
+    private fun resolveRomanianToGreekIdioms(text: String): String? {
         val clean = TranslationFilter.cleanMessageText(text).trim()
         val normalized = clean.lowercase()
             .replace("ă", "a")
@@ -246,6 +257,75 @@ object TranslationSenseEngine {
         return null
     }
 
+    private fun resolveGreekToRomanianIdioms(text: String): String? {
+        val clean = TranslationFilter.cleanMessageText(text).trim()
+        val normalized = normalizeGreek(clean)
+
+        val name = extractGreekName(clean)
+
+        // 1. "Πως εισαι φιλε μου Γιαννη", "Τι κανεις φιλε μου", etc.
+        if (normalized.contains("πως εισαι") || normalized.contains("τι κανεις") ||
+            normalized.contains("τι γινεται") || normalized.contains("πως παει")) {
+            val hasFriend = normalized.contains("φιλε μου") || normalized.contains("φιλε")
+            val hasBrother = normalized.contains("αδερφε μου") || normalized.contains("αδερφε")
+
+            val salutation = when {
+                hasFriend && name != null -> "prietene $name"
+                hasFriend -> "prietene"
+                hasBrother && name != null -> "frate $name"
+                hasBrother -> "frate"
+                name != null -> name
+                else -> null
+            }
+
+            val question = when {
+                normalized.contains("πως εισαι") -> "Cum ești"
+                normalized.contains("πως παει") -> "Cum merge"
+                normalized.contains("τι γινεται") -> "Ce mai faci"
+                else -> "Ce faci"
+            }
+            return if (salutation != null) "$question, $salutation?" else "$question?"
+        }
+
+        // 2. Greetings
+        if (normalized.contains("γεια σου") || normalized.contains("γεια σου!")) {
+            return if (name != null) "Salut, $name!" else "Salut!"
+        }
+        if (normalized.contains("γεια σας") || normalized.contains("γεια σας!")) {
+            return if (name != null) "Bună ziua, $name!" else "Bună ziua!"
+        }
+        if (normalized.contains("καλημερα")) {
+            return if (name != null) "Bună dimineața, $name!" else "Bună dimineața!"
+        }
+        if (normalized.contains("καλησπερα")) {
+            return if (name != null) "Bună seara, $name!" else "Bună seara!"
+        }
+        if (normalized.contains("καληνυχτα")) {
+            return if (name != null) "Noapte bună, $name!" else "Noapte bună!"
+        }
+
+        // 3. Holiday greetings
+        if (normalized.contains("χρονια πολλα") && (normalized.contains("νεο ετος") || normalized.contains("καλη χρονια") || normalized.contains("ευτυχισμενο"))) {
+            return if (name != null) "La mulți ani și un An Nou fericit, $name!" else "La mulți ani și un An Nou fericit!"
+        }
+        if (normalized == "χρονια πολλα" || normalized == "χρονια πολλα!" || normalized == "χρονια πολλα;") {
+            return if (name != null) "La mulți ani, $name!" else "La mulți ani!"
+        }
+
+        // 4. Status questions / statements
+        if (normalized == "ολα καλα" || normalized == "ολα καλα." || normalized == "ολα καλα!") {
+            return "Totul e bine."
+        }
+        if (normalized == "ολα καλα;" || normalized == "ολα καλα?") {
+            return "Totul e bine?"
+        }
+        if (normalized.contains("που εισαι")) {
+            return if (name != null) "Unde ești, $name?" else "Unde ești?"
+        }
+
+        return null
+    }
+
     /**
      * Post-processing sense logic to correct known statistical and grammatical errors
      * produced by ML Kit's generic offline models.
@@ -256,47 +336,122 @@ object TranslationSenseEngine {
         sourceLang: String,
         targetLang: String
     ): String {
-        if (sourceLang != TranslateLanguage.ROMANIAN || targetLang != TranslateLanguage.GREEK) {
-            return translatedText
+        if (sourceLang == TranslateLanguage.ROMANIAN && targetLang == TranslateLanguage.GREEK) {
+            var result = translatedText.trim()
+            val origNorm = originalText.lowercase()
+                .replace("ă", "a")
+                .replace("â", "a")
+                .replace("î", "i")
+                .replace("ș", "s")
+                .replace("ț", "t")
+
+            // Correction 1: ML Kit mistranslating "La mulți ani" as "Ευτυχισμένα γενέθλια" (Happy Birthday)
+            if (origNorm.contains("an nou") || !origNorm.contains("zi de nastere")) {
+                result = result.replace(Regex("""(Ευτυχισμένα|Χαρούμενα)\s+γενέθλια""", RegexOption.IGNORE_CASE), "Χρόνια πολλά")
+                result = result.replace(Regex("""και ένα ευτυχισμένο νέο έτος""", RegexOption.IGNORE_CASE), "και ευτυχισμένο το νέο έτος")
+            }
+
+            // Correction 2: ML Kit literal translation of "negri" as "μαύρο χρώμα" (black color)
+            if (origNorm.contains("negri")) {
+                result = result.replace("με μαύρο χρώμα", "από μαύρους")
+                result = result.replace("μαύρο χρώμα", "μαύρους")
+            }
+
+            // Correction 3: Grammatical collision "είσαι πατήσαμε" -> "σε πήδηξαν" / "σε πάτησαν"
+            if (result.contains("είσαι πατήσαμε", ignoreCase = true)) {
+                result = result.replace(Regex("""είσαι\s+πατήσαμε""", RegexOption.IGNORE_CASE), "σε πήδηξαν")
+            }
+
+            // Correction 4: Clean up awkward Greek nominative name articles in address contexts
+            result = result.replace(Regex(""",\s*ο\s+([ΆΈΉΊΌΎΏΑ-Ωα-ωάέήίόύώ]+)"""), ", $1")
+            result = result.replace(Regex("""^ο\s+([ΆΈΉΊΌΎΏΑ-Ωα-ωάέήίόύώ]+),"""), "$1,")
+
+            // Correction 5: Vocative address "ο φίλος μου" -> "φίλε μου"
+            result = result.replace(Regex("""\bο\s+φίλος\s+μου\b""", RegexOption.IGNORE_CASE), "φίλε μου")
+            result = result.replace(Regex("""\bφίλος\s+μου\b""", RegexOption.IGNORE_CASE), "φίλε μου")
+
+            // Correction 6: Vocative Greek name endings in address context
+            result = result.replace(Regex("""\bΓιάννης\b(?=[,!;?:]|\s*$)"""), "Γιάννη")
+            result = result.replace(Regex("""\bΆγγελος\b(?=[,!;?:]|\s*$)"""), "Άγγελε")
+            result = result.replace(Regex("""\bΓιώργος\b(?=[,!;?:]|\s*$)"""), "Γιώργο")
+            result = result.replace(Regex("""\bΝίκος\b(?=[,!;?:]|\s*$)"""), "Νίκο")
+            result = result.replace(Regex("""\bΚώστας\b(?=[,!;?:]|\s*$)"""), "Κώστα")
+            result = result.replace(Regex("""\bΔημήτρης\b(?=[,!;?:]|\s*$)"""), "Δημήτρη")
+
+            // Correction 7: Greek question mark normalization (';')
+            if (origNorm.endsWith("?") && result.endsWith("?")) {
+                result = result.substring(0, result.length - 1) + ";"
+            }
+
+            return result
         }
 
-        var result = translatedText.trim()
-        val origNorm = originalText.lowercase()
-            .replace("ă", "a")
-            .replace("â", "a")
-            .replace("î", "i")
-            .replace("ș", "s")
-            .replace("ț", "t")
+        if (sourceLang == TranslateLanguage.GREEK && targetLang == TranslateLanguage.ROMANIAN) {
+            var result = translatedText.trim()
+            // Fix "prietenul meu" to vocative "prietene" in direct address contexts
+            result = result.replace(Regex("""\b(esti|ești)\s+prietenul\s+meu\b""", RegexOption.IGNORE_CASE), "ești, prietene")
+            result = result.replace(Regex("""\bprietenul\s+meu\s+([A-Z][a-zA-Z]+)""", RegexOption.IGNORE_CASE), "prietene $1")
+            result = result.replace(Regex("""\bprietenul\s+meu\b""", RegexOption.IGNORE_CASE), "prietene")
 
-        // Correction 1: ML Kit mistranslating "La mulți ani" as "Ευτυχισμένα γενέθλια" (Happy Birthday)
-        // when the context is New Year or general celebration
-        if (origNorm.contains("an nou") || !origNorm.contains("zi de nastere")) {
-            result = result.replace(Regex("""(Ευτυχισμένα|Χαρούμενα)\s+γενέθλια""", RegexOption.IGNORE_CASE), "Χρόνια πολλά")
-            result = result.replace(Regex("""και ένα ευτυχισμένο νέο έτος""", RegexOption.IGNORE_CASE), "και ευτυχισμένο το νέο έτος")
+            // Question mark normalization for Romanian ('?' instead of Greek ';')
+            if (originalText.trim().endsWith(";") || originalText.trim().endsWith("?") ||
+                result.startsWith("Cum ", ignoreCase = true) ||
+                result.startsWith("Ce ", ignoreCase = true) ||
+                result.startsWith("Unde ", ignoreCase = true)) {
+                if (!result.endsWith("?")) {
+                    result = result.replace(Regex("""[;.]+$"""), "") + "?"
+                }
+            }
+            return result
         }
 
-        // Correction 2: ML Kit literal translation of "negri" as "μαύρο χρώμα" (black color)
-        if (origNorm.contains("negri")) {
-            result = result.replace("με μαύρο χρώμα", "από μαύρους")
-            result = result.replace("μαύρο χρώμα", "μαύρους")
+        return translatedText
+    }
+
+    fun normalizeGreek(text: String): String {
+        return text.lowercase()
+            .replace("ά", "α").replace("έ", "ε").replace("ή", "η")
+            .replace("ί", "ι").replace("ό", "ο").replace("ύ", "υ").replace("ώ", "ω")
+            .replace("ΐ", "ι").replace("ΰ", "υ")
+    }
+
+    private val GREEK_STOPWORDS = setOf(
+        "πως", "εισαι", "τι", "κανεις", "φιλε", "μου", "αδερφε", "ολα", "καλα", "που",
+        "καλημερα", "καλησπερα", "καληνυχτα", "και", "να", "το", "σε", "με", "για"
+    )
+
+    private fun extractGreekName(text: String): String? {
+        val words = text.replace(Regex("""[;?!,.]+"""), " ")
+            .split(Regex("""\s+"""))
+            .filter { it.isNotBlank() }
+        if (words.isEmpty()) return null
+
+        // 1. Match known Greek names anywhere in the text
+        for (word in words) {
+            val norm = normalizeGreek(word)
+            val known = when (norm) {
+                "γιαννη", "γιαννης", "γιαννηs" -> "Giannis"
+                "αγγελε", "αγγελος", "αγγελοs" -> "Angelos"
+                "γιωργο", "γιωργος", "γιωργοs" -> "George"
+                "νικο", "νικος", "νικοs" -> "Nikos"
+                "κωστα", "κωστας", "κωσταs" -> "Costas"
+                "δημητρη", "δημητρης", "δημητρηs" -> "Dimitris"
+                "μιχαλη", "μιχαλης", "μιχαληs" -> "Mihai"
+                "μαρια" -> "Maria"
+                "ελενη" -> "Elena"
+                else -> null
+            }
+            if (known != null) return known
         }
 
-        // Correction 3: Grammatical collision "είσαι πατήσαμε" -> "σε πήδηξαν" / "σε πάτησαν"
-        if (result.contains("είσαι πατήσαμε", ignoreCase = true)) {
-            result = result.replace(Regex("""είσαι\s+πατήσαμε""", RegexOption.IGNORE_CASE), "σε πήδηξαν")
+        // 2. Fallback to capitalized name
+        for (word in listOfNotNull(words.lastOrNull(), words.firstOrNull())) {
+            val norm = normalizeGreek(word)
+            if (word.length >= 3 && word.first().isUpperCase() && !GREEK_STOPWORDS.contains(norm)) {
+                return word
+            }
         }
-
-        // Correction 4: Clean up awkward Greek nominative name articles in address contexts
-        result = result.replace(Regex(""",\s*ο\s+([ΆΈΉΊΌΎΏΑ-Ωα-ωάέήίόύώ]+)"""), ", $1")
-        result = result.replace(Regex("""^ο\s+([ΆΈΉΊΌΎΏΑ-Ωα-ωάέήίόύώ]+),"""), "$1,")
-        result = result.replace(Regex("""\bΆγγελος\b(?=[,!]|\s*$)"""), "Άγγελε")
-
-        // Correction 5: Greek question mark normalization (';')
-        if (origNorm.endsWith("?") && result.endsWith("?")) {
-            result = result.substring(0, result.length - 1) + ";"
-        }
-
-        return result
+        return null
     }
 
     private fun extractAddressName(text: String): String? {
