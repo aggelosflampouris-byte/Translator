@@ -119,43 +119,72 @@ class OverlayManager(private val context: Context) {
     private fun calculateBubbleLayout(targetRect: Rect, view: View, text: String): Pair<WindowManager.LayoutParams, Rect> {
         val metrics = context.resources.displayMetrics
         val screenWidth = metrics.widthPixels
-        val screenHeight = metrics.heightPixels
         val density = metrics.density
 
-        val maxBubbleWidth = (screenWidth * 0.85f).toInt()
-        val minBubbleWidth = (80 * density).toInt()
+        // Match container width comfortably to the original message bubble
+        val maxAllowedWidth = (screenWidth * 0.88f).toInt()
+        val minBubbleWidth = (100 * density).toInt()
+        val targetWidth = Math.max(targetRect.width(), (180 * density).toInt()).coerceIn(minBubbleWidth, maxAllowedWidth)
 
+        view.layoutParams = android.view.ViewGroup.LayoutParams(
+            targetWidth,
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+        )
         val textView = view.findViewById<TextView>(R.id.translated_text)
         textView.text = text
-        textView.maxWidth = maxBubbleWidth
+        textView.maxWidth = targetWidth
 
         view.measure(
-            View.MeasureSpec.makeMeasureSpec(maxBubbleWidth, View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(targetWidth, View.MeasureSpec.AT_MOST),
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
         )
 
-        val bubbleWidth = view.measuredWidth.coerceIn(minBubbleWidth, maxBubbleWidth)
-        val bubbleHeight = view.measuredHeight.coerceAtLeast((32 * density).toInt())
+        // Calculate exact multi-line text height using StaticLayout to prevent under-measurement
+        val textPaint = textView.paint
+        val horizontalPadding = view.paddingLeft + view.paddingRight + textView.paddingLeft + textView.paddingRight
+        val availableTextWidth = (targetWidth - horizontalPadding).coerceAtLeast((80 * density).toInt())
+        val staticLayout = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            android.text.StaticLayout.Builder.obtain(text, 0, text.length, textPaint, availableTextWidth)
+                .setLineSpacing(textView.lineSpacingExtra, textView.lineSpacingMultiplier)
+                .build()
+        } else {
+            @Suppress("DEPRECATION")
+            android.text.StaticLayout(
+                text,
+                textPaint,
+                availableTextWidth,
+                android.text.Layout.Alignment.ALIGN_NORMAL,
+                textView.lineSpacingMultiplier,
+                textView.lineSpacingExtra,
+                false
+            )
+        }
 
-        // Vertical spacing between original message and translated bubble
-        val spacing = (6 * density).toInt()
+        val verticalPadding = view.paddingTop + view.paddingBottom + textView.paddingTop + textView.paddingBottom
+        val trueContentHeight = staticLayout.height + verticalPadding
 
-        // Position ABOVE the original message bubble
+        val bubbleWidth = view.measuredWidth.coerceIn(minBubbleWidth, targetWidth)
+        val bubbleHeight = Math.max(view.measuredHeight, trueContentHeight).coerceAtLeast((34 * density).toInt())
+
+        // Vertical spacing between original message and translated container
+        val spacing = (8 * density).toInt()
+
+        // Position strictly ABOVE the original message bubble
         val safeMargin = (12 * density).toInt()
         val maxX = (screenWidth - bubbleWidth - safeMargin).coerceAtLeast(safeMargin)
         val posX = targetRect.left.coerceIn(safeMargin, maxX)
+
+        val topSafetyMargin = (56 * density).toInt()
         var posY = targetRect.top - bubbleHeight - spacing
 
-        // If too close to status bar (top < 48dp), position BELOW the message bubble instead
-        val topSafetyMargin = (48 * density).toInt()
+        // If pushed under top header, flip below; otherwise guarantee overlay bottom never exceeds targetRect.top
         if (posY < topSafetyMargin) {
             posY = targetRect.bottom + spacing
+        } else {
+            if (posY + bubbleHeight > targetRect.top - spacing) {
+                posY = targetRect.top - bubbleHeight - spacing
+            }
         }
-
-        // Ensure bubble remains within screen bottom margin
-        val bottomSafetyMargin = (40 * density).toInt()
-        val maxY = (screenHeight - bubbleHeight - bottomSafetyMargin).coerceAtLeast(topSafetyMargin)
-        posY = posY.coerceIn(topSafetyMargin, maxY)
 
         val params = WindowManager.LayoutParams(
             bubbleWidth,

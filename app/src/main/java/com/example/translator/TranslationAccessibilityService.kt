@@ -246,75 +246,81 @@ class TranslationAccessibilityService : AccessibilityService() {
                 continue
             }
 
-            // Language validation and translation pipeline
-            if (configuredSource != "AUTO") {
-                // If text is already predominantly Greek (target), skip it
-                if (TranslationFilter.isTargetLanguage(cleanText, configuredTarget, emptyList())) {
-                    pendingCount--
-                    checkBatchComplete(pendingCount, translations)
-                    continue
-                }
+            // 1. Pre-translation idiom and sense resolution (e.g. holidays, slang, common questions)
+            val idiomaticTranslation = TranslationSenseEngine.resolveIdiomPreTranslation(
+                cleanText,
+                configuredSource,
+                configuredTarget
+            )
+            if (idiomaticTranslation != null) {
+                translationCache.put(cleanText, idiomaticTranslation)
+                translations.add(Pair(rect, idiomaticTranslation))
+                pendingCount--
+                checkBatchComplete(pendingCount, translations)
+                continue
+            }
 
-                // Explicitly configured source (e.g. Romanian) -> translate directly
-                translateText(configuredSource, configuredTarget, cleanText) { translated ->
-                    if (translated != null) {
-                        translationCache.put(cleanText, translated)
-                        translations.add(Pair(rect, translated))
+            // 2. Strict language validation pipeline
+            languageIdentifier.identifyPossibleLanguages(cleanText)
+                .addOnSuccessListener { candidatesList ->
+                    val isEligible = TranslationSenseEngine.isEligibleSourceText(
+                        cleanText,
+                        configuredSource,
+                        configuredTarget,
+                        candidatesList
+                    )
+                    if (!isEligible) {
+                        // Drop non-source text (English links/previews, Greek text, etc.)
+                        pendingCount--
+                        checkBatchComplete(pendingCount, translations)
+                        return@addOnSuccessListener
                     }
-                    pendingCount--
-                    checkBatchComplete(pendingCount, translations)
-                }
-            } else {
-                // AUTO mode: check for Romanian vocabulary/diacritics first
-                if (TranslationFilter.isMatchingSourceLanguage(cleanText, TranslateLanguage.ROMANIAN, emptyList())) {
-                    translateText(TranslateLanguage.ROMANIAN, configuredTarget, cleanText) { translated ->
-                        if (translated != null) {
-                            translationCache.put(cleanText, translated)
-                            translations.add(Pair(rect, translated))
+
+                    val sourceCode = if (configuredSource != "AUTO") configuredSource else TranslateLanguage.ROMANIAN
+                    translateText(sourceCode, configuredTarget, cleanText) { rawTranslated ->
+                        if (rawTranslated != null) {
+                            val senseCorrected = TranslationSenseEngine.applyPostTranslationSenseLogic(
+                                cleanText,
+                                rawTranslated,
+                                sourceCode,
+                                configuredTarget
+                            )
+                            translationCache.put(cleanText, senseCorrected)
+                            translations.add(Pair(rect, senseCorrected))
                         }
                         pendingCount--
                         checkBatchComplete(pendingCount, translations)
                     }
-                } else {
-                    languageIdentifier.identifyPossibleLanguages(cleanText)
-                        .addOnSuccessListener { candidatesList ->
-                            val isTarget = TranslationFilter.isTargetLanguage(cleanText, configuredTarget, candidatesList)
-                            if (isTarget) {
-                                pendingCount--
-                                checkBatchComplete(pendingCount, translations)
-                                return@addOnSuccessListener
-                            }
-
-                            val best = candidatesList.firstOrNull { it.languageTag != "und" && it.confidence >= 0.15f }
-                            val bcpCode = best?.let { TranslateLanguage.fromLanguageTag(it.languageTag) } ?: TranslateLanguage.ROMANIAN
-
-                            if (bcpCode != configuredTarget) {
-                                translateText(bcpCode, configuredTarget, cleanText) { translated ->
-                                    if (translated != null) {
-                                        translationCache.put(cleanText, translated)
-                                        translations.add(Pair(rect, translated))
-                                    }
-                                    pendingCount--
-                                    checkBatchComplete(pendingCount, translations)
-                                }
-                            } else {
-                                pendingCount--
-                                checkBatchComplete(pendingCount, translations)
-                            }
-                        }
-                        .addOnFailureListener {
-                            // Fallback to Romanian translation if identification fails
-                            translateText(TranslateLanguage.ROMANIAN, configuredTarget, cleanText) { translated ->
-                                if (translated != null) {
-                                    translationCache.put(cleanText, translated)
-                                    translations.add(Pair(rect, translated))
-                                }
-                                pendingCount--
-                                checkBatchComplete(pendingCount, translations)
-                            }
-                        }
                 }
-            }
+                .addOnFailureListener {
+                    val isEligible = TranslationSenseEngine.isEligibleSourceText(
+                        cleanText,
+                        configuredSource,
+                        configuredTarget,
+                        emptyList()
+                    )
+                    if (!isEligible) {
+                        pendingCount--
+                        checkBatchComplete(pendingCount, translations)
+                        return@addOnFailureListener
+                    }
+
+                    val sourceCode = if (configuredSource != "AUTO") configuredSource else TranslateLanguage.ROMANIAN
+                    translateText(sourceCode, configuredTarget, cleanText) { rawTranslated ->
+                        if (rawTranslated != null) {
+                            val senseCorrected = TranslationSenseEngine.applyPostTranslationSenseLogic(
+                                cleanText,
+                                rawTranslated,
+                                sourceCode,
+                                configuredTarget
+                            )
+                            translationCache.put(cleanText, senseCorrected)
+                            translations.add(Pair(rect, senseCorrected))
+                        }
+                        pendingCount--
+                        checkBatchComplete(pendingCount, translations)
+                    }
+                }
         }
         return candidates.size
     }
@@ -368,7 +374,22 @@ class TranslationAccessibilityService : AccessibilityService() {
             if (cleanText.isNotBlank() && TranslationFilter.shouldTranslate(cleanText, configuredTarget)) {
                 val rect = Rect()
                 node.getBoundsInScreen(rect)
-                if (rect.width() > 10 && rect.height() > 10 && rect.top >= minY && rect.top <= maxY) {
+
+                // Inspect parent message bubble container for accurate container bounds
+                val parent = node.parent
+                val screenWidth = resources.displayMetrics.widthPixels
+                if (parent != null) {
+                    val parentRect = Rect()
+                    parent.getBoundsInScreen(parentRect)
+                    if (parentRect.width() <= screenWidth * 0.92f && parentRect.contains(rect)) {
+                        rect.set(parentRect)
+                    }
+                }
+
+                // Strictly filter incoming messages (left-aligned) and exclude outgoing/centered pills
+                val isIncoming = TranslationSenseEngine.isIncomingMessage(rect.left, rect.right, screenWidth)
+
+                if (isIncoming && rect.width() > 10 && rect.height() > 10 && rect.top >= minY && rect.top <= maxY) {
                     outList.add(MessageCandidate(cleanText, rect))
                     return true
                 }
