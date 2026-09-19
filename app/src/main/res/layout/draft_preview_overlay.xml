@@ -10,7 +10,7 @@
     android:paddingEnd="8dp"
     android:paddingTop="8dp"
     android:paddingBottom="8dp"
-    android:elevation="8dp">
+    android:elevation="4dp">
 
     <!-- Language Badge -->
     <TextView
@@ -23,9 +23,9 @@
         android:paddingTop="3dp"
         android:paddingBottom="3dp"
         android:text="⇄ RO"
-        android:textColor="#34D399"
+        android:textColor="#8696A0"
         android:textSize="11sp"
-        android:textStyle="bold"
+        android:textStyle="normal"
         android:layout_marginEnd="10dp" />
 
     <!-- Text content -->
@@ -39,21 +39,19 @@
             android:id="@+id/draft_label"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Tap to Replace in Chat"
-            android:textColor="#94A3B8"
-            android:textSize="9sp"
-            android:textStyle="bold"
-            android:textAllCaps="true"
-            android:letterSpacing="0.05" />
+            android:text="Replace in chat"
+            android:textColor="#8696A0"
+            android:textSize="10sp"
+            android:textStyle="normal" />
 
         <TextView
             android:id="@+id/draft_text"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="2dp"
-            android:textColor="#F8FAFC"
-            android:textSize="13sp"
-            android:textStyle="bold"
+            android:textColor="#E9EDEF"
+            android:textSize="13.5sp"
+            android:textStyle="normal"
             android:maxLines="3"
             android:ellipsize="end"
             android:lineSpacingExtra="1dp" />

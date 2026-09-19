@@ -58,10 +58,10 @@ fun MainScreen(
       modelStatus = "Downloading language models..."
       client.downloadModelIfNeeded(conditions)
           .addOnSuccessListener {
-              modelStatus = "✓ Language Models Ready (Offline)"
+              modelStatus = "Language models ready (offline)"
           }
           .addOnFailureListener {
-              modelStatus = "✗ Model download error. Check internet."
+              modelStatus = "Model download error. Check connection."
           }
   }
 
@@ -161,14 +161,14 @@ fun MainScreen(
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.Top
     ) {
-      Text("Translator Control Panel", style = MaterialTheme.typography.headlineMedium)
+      Text("Translator", style = MaterialTheme.typography.headlineMedium)
       Spacer(modifier = Modifier.height(16.dp))
 
       // App Info Section Card with Version and (In Development)
-      Card(
+      OutlinedCard(
           modifier = Modifier.fillMaxWidth(),
-          colors = CardDefaults.cardColors(
-              containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+          colors = CardDefaults.outlinedCardColors(
+              containerColor = MaterialTheme.colorScheme.surface
           )
       ) {
           Column(
@@ -182,30 +182,23 @@ fun MainScreen(
                   verticalAlignment = Alignment.CenterVertically
               ) {
                   Text(
-                      text = "App Info",
-                      style = MaterialTheme.typography.titleSmall,
-                      color = MaterialTheme.colorScheme.onPrimaryContainer
+                      text = "App Information",
+                      style = MaterialTheme.typography.titleSmall
                   )
-                  Surface(
-                      color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                      shape = MaterialTheme.shapes.small
-                  ) {
-                      Text(
-                          text = "v${BuildConfig.VERSION_NAME} (In Development)",
-                          style = MaterialTheme.typography.labelSmall,
-                          color = MaterialTheme.colorScheme.primary,
-                          modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                      )
-                  }
+                  Text(
+                      text = "v${BuildConfig.VERSION_NAME} (In Development)",
+                      style = MaterialTheme.typography.bodySmall,
+                      color = MaterialTheme.colorScheme.onSurfaceVariant
+                  )
               }
-              Spacer(modifier = Modifier.height(8.dp))
+              Spacer(modifier = Modifier.height(6.dp))
               Text(
-                  text = "• Translation Engine: Google ML Kit (On-Device)",
+                  text = "Engine: Google ML Kit (On-Device)",
                   style = MaterialTheme.typography.bodySmall,
                   color = MaterialTheme.colorScheme.onSurfaceVariant
               )
               Text(
-                  text = "• Scope: WhatsApp Chat Messages & Soft Keyboard",
+                  text = "Scope: WhatsApp Chat & Keyboard Assistant",
                   style = MaterialTheme.typography.bodySmall,
                   color = MaterialTheme.colorScheme.onSurfaceVariant
               )
@@ -228,16 +221,16 @@ fun MainScreen(
       Text(
           text = modelStatus,
           style = MaterialTheme.typography.bodySmall,
-          color = if (modelStatus.startsWith("✓")) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
+          color = if (modelStatus.contains("ready", ignoreCase = true)) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
       )
 
       Spacer(modifier = Modifier.height(16.dp))
 
       // Keyboard Translation Assistant Switch (Default OFF)
-      Card(
+      OutlinedCard(
           modifier = Modifier.fillMaxWidth(),
-          colors = CardDefaults.cardColors(
-              containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+          colors = CardDefaults.outlinedCardColors(
+              containerColor = MaterialTheme.colorScheme.surface
           )
       ) {
           Row(
@@ -249,7 +242,7 @@ fun MainScreen(
           ) {
               Column(modifier = Modifier.weight(1f)) {
                   Text(
-                      text = "Keyboard Translation Assistant",
+                      text = "Keyboard Assistant",
                       style = MaterialTheme.typography.titleSmall
                   )
                   Text(
@@ -288,24 +281,23 @@ fun MainScreen(
       // Restricted settings guidance — only shown when accessibility is not yet enabled
       if (!isAccessibilityEnabled) {
           Spacer(modifier = Modifier.height(16.dp))
-          Card(
+          OutlinedCard(
               modifier = Modifier.fillMaxWidth(),
-              colors = CardDefaults.cardColors(
-                  containerColor = MaterialTheme.colorScheme.errorContainer
+              colors = CardDefaults.outlinedCardColors(
+                  containerColor = MaterialTheme.colorScheme.surface
               )
           ) {
               Column(modifier = Modifier.padding(16.dp)) {
                   Text(
-                      "⚠️ Android 13+ Restricted Settings",
-                      style = MaterialTheme.typography.titleSmall,
-                      color = MaterialTheme.colorScheme.onErrorContainer
+                      "Android 13+ Restricted Settings",
+                      style = MaterialTheme.typography.titleSmall
                   )
                   Spacer(modifier = Modifier.height(4.dp))
                   Text(
                       "If you see 'App access denied', open App Info → tap ⋮ → " +
                       "'Allow restricted settings', authenticate, then return here.",
                       style = MaterialTheme.typography.bodySmall,
-                      color = MaterialTheme.colorScheme.onErrorContainer
+                      color = MaterialTheme.colorScheme.onSurfaceVariant
                   )
                   Spacer(modifier = Modifier.height(8.dp))
                   OutlinedButton(
@@ -409,11 +401,22 @@ private fun PermissionStatusRow(label: String, granted: Boolean, onFix: () -> Un
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(if (granted) "✅" else "❌", modifier = Modifier.padding(end = 8.dp))
+            Surface(
+                shape = MaterialTheme.shapes.extraSmall,
+                color = if (granted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.padding(end = 10.dp)
+            ) {
+                Text(
+                    text = if (granted) "ON" else "OFF",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (granted) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                )
+            }
             Text(label, style = MaterialTheme.typography.bodyMedium)
         }
         if (!granted) {
-            TextButton(onClick = onFix) { Text("Fix") }
+            TextButton(onClick = onFix) { Text("Configure") }
         }
     }
 }

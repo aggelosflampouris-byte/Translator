@@ -14,7 +14,7 @@
         android:id="@+id/translated_text"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:textColor="#FFFFFF"
+        android:textColor="#E9EDEF"
         android:textSize="14.5sp"
         android:textStyle="normal"
         android:lineSpacingExtra="2dp" />
