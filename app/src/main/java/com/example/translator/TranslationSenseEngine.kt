@@ -36,7 +36,8 @@ object TranslationSenseEngine {
         "azi", "ai", "fost", "am", "avut", "sunt", "este", "e", "in", "în", "de", "cu",
         "pentru", "care", "cine", "dece", "de ce", "vreau", "stiu", "știu", "pot",
         "futut", "fute", "futu", "pula", "pizda", "dracu", "dracului", "negri", "negrii",
-        "ingerule", "îngerule", "frumusețe", "hai", "pa", "pup", "te pup", "om", "oameni"
+        "ingerule", "îngerule", "frumusețe", "hai", "pa", "pup", "te pup", "om", "oameni",
+        "totul", "tot"
     )
 
     /**
@@ -196,17 +197,20 @@ object TranslationSenseEngine {
             return "Τι στο διάολο;"
         }
 
-        // 3. Conversational Questions
-        if (normalized == "ce faci" || normalized == "ce faci?" || normalized == "ce mai faci" || normalized == "ce mai faci?") {
-            return "Τι κάνεις;"
+        // 3. Conversational Questions & Statements
+        if (normalized.contains("ce faci") || normalized.contains("ce mai faci")) {
+            val address = extractLeadingAddressName(clean) ?: extractAddressName(clean)
+            return if (address != null) "$address, τι κάνεις;" else "Τι κάνεις;"
         }
 
-        if (normalized == "ce faci prietene" || normalized == "ce faci prietene?") {
-            return "Τι κάνεις φίλε;"
+        if (normalized.contains("totul e bine") || normalized.contains("totul este bine")) {
+            val address = extractLeadingAddressName(clean) ?: extractAddressName(clean)
+            return if (address != null) "$address, όλα είναι καλά." else "Όλα είναι καλά."
         }
 
         if (normalized == "unde esti" || normalized == "unde esti?") {
-            return "Πού είσαι;"
+            val address = extractLeadingAddressName(clean) ?: extractAddressName(clean)
+            return if (address != null) "$address, πού είσαι;" else "Πού είσαι;"
         }
 
         return null
@@ -290,8 +294,9 @@ object TranslationSenseEngine {
     }
 
     private fun formatGreekVocativeName(name: String): String {
-        return when (name.lowercase()) {
+        return when (name.lowercase().replace("î", "i").replace("ă", "a").replace("ș", "s").replace("ț", "t")) {
             "angel", "angelos", "άγγελος" -> "Άγγελε"
+            "ingerule", "ingerul" -> "Άγγελε"
             "giannis", "ioannis", "γιάννης" -> "Γιάννη"
             "george", "georgios", "γιώργος" -> "Γιώργο"
             "nikos", "nikolaos", "νίκος" -> "Νίκο"

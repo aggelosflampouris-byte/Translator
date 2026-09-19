@@ -378,10 +378,13 @@ class TranslationAccessibilityService : AccessibilityService() {
                 // Inspect parent message bubble container for accurate container bounds
                 val parent = node.parent
                 val screenWidth = resources.displayMetrics.widthPixels
+                val density = resources.displayMetrics.density
                 if (parent != null) {
                     val parentRect = Rect()
                     parent.getBoundsInScreen(parentRect)
-                    if (parentRect.width() <= screenWidth * 0.92f && parentRect.contains(rect)) {
+                    if (parentRect.width() <= screenWidth * 0.92f &&
+                        parentRect.height() <= (250 * density).toInt() &&
+                        parentRect.contains(rect)) {
                         rect.set(parentRect)
                     }
                 }

@@ -124,6 +124,25 @@ class TranslationSenseEngineTest {
     }
 
     @Test
+    fun resolveIdiomPreTranslation_resolvesConversationalQuestionsAndStatements() {
+        val questionResult = TranslationSenseEngine.resolveIdiomPreTranslation(
+            "Îngerule, ce faci?",
+            TranslateLanguage.ROMANIAN,
+            TranslateLanguage.GREEK
+        )
+        assertNotNull(questionResult)
+        assertEquals("Άγγελε, τι κάνεις;", questionResult)
+
+        val statementResult = TranslationSenseEngine.resolveIdiomPreTranslation(
+            "Îngerule, totul e bine.",
+            TranslateLanguage.ROMANIAN,
+            TranslateLanguage.GREEK
+        )
+        assertNotNull(statementResult)
+        assertEquals("Άγγελε, όλα είναι καλά.", statementResult)
+    }
+
+    @Test
     fun resolveIdiomPreTranslation_returnsNullForRegularSentences() {
         val result = TranslationSenseEngine.resolveIdiomPreTranslation(
             "Autobuzul ajunge la ora cinci dupa-amiaza la statie.",

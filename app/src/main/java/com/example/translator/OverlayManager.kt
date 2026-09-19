@@ -70,12 +70,13 @@ class OverlayManager(private val context: Context) {
 
     private fun findMatchingBubble(targetRect: Rect): String? {
         val density = context.resources.displayMetrics.density
-        val proximityThreshold = (40 * density).toInt()
+        // Tight threshold to avoid grouping distinct consecutive messages together
+        val proximityThreshold = (10 * density).toInt()
 
         for ((id, bubble) in activeBubbles) {
-            val dx = Math.abs(bubble.targetRect.centerX() - targetRect.centerX())
-            val dy = Math.abs(bubble.targetRect.centerY() - targetRect.centerY())
-            if (dx < proximityThreshold && dy < proximityThreshold) {
+            val dTop = Math.abs(bubble.targetRect.top - targetRect.top)
+            val dLeft = Math.abs(bubble.targetRect.left - targetRect.left)
+            if (dTop < proximityThreshold && dLeft < proximityThreshold) {
                 return id
             }
         }
@@ -117,32 +118,28 @@ class OverlayManager(private val context: Context) {
     }
 
     private fun calculateBubbleLayout(targetRect: Rect, view: View, text: String): Pair<WindowManager.LayoutParams, Rect> {
-        val metrics = context.resources.displayMetrics
-        val screenWidth = metrics.widthPixels
-        val density = metrics.density
+        val density = context.resources.displayMetrics.density
 
-        // Match container width comfortably to the original message bubble
-        val maxAllowedWidth = (screenWidth * 0.88f).toInt()
-        val minBubbleWidth = (100 * density).toInt()
-        val targetWidth = Math.max(targetRect.width(), (180 * density).toInt()).coerceIn(minBubbleWidth, maxAllowedWidth)
+        // Fit directly ON the incoming message bubble
+        val bubbleWidth = targetRect.width()
 
         view.layoutParams = android.view.ViewGroup.LayoutParams(
-            targetWidth,
+            bubbleWidth,
             android.view.ViewGroup.LayoutParams.WRAP_CONTENT
         )
         val textView = view.findViewById<TextView>(R.id.translated_text)
         textView.text = text
-        textView.maxWidth = targetWidth
+        textView.maxWidth = bubbleWidth
 
         view.measure(
-            View.MeasureSpec.makeMeasureSpec(targetWidth, View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(bubbleWidth, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
         )
 
-        // Calculate exact multi-line text height using StaticLayout to prevent under-measurement
+        // Calculate exact multi-line text height using StaticLayout
         val textPaint = textView.paint
         val horizontalPadding = view.paddingLeft + view.paddingRight + textView.paddingLeft + textView.paddingRight
-        val availableTextWidth = (targetWidth - horizontalPadding).coerceAtLeast((80 * density).toInt())
+        val availableTextWidth = (bubbleWidth - horizontalPadding).coerceAtLeast((60 * density).toInt())
         val staticLayout = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
             android.text.StaticLayout.Builder.obtain(text, 0, text.length, textPaint, availableTextWidth)
                 .setLineSpacing(textView.lineSpacingExtra, textView.lineSpacingMultiplier)
@@ -163,28 +160,12 @@ class OverlayManager(private val context: Context) {
         val verticalPadding = view.paddingTop + view.paddingBottom + textView.paddingTop + textView.paddingBottom
         val trueContentHeight = staticLayout.height + verticalPadding
 
-        val bubbleWidth = view.measuredWidth.coerceIn(minBubbleWidth, targetWidth)
-        val bubbleHeight = Math.max(view.measuredHeight, trueContentHeight).coerceAtLeast((34 * density).toInt())
+        // Height fits on the incoming message text box (at least matching the original bubble height)
+        val bubbleHeight = Math.max(targetRect.height(), trueContentHeight)
 
-        // Vertical spacing between original message and translated container
-        val spacing = (8 * density).toInt()
-
-        // Position strictly ABOVE the original message bubble
-        val safeMargin = (12 * density).toInt()
-        val maxX = (screenWidth - bubbleWidth - safeMargin).coerceAtLeast(safeMargin)
-        val posX = targetRect.left.coerceIn(safeMargin, maxX)
-
-        val topSafetyMargin = (56 * density).toInt()
-        var posY = targetRect.top - bubbleHeight - spacing
-
-        // If pushed under top header, flip below; otherwise guarantee overlay bottom never exceeds targetRect.top
-        if (posY < topSafetyMargin) {
-            posY = targetRect.bottom + spacing
-        } else {
-            if (posY + bubbleHeight > targetRect.top - spacing) {
-                posY = targetRect.top - bubbleHeight - spacing
-            }
-        }
+        // Fit directly ON the incoming message text box
+        val posX = targetRect.left
+        val posY = targetRect.top
 
         val params = WindowManager.LayoutParams(
             bubbleWidth,
