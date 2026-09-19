@@ -58,11 +58,30 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
     }
 
+    data class MessageCandidate(
+        val text: String,
+        val bounds: Rect
+    )
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         currentInstance = this
         isSharedInstanceActive = true
         overlayManager = OverlayManager(this)
+
+        try {
+            val info = serviceInfo ?: android.accessibilityservice.AccessibilityServiceInfo()
+            info.flags = info.flags or
+                android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                android.accessibilityservice.AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
+                android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+            info.eventTypes = AccessibilityEvent.TYPES_ALL_MASK
+            info.feedbackType = android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_GENERIC
+            serviceInfo = info
+        } catch (e: Exception) {
+            Log.e("Translator", "Failed to configure serviceInfo programmatically", e)
+        }
+
         Log.d("Translator", "TranslationAccessibilityService connected")
     }
 
@@ -81,11 +100,10 @@ class TranslationAccessibilityService : AccessibilityService() {
             AccessibilityEvent.TYPE_VIEW_SCROLLED,
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
-                // Debounce full window scans to prevent frame drops during rapid scrolling/updates
                 scanJob?.cancel()
                 scanJob = serviceScope.launch {
                     delay(120)
-                    scanAndTranslateVisibleMessages()
+                    scanAndTranslateVisibleMessages(event.source)
                 }
             }
             AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> {
@@ -97,17 +115,28 @@ class TranslationAccessibilityService : AccessibilityService() {
     private fun requestScan() {
         scanJob?.cancel()
         scanJob = serviceScope.launch {
-            // Immediate attempt
-            delay(50)
-            scanAndTranslateVisibleMessages()
-            // Follow-up attempt after window focus settles
-            delay(200)
-            scanAndTranslateVisibleMessages()
+            val intervals = listOf(50L, 250L, 600L, 1200L)
+            for (delayMs in intervals) {
+                delay(delayMs)
+                if (!FloatingBubbleService.isTranslatingActive) break
+                val found = scanAndTranslateVisibleMessages()
+                if (found > 0) {
+                    break
+                }
+            }
         }
     }
 
-    private fun findWhatsAppRootNode(): AccessibilityNodeInfo? {
-        // 1. Search through all interactive windows (works even if floating overlay has focus)
+    private fun findWhatsAppRootNode(eventSource: AccessibilityNodeInfo? = null): AccessibilityNodeInfo? {
+        if (eventSource != null && isWhatsAppPackage(eventSource.packageName?.toString())) {
+            var current: AccessibilityNodeInfo = eventSource
+            while (true) {
+                val parent = current.parent ?: break
+                current = parent
+            }
+            return current
+        }
+
         try {
             val windowList = windows
             for (window in windowList) {
@@ -121,48 +150,41 @@ class TranslationAccessibilityService : AccessibilityService() {
             Log.w("Translator", "Error querying windows in accessibility service", e)
         }
 
-        // 2. Fallback to rootInActiveWindow
         val active = rootInActiveWindow
         if (active != null && isWhatsAppPackage(active.packageName?.toString())) {
             return active
         }
 
-        return active
+        return null
     }
 
-    private fun scanAndTranslateVisibleMessages() {
-        if (!FloatingBubbleService.isTranslatingActive) return
-        val rootNode = findWhatsAppRootNode() ?: return
+    private fun scanAndTranslateVisibleMessages(eventSource: AccessibilityNodeInfo? = null): Int {
+        if (!FloatingBubbleService.isTranslatingActive) return 0
+        val rootNode = findWhatsAppRootNode(eventSource) ?: return 0
 
         val prefs = getSharedPreferences("translator_prefs", Context.MODE_PRIVATE)
-        val configuredSource = prefs.getString("source_language", "AUTO") ?: "AUTO"
+        val configuredSource = prefs.getString("source_language", TranslateLanguage.ROMANIAN) ?: TranslateLanguage.ROMANIAN
         val configuredTarget = prefs.getString("target_language", TranslateLanguage.GREEK) ?: TranslateLanguage.GREEK
 
-        val messageNodes = mutableListOf<Pair<AccessibilityNodeInfo, Rect>>()
+        val candidates = mutableListOf<MessageCandidate>()
         val density = resources.displayMetrics.density
         val topInset = (48 * density).toInt()
         val bottomInset = (40 * density).toInt()
         val screenHeight = resources.displayMetrics.heightPixels
 
-        collectMessageNodes(rootNode, messageNodes, topInset, screenHeight - bottomInset, configuredTarget)
+        collectMessageCandidates(rootNode, candidates, topInset, screenHeight - bottomInset, configuredTarget)
 
-        if (messageNodes.isEmpty()) {
+        if (candidates.isEmpty()) {
             overlayManager.removeAllOverlays()
-            return
+            return 0
         }
 
         val translations = mutableListOf<Pair<Rect?, String>>()
-        var pendingCount = messageNodes.size
+        var pendingCount = candidates.size
 
-        for ((node, rect) in messageNodes) {
-            val rawText = node.text?.toString() ?: ""
-            val cleanText = TranslationFilter.cleanMessageText(rawText)
-
-            if (cleanText.isBlank() || !TranslationFilter.shouldTranslate(cleanText, configuredTarget)) {
-                pendingCount--
-                checkBatchComplete(pendingCount, translations)
-                continue
-            }
+        for (candidate in candidates) {
+            val cleanText = candidate.text
+            val rect = candidate.bounds
 
             // Check in-memory cache first for fast scroll rendering
             val cachedTranslation = translationCache.get(cleanText)
@@ -175,44 +197,63 @@ class TranslationAccessibilityService : AccessibilityService() {
 
             // Language validation and translation pipeline
             if (configuredSource != "AUTO") {
-                languageIdentifier.identifyPossibleLanguages(cleanText)
-                    .addOnSuccessListener { candidates ->
-                        val isTarget = TranslationFilter.isTargetLanguage(cleanText, configuredTarget, candidates)
-                        val isSource = !isTarget && TranslationFilter.isMatchingSourceLanguage(cleanText, configuredSource, candidates)
+                // If text is already predominantly Greek (target), skip it
+                if (TranslationFilter.isTargetLanguage(cleanText, configuredTarget, emptyList())) {
+                    pendingCount--
+                    checkBatchComplete(pendingCount, translations)
+                    continue
+                }
 
-                        if (isSource) {
-                            translateText(configuredSource, configuredTarget, cleanText) { translated ->
-                                if (translated != null) {
-                                    translationCache.put(cleanText, translated)
-                                    translations.add(Pair(rect, translated))
-                                }
-                                pendingCount--
-                                checkBatchComplete(pendingCount, translations)
-                            }
-                        } else {
-                            pendingCount--
-                            checkBatchComplete(pendingCount, translations)
-                        }
+                // Explicitly configured source (e.g. Romanian) -> translate directly
+                translateText(configuredSource, configuredTarget, cleanText) { translated ->
+                    if (translated != null) {
+                        translationCache.put(cleanText, translated)
+                        translations.add(Pair(rect, translated))
                     }
-                    .addOnFailureListener {
-                        pendingCount--
-                        checkBatchComplete(pendingCount, translations)
-                    }
+                    pendingCount--
+                    checkBatchComplete(pendingCount, translations)
+                }
             } else {
-                languageIdentifier.identifyPossibleLanguages(cleanText)
-                    .addOnSuccessListener { candidates ->
-                        val isTarget = TranslationFilter.isTargetLanguage(cleanText, configuredTarget, candidates)
-                        if (isTarget) {
-                            pendingCount--
-                            checkBatchComplete(pendingCount, translations)
-                            return@addOnSuccessListener
+                // AUTO mode: check for Romanian vocabulary/diacritics first
+                if (TranslationFilter.isMatchingSourceLanguage(cleanText, TranslateLanguage.ROMANIAN, emptyList())) {
+                    translateText(TranslateLanguage.ROMANIAN, configuredTarget, cleanText) { translated ->
+                        if (translated != null) {
+                            translationCache.put(cleanText, translated)
+                            translations.add(Pair(rect, translated))
                         }
+                        pendingCount--
+                        checkBatchComplete(pendingCount, translations)
+                    }
+                } else {
+                    languageIdentifier.identifyPossibleLanguages(cleanText)
+                        .addOnSuccessListener { candidatesList ->
+                            val isTarget = TranslationFilter.isTargetLanguage(cleanText, configuredTarget, candidatesList)
+                            if (isTarget) {
+                                pendingCount--
+                                checkBatchComplete(pendingCount, translations)
+                                return@addOnSuccessListener
+                            }
 
-                        val best = candidates.firstOrNull { it.languageTag != "und" && it.confidence >= 0.25f }
-                        val bcpCode = best?.let { TranslateLanguage.fromLanguageTag(it.languageTag) }
+                            val best = candidatesList.firstOrNull { it.languageTag != "und" && it.confidence >= 0.15f }
+                            val bcpCode = best?.let { TranslateLanguage.fromLanguageTag(it.languageTag) } ?: TranslateLanguage.ROMANIAN
 
-                        if (bcpCode != null && bcpCode != configuredTarget) {
-                            translateText(bcpCode, configuredTarget, cleanText) { translated ->
+                            if (bcpCode != configuredTarget) {
+                                translateText(bcpCode, configuredTarget, cleanText) { translated ->
+                                    if (translated != null) {
+                                        translationCache.put(cleanText, translated)
+                                        translations.add(Pair(rect, translated))
+                                    }
+                                    pendingCount--
+                                    checkBatchComplete(pendingCount, translations)
+                                }
+                            } else {
+                                pendingCount--
+                                checkBatchComplete(pendingCount, translations)
+                            }
+                        }
+                        .addOnFailureListener {
+                            // Fallback to Romanian translation if identification fails
+                            translateText(TranslateLanguage.ROMANIAN, configuredTarget, cleanText) { translated ->
                                 if (translated != null) {
                                     translationCache.put(cleanText, translated)
                                     translations.add(Pair(rect, translated))
@@ -220,17 +261,11 @@ class TranslationAccessibilityService : AccessibilityService() {
                                 pendingCount--
                                 checkBatchComplete(pendingCount, translations)
                             }
-                        } else {
-                            pendingCount--
-                            checkBatchComplete(pendingCount, translations)
                         }
-                    }
-                    .addOnFailureListener {
-                        pendingCount--
-                        checkBatchComplete(pendingCount, translations)
-                    }
+                }
             }
         }
+        return candidates.size
     }
 
     private fun checkBatchComplete(pending: Int, results: List<Pair<Rect?, String>>) {
@@ -243,31 +278,46 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun collectMessageNodes(
+    private fun collectMessageCandidates(
         node: AccessibilityNodeInfo,
-        outList: MutableList<Pair<AccessibilityNodeInfo, Rect>>,
+        outList: MutableList<MessageCandidate>,
         minY: Int,
         maxY: Int,
         configuredTarget: String
-    ) {
+    ): Boolean {
         if (node.isEditable) {
             // Skip input fields during message scan (handled by handleOutgoingTyping)
-            return
+            return false
         }
 
-        val text = node.text?.toString() ?: node.contentDescription?.toString()
-        if (!text.isNullOrBlank()) {
-            val rect = Rect()
-            node.getBoundsInScreen(rect)
-            if (rect.width() > 10 && rect.height() > 10 && rect.top >= minY && rect.bottom <= maxY && TranslationFilter.shouldTranslate(text, configuredTarget)) {
-                outList.add(Pair(node, rect))
+        var childFound = false
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = collectMessageCandidates(child, outList, minY, maxY, configuredTarget)
+            if (found) {
+                childFound = true
             }
         }
 
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
-            collectMessageNodes(child, outList, minY, maxY, configuredTarget)
+        // If children already contained the message text, do not process container node
+        if (childFound) {
+            return true
         }
+
+        val rawText = node.text?.toString() ?: node.contentDescription?.toString()
+        if (!rawText.isNullOrBlank()) {
+            val cleanText = TranslationFilter.cleanMessageText(rawText)
+            if (cleanText.isNotBlank() && TranslationFilter.shouldTranslate(cleanText, configuredTarget)) {
+                val rect = Rect()
+                node.getBoundsInScreen(rect)
+                if (rect.width() > 10 && rect.height() > 10 && rect.top >= minY && rect.bottom <= maxY) {
+                    outList.add(MessageCandidate(cleanText, rect))
+                    return true
+                }
+            }
+        }
+
+        return false
     }
 
     private fun handleOutgoingTyping(event: AccessibilityEvent) {
@@ -284,12 +334,12 @@ class TranslationAccessibilityService : AccessibilityService() {
         node.getBoundsInScreen(inputRect)
 
         val prefs = getSharedPreferences("translator_prefs", Context.MODE_PRIVATE)
-        val configuredSource = prefs.getString("source_language", "AUTO") ?: "AUTO"
+        val configuredSource = prefs.getString("source_language", TranslateLanguage.ROMANIAN) ?: TranslateLanguage.ROMANIAN
         val configuredTarget = prefs.getString("target_language", TranslateLanguage.GREEK) ?: TranslateLanguage.GREEK
 
         // Symmetrical reverse translation: translate user draft into the recipient's language
         val draftSourceLang = if (configuredSource != "AUTO") configuredTarget else TranslateLanguage.GREEK
-        val draftTargetLang = if (configuredSource != "AUTO") configuredSource else TranslateLanguage.ENGLISH
+        val draftTargetLang = if (configuredSource != "AUTO") configuredSource else TranslateLanguage.ROMANIAN
 
         typingJob?.cancel()
         typingJob = serviceScope.launch {
@@ -326,6 +376,8 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
     }
 
+    private var isDownloadingModel = false
+
     private fun translateText(
         sourceLang: String,
         targetLang: String,
@@ -341,17 +393,30 @@ class TranslationAccessibilityService : AccessibilityService() {
             Translation.getClient(options)
         }
 
-        translator.downloadModelIfNeeded()
+        val conditions = com.google.mlkit.common.model.DownloadConditions.Builder().build()
+
+        translator.downloadModelIfNeeded(conditions)
             .addOnSuccessListener {
+                if (isDownloadingModel) {
+                    isDownloadingModel = false
+                    mainHandler.post {
+                        Toast.makeText(this, "Language models ready. Translating...", Toast.LENGTH_SHORT).show()
+                    }
+                }
                 translator.translate(text)
                     .addOnSuccessListener { translated ->
                         onResult(translated)
                     }
-                    .addOnFailureListener {
+                    .addOnFailureListener { e ->
+                        Log.e("Translator", "ML Kit translation failed for: $text", e)
                         onResult(null)
                     }
             }
-            .addOnFailureListener {
+            .addOnFailureListener { e ->
+                Log.e("Translator", "ML Kit model download failed for $key", e)
+                mainHandler.post {
+                    Toast.makeText(this, "⚠️ Model download failed. Check internet connection.", Toast.LENGTH_SHORT).show()
+                }
                 onResult(null)
             }
     }

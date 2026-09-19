@@ -116,4 +116,47 @@ class TranslationFilterTest {
         )
         assertTrue(result2)
     }
+
+    @Test
+    fun cleanMessageText_stripsWhatsAppDeliveryStatusAndGreekTimestamps() {
+        val raw = "La mulți ani și un An Nou fericit, Angelos., 7:27 μ.μ., Παραδόθηκε"
+        val cleaned = TranslationFilter.cleanMessageText(raw)
+        assertEquals("La mulți ani și un An Nou fericit, Angelos.", cleaned)
+
+        val rawEnglish = "How are you doing today?, 10:15 am, Delivered"
+        val cleanedEnglish = TranslationFilter.cleanMessageText(rawEnglish)
+        assertEquals("How are you doing today?", cleanedEnglish)
+
+        val rawRomanian = "Sunt pe drum, 18:30, Trimis"
+        val cleanedRomanian = TranslationFilter.cleanMessageText(rawRomanian)
+        assertEquals("Sunt pe drum", cleanedRomanian)
+    }
+
+    @Test
+    fun shouldTranslate_acceptsRomanianWithTrailingGreekDeliveryStatus() {
+        // Even if WhatsApp raw node text had ", 7:27 μ.μ., Παραδόθηκε", it should still be accepted
+        val raw = "La mulți ani și un An Nou fericit, Angelos., 7:27 μ.μ., Παραδόθηκε"
+        assertTrue(TranslationFilter.shouldTranslate(raw, TranslateLanguage.GREEK))
+
+        val shortMsgWithStatus = "Salut, 12:00, Παραδόθηκε"
+        assertTrue(TranslationFilter.shouldTranslate(shortMsgWithStatus, TranslateLanguage.GREEK))
+    }
+
+    @Test
+    fun isMatchingSourceLanguage_acceptsShortLatinRomanianSentences() {
+        assertTrue(
+            TranslationFilter.isMatchingSourceLanguage(
+                "Sunt pe drum",
+                TranslateLanguage.ROMANIAN,
+                emptyList()
+            )
+        )
+        assertTrue(
+            TranslationFilter.isMatchingSourceLanguage(
+                "Vorbiți mai târziu",
+                TranslateLanguage.ROMANIAN,
+                emptyList()
+            )
+        )
+    }
 }

@@ -31,10 +31,37 @@ fun MainScreen(
   val snackbarHostState = remember { SnackbarHostState() }
 
   val prefs = context.getSharedPreferences("translator_prefs", Context.MODE_PRIVATE)
-  var sourceLanguage by remember { mutableStateOf(prefs.getString("source_language", "AUTO") ?: "AUTO") }
-  var targetLanguage by remember { mutableStateOf(prefs.getString("target_language", com.google.mlkit.nl.translate.TranslateLanguage.ENGLISH) ?: com.google.mlkit.nl.translate.TranslateLanguage.ENGLISH) }
+  var sourceLanguage by remember {
+      mutableStateOf(prefs.getString("source_language", com.google.mlkit.nl.translate.TranslateLanguage.ROMANIAN) ?: com.google.mlkit.nl.translate.TranslateLanguage.ROMANIAN)
+  }
+  var targetLanguage by remember {
+      mutableStateOf(prefs.getString("target_language", com.google.mlkit.nl.translate.TranslateLanguage.GREEK) ?: com.google.mlkit.nl.translate.TranslateLanguage.GREEK)
+  }
 
   val supportedLanguages = remember { com.google.mlkit.nl.translate.TranslateLanguage.getAllLanguages() }
+  var modelStatus by remember { mutableStateOf("Checking language models...") }
+
+  fun ensureModelsDownloaded(source: String, target: String) {
+      val conditions = com.google.mlkit.common.model.DownloadConditions.Builder().build()
+      val sourceCode = if (source != "AUTO") source else com.google.mlkit.nl.translate.TranslateLanguage.ROMANIAN
+      val options = com.google.mlkit.nl.translate.TranslatorOptions.Builder()
+          .setSourceLanguage(sourceCode)
+          .setTargetLanguage(target)
+          .build()
+      val client = com.google.mlkit.nl.translate.Translation.getClient(options)
+      modelStatus = "Downloading language models..."
+      client.downloadModelIfNeeded(conditions)
+          .addOnSuccessListener {
+              modelStatus = "✓ Language Models Ready (Offline)"
+          }
+          .addOnFailureListener {
+              modelStatus = "⚠️ Model download pending (Check internet)"
+          }
+  }
+
+  LaunchedEffect(sourceLanguage, targetLanguage) {
+      ensureModelsDownloaded(sourceLanguage, targetLanguage)
+  }
 
   // Permission state — refreshed on every resume
   var canDrawOverlays by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
@@ -133,8 +160,14 @@ fun MainScreen(
           targetLanguage = it
           prefs.edit().putString("target_language", it).apply()
       }
+      Spacer(modifier = Modifier.height(6.dp))
+      Text(
+          text = modelStatus,
+          style = MaterialTheme.typography.bodySmall,
+          color = if (modelStatus.startsWith("✓")) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
+      )
 
-      Spacer(modifier = Modifier.height(24.dp))
+      Spacer(modifier = Modifier.height(20.dp))
 
       // Per-permission status rows with individual Fix buttons
       PermissionStatusRow(label = "Display over other apps", granted = canDrawOverlays) {
@@ -195,6 +228,7 @@ fun MainScreen(
         modifier = Modifier.fillMaxWidth(),
         enabled = allPermissionsGranted,
         onClick = {
+            ensureModelsDownloaded(sourceLanguage, targetLanguage)
             val intent = Intent(context, FloatingBubbleService::class.java)
             context.startService(intent)
             android.widget.Toast.makeText(

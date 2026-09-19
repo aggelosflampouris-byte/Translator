@@ -90,7 +90,7 @@ class OverlayManager(private val context: Context) {
             windowManager.addView(view, params)
             activeBubbles[id] = ActiveBubble(view, text, targetRect, overlayBounds)
         } catch (e: Exception) {
-            // WindowManager addView error handling
+            android.util.Log.e("Translator", "OverlayManager failed to addView for bubble $id", e)
         }
     }
 
@@ -101,13 +101,14 @@ class OverlayManager(private val context: Context) {
         try {
             windowManager.updateViewLayout(bubble.view, params)
         } catch (e: Exception) {
-            // WindowManager updateViewLayout error handling
+            android.util.Log.e("Translator", "OverlayManager failed to updateViewLayout", e)
         }
     }
 
     private fun calculateBubbleLayout(targetRect: Rect, view: View, text: String): Pair<WindowManager.LayoutParams, Rect> {
         val metrics = context.resources.displayMetrics
         val screenWidth = metrics.widthPixels
+        val screenHeight = metrics.heightPixels
         val density = metrics.density
 
         val maxBubbleWidth = (screenWidth * 0.85f).toInt()
@@ -140,13 +141,17 @@ class OverlayManager(private val context: Context) {
             posY = targetRect.bottom + spacing
         }
 
+        // Ensure bubble remains within screen bottom margin
+        val bottomSafetyMargin = (40 * density).toInt()
+        val maxY = (screenHeight - bubbleHeight - bottomSafetyMargin).coerceAtLeast(topSafetyMargin)
+        posY = posY.coerceIn(topSafetyMargin, maxY)
+
         val params = WindowManager.LayoutParams(
             bubbleWidth,
             bubbleHeight,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_SECURE,
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START

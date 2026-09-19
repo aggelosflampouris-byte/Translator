@@ -14,6 +14,11 @@ object TranslationFilter {
     private val TRAILING_TIMESTAMP_REGEX = Regex("""[\s\n]+\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?\s*$""", RegexOption.IGNORE_CASE)
     private val PERCENTAGE_REGEX = Regex("""^\d{1,3}%$""")
 
+    private val WHATSAPP_STATUS_REGEX = Regex(
+        """[,.\s\n]+(delivered|read|sent|pending|παραδόθηκε|διαβάστηκε|στάλθηκε|σε εκκρεμότητα|trimis|citit|livrat|în așteptare)\s*$""",
+        RegexOption.IGNORE_CASE
+    )
+
     private val COMMON_UI_TOKENS = setOf(
         "μήνυμα", "type a message", "message", "search", "αναζήτηση",
         "χθες", "σήμερα", "yesterday", "today", "online", "συνδέθηκε",
@@ -25,7 +30,8 @@ object TranslationFilter {
      * or should be discarded (e.g. URLs, timestamps, UI chrome, battery, target-language script).
      */
     fun shouldTranslate(text: String, configuredTarget: String): Boolean {
-        val trimmed = text.trim()
+        val cleaned = cleanMessageText(text)
+        val trimmed = cleaned.trim()
         if (trimmed.length < 2) return false
 
         // Must contain at least one letter
@@ -65,8 +71,8 @@ object TranslationFilter {
 
         // If target is Greek, skip any block that is primarily Greek text
         if (configuredTarget == TranslateLanguage.GREEK) {
-            val greekCharCount = trimmed.count { it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF' }
-            val latinCharCount = trimmed.count { it in 'a'..'z' || it in 'A'..'Z' }
+            val greekCharCount = trimmed.count { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }
+            val latinCharCount = trimmed.count { it in 'a'..'z' || it in 'A'..'Z' || it in "ăâîșțĂÂÎȘȚ" }
             if (greekCharCount > 0 && greekCharCount >= latinCharCount) {
                 return false
             }
@@ -76,10 +82,20 @@ object TranslationFilter {
     }
 
     /**
-     * Cleans OCR-detected text by stripping trailing timestamps commonly grouped into chat bubbles.
+     * Cleans OCR- or Accessibility-detected text by stripping trailing timestamps
+     * and WhatsApp delivery status markers commonly grouped into chat bubble metadata.
      */
     fun cleanMessageText(text: String): String {
-        return text.replace(TRAILING_TIMESTAMP_REGEX, "").trim()
+        var cleaned = text.trim()
+        // Strip trailing WhatsApp status markers (e.g. ", Delivered", ", Παραδόθηκε")
+        cleaned = cleaned.replace(WHATSAPP_STATUS_REGEX, "").trim()
+        // Strip trailing timestamps (e.g. ", 7:27 μ.μ.")
+        cleaned = cleaned.replace(TRAILING_TIMESTAMP_REGEX, "").trim()
+        // Repeat status strip in case status was after timestamp or vice-versa
+        cleaned = cleaned.replace(WHATSAPP_STATUS_REGEX, "").trim()
+        // Strip trailing commas, periods or colons left over from timestamp removal
+        cleaned = cleaned.replace(Regex("""[,:\s]+$"""), "").trim()
+        return cleaned
     }
 
     /**
@@ -88,8 +104,9 @@ object TranslationFilter {
      */
     fun isTargetLanguage(text: String, targetLang: String, candidates: List<IdentifiedLanguage>): Boolean {
         if (targetLang == TranslateLanguage.GREEK) {
-            val greekLetters = text.count { it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF' }
-            if (greekLetters > 0) return true
+            val greekLetters = text.count { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }
+            val latinLetters = text.count { it in 'a'..'z' || it in 'A'..'Z' || it in "ăâîșțĂÂÎȘȚ" }
+            if (greekLetters > 0 && greekLetters >= latinLetters) return true
         }
         val targetCandidate = candidates.firstOrNull { it.languageTag == targetLang }
         if (targetCandidate != null && targetCandidate.confidence >= 0.40f) {
@@ -110,13 +127,23 @@ object TranslationFilter {
      * Prevents random UI strings, other languages, or low-confidence garbage from being translated.
      */
     fun isMatchingSourceLanguage(text: String, sourceLang: String, candidates: List<IdentifiedLanguage>): Boolean {
-        // Romanian specific check: diacritics or common vocabulary
+        // Romanian specific check: diacritics, common vocabulary, or Latin script without strong conflict
         if (sourceLang == TranslateLanguage.ROMANIAN) {
             val hasRomanianDiacritics = text.any { it in "ăâîșțĂÂÎȘȚ" }
             if (hasRomanianDiacritics) return true
 
             val words = text.lowercase().split(Regex("""[^a-zăâîșț]+""")).filter { it.isNotBlank() }
             if (words.any { COMMON_ROMANIAN_WORDS.contains(it) }) return true
+
+            val latinCharCount = text.count { it in 'a'..'z' || it in 'A'..'Z' || it in "ăâîșțĂÂÎȘȚ" }
+            if (latinCharCount >= 2) {
+                val conflictingHighConfidence = candidates.firstOrNull {
+                    it.languageTag != TranslateLanguage.ROMANIAN && it.languageTag != "und" && it.confidence >= 0.65f
+                }
+                if (conflictingHighConfidence == null) {
+                    return true
+                }
+            }
         }
 
         // Check candidate languages from ML Kit
