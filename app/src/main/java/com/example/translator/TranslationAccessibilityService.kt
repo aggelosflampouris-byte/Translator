@@ -19,12 +19,14 @@ import com.google.mlkit.nl.translate.TranslateLanguage
 import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.Translator
 import com.google.mlkit.nl.translate.TranslatorOptions
+import kotlin.coroutines.resume
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 
 class TranslationAccessibilityService : AccessibilityService() {
 
@@ -777,52 +779,57 @@ class TranslationAccessibilityService : AccessibilityService() {
                 return@launch
             }
 
-            // 1. Pre-translation idiomatic & conversational check
-            val idiomaticDraft = TranslationSenseEngine.resolveIdiomPreTranslation(
-                liveText,
-                draftSourceLang,
-                draftTargetLang
-            )
-            if (idiomaticDraft != null) {
+            // Process message line-by-line to preserve paragraphs, line breaks, and mixed lines
+            // (e.g. greeting on line 1 resolves to idiom, message body on line 2 translates via ML Kit)
+            val lines = liveText.split("\n")
+            val translatedLines = mutableListOf<String>()
+
+            for (line in lines) {
+                val trimmedLine = line.trim()
+                if (trimmedLine.isEmpty()) {
+                    translatedLines.add(line)
+                    continue
+                }
+
+                val lineIdiom = TranslationSenseEngine.resolveIdiomPreTranslation(
+                    trimmedLine,
+                    draftSourceLang,
+                    draftTargetLang
+                )
+                if (lineIdiom != null) {
+                    translatedLines.add(lineIdiom)
+                } else {
+                    val rawTranslated = translateTextAsync(draftSourceLang, draftTargetLang, trimmedLine)
+                    if (rawTranslated != null && rawTranslated.isNotBlank() && rawTranslated != trimmedLine) {
+                        val senseCorrected = TranslationSenseEngine.applyPostTranslationSenseLogic(
+                            originalText = trimmedLine,
+                            translatedText = rawTranslated,
+                            sourceLang = draftSourceLang,
+                            targetLang = draftTargetLang
+                        )
+                        translatedLines.add(senseCorrected)
+                    } else {
+                        translatedLines.add(trimmedLine)
+                    }
+                }
+            }
+
+            val finalTranslatedDraft = translatedLines.joinToString("\n")
+            if (finalTranslatedDraft.isNotBlank() && finalTranslatedDraft != liveText) {
                 overlayManager.updateDraftOverlay(
                     inputRect = freshRect,
-                    text = idiomaticDraft,
+                    text = finalTranslatedDraft,
                     targetLangCode = langBadge,
                     showReplace = true,
                     onInsertClicked = {
-                        insertTranslatedTextIntoInput(idiomaticDraft, liveNode)
+                        insertTranslatedTextIntoInput(finalTranslatedDraft, liveNode)
                     },
                     onDismissClicked = {
                         overlayManager.removeDraftOverlay()
                     }
                 )
-                return@launch
-            }
-
-            // 2. Machine translation with post-processing sense correction
-            translateText(draftSourceLang, draftTargetLang, liveText) { rawTranslatedDraft ->
-                if (rawTranslatedDraft != null && rawTranslatedDraft.isNotBlank() && rawTranslatedDraft != liveText) {
-                    val translatedDraft = TranslationSenseEngine.applyPostTranslationSenseLogic(
-                        originalText = liveText,
-                        translatedText = rawTranslatedDraft,
-                        sourceLang = draftSourceLang,
-                        targetLang = draftTargetLang
-                    )
-                    overlayManager.updateDraftOverlay(
-                        inputRect = freshRect,
-                        text = translatedDraft,
-                        targetLangCode = langBadge,
-                        showReplace = true,
-                        onInsertClicked = {
-                            insertTranslatedTextIntoInput(translatedDraft, liveNode)
-                        },
-                        onDismissClicked = {
-                            overlayManager.removeDraftOverlay()
-                        }
-                    )
-                } else {
-                    overlayManager.removeDraftOverlay()
-                }
+            } else {
+                overlayManager.removeDraftOverlay()
             }
         }
     }
@@ -910,6 +917,18 @@ class TranslationAccessibilityService : AccessibilityService() {
                 }
                 onResult(null)
             }
+    }
+
+    private suspend fun translateTextAsync(
+        sourceLang: String,
+        targetLang: String,
+        text: String
+    ): String? = suspendCancellableCoroutine { continuation ->
+        translateText(sourceLang, targetLang, text) { result ->
+            if (continuation.isActive) {
+                continuation.resume(result)
+            }
+        }
     }
 
     override fun onUnbind(intent: android.content.Intent?): Boolean {

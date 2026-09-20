@@ -52,7 +52,7 @@
             android:textColor="#E9EDEF"
             android:textSize="13.5sp"
             android:textStyle="normal"
-            android:maxLines="3"
+            android:maxLines="5"
             android:ellipsize="end"
             android:lineSpacingExtra="1dp" />
     </LinearLayout>

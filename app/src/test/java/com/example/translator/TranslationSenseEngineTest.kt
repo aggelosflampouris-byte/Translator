@@ -492,5 +492,43 @@ class TranslationSenseEngineTest {
         )
         assertEquals("Du-te dracului, Giannis!", postResult)
     }
+
+    @Test
+    fun resolveIdiomPreTranslation_returnsNullForMultilineMessages() {
+        val multilineGreek = TranslationSenseEngine.resolveIdiomPreTranslation(
+            "Καλησπέρα Γιάννη\nΜε το παρόν γράμμα...",
+            TranslateLanguage.GREEK,
+            TranslateLanguage.ROMANIAN
+        )
+        assertNull(multilineGreek)
+
+        val multilineRomanian = TranslationSenseEngine.resolveIdiomPreTranslation(
+            "Bună seara, Giannis!\nCu această scrisoare...",
+            TranslateLanguage.ROMANIAN,
+            TranslateLanguage.GREEK
+        )
+        assertNull(multilineRomanian)
+    }
+
+    @Test
+    fun resolveIdiomPreTranslation_resolvesSingleLineGreekGreeting() {
+        val singleLineGreek = TranslationSenseEngine.resolveIdiomPreTranslation(
+            "Καλησπέρα Γιάννη",
+            TranslateLanguage.GREEK,
+            TranslateLanguage.ROMANIAN
+        )
+        assertNotNull(singleLineGreek)
+        assertEquals("Bună seara, Giannis!", singleLineGreek)
+    }
+
+    @Test
+    fun resolveIdiomPreTranslation_rejectsGreedyGreekGreetingInLongSentence() {
+        val longGreek = TranslationSenseEngine.resolveIdiomPreTranslation(
+            "Καλησπέρα Γιάννη θα ήθελα να ρωτήσω τι ώρα ανοίγει το κατάστημα αύριο",
+            TranslateLanguage.GREEK,
+            TranslateLanguage.ROMANIAN
+        )
+        assertNull(longGreek)
+    }
 }
 

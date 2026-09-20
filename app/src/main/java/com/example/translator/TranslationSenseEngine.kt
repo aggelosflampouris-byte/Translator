@@ -201,13 +201,53 @@ object TranslationSenseEngine {
         sourceLang: String,
         targetLang: String
     ): String? {
+        val trimmed = text.trim()
+        // If text contains multiple lines, it must never be collapsed into a single idiom/greeting
+        if (trimmed.contains("\n")) {
+            return null
+        }
+        val words = trimmed.split(Regex("""\s+""")).filter { it.isNotBlank() }
+        // Full pre-translation idioms and greetings never exceed 12 words (e.g. holiday greetings)
+        if (words.size > 12) {
+            return null
+        }
         if (sourceLang == TranslateLanguage.ROMANIAN && targetLang == TranslateLanguage.GREEK) {
-            return resolveRomanianToGreekIdioms(text)
+            return resolveRomanianToGreekIdioms(trimmed)
         }
         if (sourceLang == TranslateLanguage.GREEK && targetLang == TranslateLanguage.ROMANIAN) {
-            return resolveGreekToRomanianIdioms(text)
+            return resolveGreekToRomanianIdioms(trimmed)
         }
         return null
+    }
+
+    private fun isRomanianGreetingMatch(normalized: String, keyword: String): Boolean {
+        if (!normalized.contains(keyword)) return false
+        val words = normalized.replace(Regex("""[;?!,.]+"""), " ")
+            .split(Regex("""\s+"""))
+            .filter { it.isNotBlank() }
+        if (words.size > 5) return false
+        val allowedWords = setOf(
+            "meu", "prieten", "prietene", "prietenul", "frate", "tuturor", "la", "toti", "va",
+            "giannis", "ioan", "andrei", "alex", "marian", "elena", "maria", "si"
+        )
+        val keywordWords = keyword.split(" ")
+        return words.all { keywordWords.contains(it) || allowedWords.contains(it) }
+    }
+
+    private fun isGreekGreetingMatch(normalized: String, keyword: String): Boolean {
+        if (!normalized.contains(keyword)) return false
+        val words = normalized.replace(Regex("""[;?!,.]+"""), " ")
+            .split(Regex("""\s+"""))
+            .filter { it.isNotBlank() }
+        if (words.size > 5) return false
+        val allowedWords = setOf(
+            "μου", "φιλε", "αδερφε", "παιδια", "σας", "ολους", "σε", "και", "καλη", "καλο",
+            "γιαννη", "γιαννης", "αγγελε", "αγγελος", "γιωργο", "γιωργος",
+            "νικο", "νικος", "κωστα", "κωστας", "δημητρη", "δημητρης", "μιχαλη", "μιχαλης",
+            "μαρια", "ελενη", "ρε"
+        )
+        val keywordWords = keyword.split(" ")
+        return words.all { keywordWords.contains(it) || allowedWords.contains(it) }
     }
 
     private fun resolveRomanianToGreekIdioms(text: String): String? {
@@ -294,23 +334,23 @@ object TranslationSenseEngine {
         }
 
         // 4. Greetings
-        if (normalized.contains("buna dimineata")) {
+        if (isRomanianGreetingMatch(normalized, "buna dimineata")) {
             val name = extractRomanianName(clean)
             return if (name != null) "Καλημέρα, $name!" else "Καλημέρα!"
         }
-        if (normalized.contains("buna seara")) {
+        if (isRomanianGreetingMatch(normalized, "buna seara")) {
             val name = extractRomanianName(clean)
             return if (name != null) "Καλησπέρα, $name!" else "Καλησπέρα!"
         }
-        if (normalized.contains("noapte buna")) {
+        if (isRomanianGreetingMatch(normalized, "noapte buna")) {
             val name = extractRomanianName(clean)
             return if (name != null) "Καληνύχτα, $name!" else "Καληνύχτα!"
         }
-        if (normalized.startsWith("buna ziua")) {
+        if (isRomanianGreetingMatch(normalized, "buna ziua")) {
             val name = extractRomanianName(clean)
             return if (name != null) "Γεια σας, $name!" else "Γεια σας!"
         }
-        if (normalized.startsWith("salut") || normalized.startsWith("buna")) {
+        if (isRomanianGreetingMatch(normalized, "salut") || isRomanianGreetingMatch(normalized, "buna")) {
             val name = extractRomanianName(clean)
             return if (name != null) "Γεια σου, $name!" else "Γεια σου!"
         }
@@ -417,19 +457,19 @@ object TranslationSenseEngine {
         }
 
         // 2. Greetings
-        if (normalized.contains("γεια σου") || normalized.contains("γεια σου!")) {
+        if (isGreekGreetingMatch(normalized, "γεια σου")) {
             return if (name != null) "Salut, $name!" else "Salut!"
         }
-        if (normalized.contains("γεια σας") || normalized.contains("γεια σας!")) {
+        if (isGreekGreetingMatch(normalized, "γεια σας")) {
             return if (name != null) "Bună ziua, $name!" else "Bună ziua!"
         }
-        if (normalized.contains("καλημερα")) {
+        if (isGreekGreetingMatch(normalized, "καλημερα")) {
             return if (name != null) "Bună dimineața, $name!" else "Bună dimineața!"
         }
-        if (normalized.contains("καλησπερα")) {
+        if (isGreekGreetingMatch(normalized, "καλησπερα")) {
             return if (name != null) "Bună seara, $name!" else "Bună seara!"
         }
-        if (normalized.contains("καληνυχτα")) {
+        if (isGreekGreetingMatch(normalized, "καληνυχτα")) {
             return if (name != null) "Noapte bună, $name!" else "Noapte bună!"
         }
 
