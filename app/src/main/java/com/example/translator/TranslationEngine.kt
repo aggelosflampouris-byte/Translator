@@ -5,7 +5,10 @@ import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -35,6 +38,13 @@ interface TranslationEngine {
  */
 class GeminiTranslationEngine(private val apiKey: String) : TranslationEngine {
 
+    companion object {
+        // Por qué: Limita las peticiones simultáneas a 2 para evitar saturar el límite de tasa de Google AI Studio (HTTP 503/429)
+        // cuando se traducen múltiples mensajes en pantalla a la vez.
+        private val requestSemaphore = Semaphore(2)
+        private val candidateModels = listOf("gemini-3.5-flash-lite", "gemini-3.5-flash")
+    }
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
         .readTimeout(8, TimeUnit.SECONDS)
@@ -50,63 +60,76 @@ class GeminiTranslationEngine(private val apiKey: String) : TranslationEngine {
     ): String? = withContext(Dispatchers.IO) {
         if (apiKey.isBlank()) return@withContext null
 
-        val sourceName = if (sourceLang == "ro") "Romanian" else "Greek"
-        val targetName = if (targetLang == "el") "Greek" else "Romanian"
+        requestSemaphore.withPermit {
+            val sourceName = if (sourceLang == "ro") "Romanian" else "Greek"
+            val targetName = if (targetLang == "el") "Greek" else "Romanian"
 
-        val prompt = "You are an expert chat translator between Greek and Romanian. " +
-            "Translate this informal WhatsApp chat message from $sourceName to $targetName. " +
-            "Preserve colloquial slang, natural idioms, swear words, and emotional tone accurately. " +
-            "Preserve emojis, names, and punctuation. Output ONLY the raw translated text with no explanations or quotes:\n\n$text"
+            val prompt = "You are an expert chat translator between Greek and Romanian. " +
+                "Translate this informal WhatsApp chat message from $sourceName to $targetName. " +
+                "Preserve colloquial slang, natural idioms, swear words, and emotional tone accurately. " +
+                "Preserve emojis, names, and punctuation. Output ONLY the raw translated text with no explanations or quotes:\n\n$text"
 
-        val payload = mapOf(
-            "contents" to listOf(
-                mapOf(
-                    "parts" to listOf(
-                        mapOf("text" to prompt)
+            val payload = mapOf(
+                "contents" to listOf(
+                    mapOf(
+                        "parts" to listOf(
+                            mapOf("text" to prompt)
+                        )
                     )
+                ),
+                "generationConfig" to mapOf(
+                    "temperature" to 0.2,
+                    "maxOutputTokens" to 256
                 )
-            ),
-            "generationConfig" to mapOf(
-                "temperature" to 0.2,
-                "maxOutputTokens" to 256
             )
-        )
 
-        val jsonBody = gson.toJson(payload)
-        val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent"
+            val jsonBody = gson.toJson(payload)
 
-        // Por qué: Se envía la clave de API a través del encabezado HTTP 'x-goog-api-key' en lugar de la URL,
-        // garantizando que no quede expuesta en registros de red, proxies ni cachés.
-        val request = Request.Builder()
-            .url(url)
-            .addHeader("x-goog-api-key", apiKey)
-            .post(jsonBody.toRequestBody(jsonMediaType))
-            .build()
+            // Por qué: Itera sobre modelos candidatos y realiza reintentos con retraso ante respuestas 503 o 429
+            // para garantizar alta disponibilidad sin degradar prematuramente a ML Kit.
+            for (model in candidateModels) {
+                for (attempt in 1..2) {
+                    val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
 
-        try {
-            val response = client.newCall(request).execute()
-            if (!response.isSuccessful) {
-                Log.w("GeminiEngine", "Gemini API failed with HTTP ${response.code}")
-                return@withContext null
+                    // Por qué: Se envía la clave de API a través del encabezado HTTP 'x-goog-api-key' en lugar de la URL,
+                    // garantizando que no quede expuesta en registros de red, proxies ni cachés.
+                    val request = Request.Builder()
+                        .url(url)
+                        .addHeader("x-goog-api-key", apiKey)
+                        .post(jsonBody.toRequestBody(jsonMediaType))
+                        .build()
+
+                    try {
+                        val response = client.newCall(request).execute()
+                        if (response.isSuccessful) {
+                            val responseBody = response.body?.string() ?: break
+                            val jsonObject = gson.fromJson(responseBody, JsonObject::class.java)
+                            val candidates = jsonObject.getAsJsonArray("candidates") ?: break
+                            if (candidates.size() == 0) break
+
+                            val content = candidates[0].asJsonObject.getAsJsonObject("content") ?: break
+                            val parts = content.getAsJsonArray("parts") ?: break
+                            if (parts.size() == 0) break
+
+                            val translated = parts[0].asJsonObject.get("text")?.asString?.trim()
+                            if (!translated.isNullOrBlank()) {
+                                return@withContext translated
+                            }
+                            break
+                        } else if (response.code == 503 || response.code == 429) {
+                            Log.w("GeminiEngine", "Model $model returned HTTP ${response.code}, attempt $attempt. Retrying...")
+                            delay(350L * attempt)
+                            continue
+                        } else {
+                            Log.w("GeminiEngine", "Gemini API failed with HTTP ${response.code} for $model")
+                            break
+                        }
+                    } catch (e: Exception) {
+                        Log.e("GeminiEngine", "Network error with $model on attempt $attempt", e)
+                        delay(350L * attempt)
+                    }
+                }
             }
-
-            val responseBody = response.body?.string() ?: return@withContext null
-            val jsonObject = gson.fromJson(responseBody, JsonObject::class.java)
-            val candidates = jsonObject.getAsJsonArray("candidates") ?: return@withContext null
-            if (candidates.size() == 0) return@withContext null
-
-            val content = candidates[0].asJsonObject.getAsJsonObject("content") ?: return@withContext null
-            val parts = content.getAsJsonArray("parts") ?: return@withContext null
-            if (parts.size() == 0) return@withContext null
-
-            val translated = parts[0].asJsonObject.get("text")?.asString?.trim()
-            if (!translated.isNullOrBlank()) {
-                translated
-            } else {
-                null
-            }
-        } catch (e: Exception) {
-            Log.e("GeminiEngine", "Error during Gemini translation", e)
             null
         }
     }

@@ -524,7 +524,13 @@ object TranslationSenseEngine {
             result = result.replace(Regex("""\bΚώστας\b(?=[,!;?:]|\s*$)"""), "Κώστα")
             result = result.replace(Regex("""\bΔημήτρης\b(?=[,!;?:]|\s*$)"""), "Δημήτρη")
 
-            // Correction 7: Greek question mark normalization (';')
+            // Correction 7: Sustitución de expresiones groseras o anglicismos residuales producidos por modelos estadísticos (ej: 'Go Fuck' -> 'Άντε στο διάολο!')
+            if (result.contains("Go Fuck", ignoreCase = true) || (origNorm.contains("du-te dracului") && result.contains("dracului", ignoreCase = true))) {
+                result = result.replace(Regex("""\bGo\s+Fuck\b""", RegexOption.IGNORE_CASE), "Άντε στο διάολο!")
+                result = result.replace(Regex("""\bdu-te\s+dracului\b""", RegexOption.IGNORE_CASE), "Άντε στο διάολο!")
+            }
+
+            // Correction 8: Greek question mark normalization (';')
             if (origNorm.endsWith("?") && result.endsWith("?")) {
                 result = result.substring(0, result.length - 1) + ";"
             }

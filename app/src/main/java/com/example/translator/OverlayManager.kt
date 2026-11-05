@@ -215,85 +215,37 @@ class OverlayManager(private val context: Context) {
         val density = context.resources.displayMetrics.density
         val screenWidth = context.resources.displayMetrics.widthPixels
 
-        // Fit directly ON the incoming message bubble
-        var bubbleWidth = targetRect.width()
-        var posX = targetRect.left
-        val posY = targetRect.top
-
-        // Avoid overlapping the floating translator main bubble
-        val mainBubbleBounds = ServiceBridge.currentBubbleBounds
-        if (mainBubbleBounds != null) {
-            val safetyMargin = (8 * density).toInt()
-            val reservedRect = Rect(
-                mainBubbleBounds.left - safetyMargin,
-                mainBubbleBounds.top - safetyMargin,
-                mainBubbleBounds.right + safetyMargin,
-                mainBubbleBounds.bottom + safetyMargin
-            )
-
-            // Check if vertical ranges overlap
-            val verticalOverlap = (posY < reservedRect.bottom && posY + targetRect.height() > reservedRect.top)
-            if (verticalOverlap) {
-                if (mainBubbleBounds.left > screenWidth / 2) {
-                    val maxRight = reservedRect.left
-                    if (posX + bubbleWidth > maxRight) {
-                        val adjustedWidth = maxRight - posX
-                        if (adjustedWidth >= (60 * density).toInt()) {
-                            bubbleWidth = adjustedWidth
-                        }
-                    }
-                } else {
-                    val minLeft = reservedRect.right
-                    if (posX < minLeft) {
-                        val adjustedWidth = (posX + bubbleWidth) - minLeft
-                        if (adjustedWidth >= (60 * density).toInt()) {
-                            posX = minLeft
-                            bubbleWidth = adjustedWidth
-                        }
-                    }
-                }
-            }
+        // Por qué: Diferencia entre mensajes salientes (lado derecho) y entrantes (lado izquierdo)
+        // para aplicar los colores nativos opacos de WhatsApp (verde esmeralda vs gris pizarra)
+        // cubriendo 100% el fondo original sin distorsiones ni bordes extraños.
+        val isOutgoing = targetRect.right > (screenWidth * 0.65f)
+        val bgRes = if (isOutgoing) {
+            R.drawable.bg_translation_bubble_outgoing
+        } else {
+            R.drawable.bg_translation_bubble_incoming
         }
+        view.setBackgroundResource(bgRes)
+
+        val posX = targetRect.left
+        val posY = targetRect.top
+        val bubbleWidth = targetRect.width()
+
+        val textView = view.findViewById<TextView>(R.id.translated_text)
+        textView.text = text
 
         view.layoutParams = android.view.ViewGroup.LayoutParams(
             bubbleWidth,
             android.view.ViewGroup.LayoutParams.WRAP_CONTENT
         )
-        val textView = view.findViewById<TextView>(R.id.translated_text)
-        textView.text = text
-        textView.maxWidth = bubbleWidth
 
         view.measure(
             View.MeasureSpec.makeMeasureSpec(bubbleWidth, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
         )
 
-        // Calculate exact multi-line text height using StaticLayout
-        val textPaint = textView.paint
-        val horizontalPadding = view.paddingLeft + view.paddingRight + textView.paddingLeft + textView.paddingRight
-        val availableTextWidth = (bubbleWidth - horizontalPadding).coerceAtLeast((60 * density).toInt())
-        val staticLayout = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-            android.text.StaticLayout.Builder.obtain(text, 0, text.length, textPaint, availableTextWidth)
-                .setLineSpacing(textView.lineSpacingExtra, textView.lineSpacingMultiplier)
-                .build()
-        } else {
-            @Suppress("DEPRECATION")
-            android.text.StaticLayout(
-                text,
-                textPaint,
-                availableTextWidth,
-                android.text.Layout.Alignment.ALIGN_NORMAL,
-                textView.lineSpacingMultiplier,
-                textView.lineSpacingExtra,
-                false
-            )
-        }
-
-        val verticalPadding = view.paddingTop + view.paddingBottom + textView.paddingTop + textView.paddingBottom
-        val trueContentHeight = staticLayout.height + verticalPadding
-
-        // Height fits on the incoming message text box (at least matching the original bubble height)
-        val bubbleHeight = max(targetRect.height(), trueContentHeight)
+        // Por qué: Cubre como mínimo la altura completa del contenedor original para evitar
+        // que líneas de texto o marcas de tiempo previas queden descubiertas por debajo o por los lados.
+        val bubbleHeight = max(targetRect.height(), view.measuredHeight)
 
         val params = WindowManager.LayoutParams(
             bubbleWidth,

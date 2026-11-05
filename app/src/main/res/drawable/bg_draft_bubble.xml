@@ -2,7 +2,7 @@
 <!-- Contenedor en forma de cápsula para la previsualización del teclado -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
-    <solid android:color="#F80F172A" />
+    <solid android:color="#FF0F172A" />
     <corners android:radius="16dp" />
     <stroke
         android:width="1dp"

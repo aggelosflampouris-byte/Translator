@@ -573,17 +573,24 @@ class TranslationAccessibilityService : AccessibilityService() {
             val rect = Rect()
             node.getBoundsInScreen(rect)
 
-            // Inspect parent message bubble container for accurate container bounds
-            val parent = node.parent
+            // Por qué: Busca el contenedor visual de la burbuja (hasta 2 niveles en la jerarquía)
+            // para abarcar los límites completos del mensaje con padding, marcas de tiempo y bordes.
+            var container = node.parent
             val screenWidth = resources.displayMetrics.widthPixels
             val density = resources.displayMetrics.density
-            if (parent != null) {
-                val parentRect = Rect()
-                parent.getBoundsInScreen(parentRect)
-                if (parentRect.width() <= screenWidth * 0.92f &&
-                    parentRect.height() <= (250 * density).toInt() &&
-                    parentRect.contains(rect)) {
-                    rect.set(parentRect)
+            for (level in 0..1) {
+                if (container != null) {
+                    val pRect = Rect()
+                    container.getBoundsInScreen(pRect)
+                    if (pRect.width() <= screenWidth * 0.95f &&
+                        pRect.height() <= (600 * density).toInt() &&
+                        pRect.width() >= rect.width() &&
+                        pRect.height() >= rect.height() &&
+                        Rect.intersects(pRect, rect)) {
+                        rect.set(pRect)
+                        break
+                    }
+                    container = container.parent
                 }
             }
 

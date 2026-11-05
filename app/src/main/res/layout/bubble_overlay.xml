@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Por qué: Contenedor de texto de mensaje traducido con espaciado natural y color de texto WhatsApp -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@drawable/bg_translation_bubble"
-    android:orientation="horizontal"
+    android:orientation="vertical"
     android:gravity="center_vertical"
     android:paddingStart="12dp"
     android:paddingEnd="12dp"
@@ -14,7 +15,7 @@
         android:id="@+id/translated_text"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:textColor="#F8FAFC"
+        android:textColor="#E9EDEF"
         android:textSize="14sp"
         android:fontFamily="sans-serif"
         android:lineSpacingExtra="2dp" />
