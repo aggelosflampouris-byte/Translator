@@ -24,6 +24,8 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: "9.1.0"
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
@@ -33,7 +35,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           export GEMINI_API_KEY="$(echo -n "$GEMINI_API_KEY" | tr -d '\r\n[:space:]')"
-          ./gradlew assembleRelease --no-daemon
+          ./gradlew assembleRelease --no-daemon || (sleep 5 && ./gradlew assembleRelease --no-daemon)
 
       - name: Prepare Release Artifact
         run: |
