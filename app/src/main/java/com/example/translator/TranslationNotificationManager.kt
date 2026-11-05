@@ -123,3 +123,4 @@ object TranslationNotificationManager {
         ServiceBridge.isNotificationActive = false
     }
 }
+

@@ -580,6 +580,13 @@ class OverlayManager(private val context: Context) {
         removeSingleMessagePill()
     }
 
+    // Por qué: Permite verificar de forma atómica si hay alguna superposición activa dibujada en pantalla
+    // para que el vigilante en segundo plano pueda purgar la pantalla inmediatamente al salir de WhatsApp.
+    @Synchronized
+    fun hasOverlays(): Boolean {
+        return activeBubbles.isNotEmpty() || singlePillView != null || draftOverlayView != null
+    }
+
     fun removeAllOverlays() {
         removeAllMessageOverlays()
         removeDraftOverlay()

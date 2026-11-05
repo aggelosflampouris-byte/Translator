@@ -26,7 +26,6 @@ class TranslationNotificationReceiver : BroadcastReceiver() {
                 ServiceBridge.onTranslationStateChanged?.invoke(true)
                 ServiceBridge.onScanRequested?.invoke()
                 TranslationNotificationManager.showNotification(context, isTranslating = true)
-                Toast.makeText(context, "Scanning & translating WhatsApp...", Toast.LENGTH_SHORT).show()
             }
 
             TranslationNotificationManager.ACTION_TOGGLE -> {
@@ -50,3 +49,4 @@ class TranslationNotificationReceiver : BroadcastReceiver() {
         }
     }
 }
+

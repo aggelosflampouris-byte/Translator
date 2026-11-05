@@ -58,6 +58,9 @@ class GeminiTranslationEngine(private val apiKey: String) : TranslationEngine {
         targetLang: String
     ): String? = withContext(Dispatchers.IO) {
         if (apiKey.isBlank()) return@withContext null
+        val cleanInput = text.trim()
+        // Por qué: Si el texto está vacío o no contiene ninguna letra, no se envía a la API para evitar respuestas de error del modelo
+        if (cleanInput.isBlank() || !cleanInput.any { it.isLetter() }) return@withContext null
 
         requestSemaphore.withPermit {
             val sourceName = if (sourceLang == "ro") "Romanian" else "Greek"
@@ -66,7 +69,7 @@ class GeminiTranslationEngine(private val apiKey: String) : TranslationEngine {
             val prompt = "You are an expert chat translator between Greek and Romanian. " +
                 "Translate this informal WhatsApp chat message from $sourceName to $targetName. " +
                 "Preserve colloquial slang, natural idioms, swear words, and emotional tone accurately. " +
-                "Preserve emojis, names, and punctuation. Output ONLY the raw translated text with no explanations or quotes:\n\n$text"
+                "Preserve emojis, names, and punctuation. Output ONLY the raw translated text with no explanations or quotes:\n\n$cleanInput"
 
             val payload = mapOf(
                 "contents" to listOf(
@@ -111,7 +114,7 @@ class GeminiTranslationEngine(private val apiKey: String) : TranslationEngine {
                             if (parts.size() == 0) break
 
                             val translated = parts[0].asJsonObject.get("text")?.asString?.trim()
-                            if (!translated.isNullOrBlank()) {
+                            if (!translated.isNullOrBlank() && isValidTranslation(translated)) {
                                 return@withContext translated
                             }
                             break
@@ -131,6 +134,28 @@ class GeminiTranslationEngine(private val apiKey: String) : TranslationEngine {
             }
             null
         }
+    }
+
+    // Por qué: Valida que la respuesta generada por Gemini sea realmente una traducción de texto
+    // y no un mensaje conversacional de error, advertencia o negativa ("Error: No message was provided", etc.).
+    private fun isValidTranslation(output: String): Boolean {
+        val trimmed = output.trim()
+        if (trimmed.isBlank()) return false
+        val lower = trimmed.lowercase()
+
+        if (trimmed.startsWith("[Error", ignoreCase = true) ||
+            trimmed.startsWith("Error:", ignoreCase = true) ||
+            lower.contains("no message was provided") ||
+            lower.contains("please provide the") ||
+            lower.contains("i cannot translate") ||
+            lower.contains("as an ai") ||
+            lower.contains("i am unable to") ||
+            lower.contains("i'm sorry, but") ||
+            lower.startsWith("sure, here is") ||
+            lower.startsWith("here is the translation")) {
+            return false
+        }
+        return true
     }
 }
 

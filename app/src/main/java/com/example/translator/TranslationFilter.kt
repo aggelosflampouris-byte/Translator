@@ -94,6 +94,11 @@ object TranslationFilter {
             return false
         }
 
+        // Por qué: Ignorar mensajes de error o advertencias para no reenviarlos a traducir ni mostrarlos en pantalla
+        if (trimmed.startsWith("[Error", ignoreCase = true) || trimmed.startsWith("Error:", ignoreCase = true)) {
+            return false
+        }
+
         // Filter out common UI labels, status, and navigation markers
         val lower = trimmed.lowercase()
         if (COMMON_UI_TOKENS.contains(lower) || MESSAGE_STATUS_TOKENS.contains(lower)) {

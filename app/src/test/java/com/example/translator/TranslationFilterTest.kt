@@ -207,4 +207,13 @@ class TranslationFilterTest {
         assertFalse(TranslationFilter.shouldTranslate("Αναπάντητη φωνητική κλήση", TranslateLanguage.ROMANIAN))
         assertFalse(TranslationFilter.shouldTranslate("Waiting for this message. This may take a while.", TranslateLanguage.GREEK))
     }
+
+    // Por qué: Asegura que respuestas de error o negativas conversacionales ("Error: No message was provided")
+    // sean descartadas inmediatamente y nunca se muestren como globos de traducción.
+    @Test
+    fun shouldTranslate_rejectsErrorAndRefusalMessages() {
+        assertFalse(TranslationFilter.shouldTranslate("[Error: No message was provided to translate. Please provide the Romanian text you would like translated into Greek.]", TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.shouldTranslate("Error: Something went wrong", TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.shouldTranslate("[Error: Empty prompt]", TranslateLanguage.ROMANIAN))
+    }
 }
