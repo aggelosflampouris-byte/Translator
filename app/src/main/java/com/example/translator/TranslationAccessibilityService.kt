@@ -105,7 +105,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             if (!isActive) {
                 overlayManager.removeAllOverlays()
                 typingJob?.cancel()
-                scanJob?.cancel()
+                scanDebounceJob?.cancel()
                 activeScanLoopJob?.cancel()
             } else {
                 startActiveScanning()
@@ -241,13 +241,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                 if (!isKeyboardVisible()) {
                     overlayManager.removeDraftOverlay()
                 }
-                if (translationMode == AppDefaults.MODE_ALL) {
-                    scanJob?.cancel()
-                    scanJob = serviceScope.launch {
-                        delay(16)
-                        scanAndTranslateVisibleMessages(event.source)
-                    }
-                }
+                scheduleScan(120L, event.source)
             }
             AccessibilityEvent.TYPE_VIEW_CLICKED -> {
                 if (translationMode == AppDefaults.MODE_TAP) {
@@ -261,13 +255,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                 } else if (isKeyboardTranslatorEnabled) {
                     handleOutgoingTyping()
                 }
-                if (translationMode == AppDefaults.MODE_ALL) {
-                    scanJob?.cancel()
-                    scanJob = serviceScope.launch {
-                        delay(40)
-                        scanAndTranslateVisibleMessages(event.source)
-                    }
-                }
+                scheduleScan(200L, event.source)
             }
             AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED,
             AccessibilityEvent.TYPE_VIEW_FOCUSED -> {
@@ -280,25 +268,28 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
     }
 
+    private var scanDebounceJob: Job? = null
+    // Por qué: Aplica un retraso controlado para no saturar con cancelaciones constantes en cada fotograma de desplazamiento
+    private fun scheduleScan(delayMs: Long, eventSource: AccessibilityNodeInfo? = null) {
+        if (translationMode != AppDefaults.MODE_ALL) return
+        scanDebounceJob?.cancel()
+        scanDebounceJob = serviceScope.launch {
+            delay(delayMs)
+            scanAndTranslateVisibleMessages(eventSource)
+        }
+    }
+
     private fun startActiveScanning() {
         if (translationMode != AppDefaults.MODE_ALL) return
 
         activeScanLoopJob?.cancel()
         activeScanLoopJob = serviceScope.launch {
-            // Immediate rapid scans
-            val initialDelays = listOf(50L, 200L, 500L, 1000L)
-            for (d in initialDelays) {
-                delay(d)
-                if (!ServiceBridge.isTranslatingActive) return@launch
-                val count = scanAndTranslateVisibleMessages()
-                if (count > 0) {
-                    break
-                }
-            }
+            delay(50L)
+            if (!ServiceBridge.isTranslatingActive) return@launch
+            scanAndTranslateVisibleMessages()
 
-            // Continuous polling while active (every 1.5s) to catch new messages or delayed models
             while (ServiceBridge.isTranslatingActive) {
-                delay(1500L)
+                delay(2000L)
                 if (!ServiceBridge.isTranslatingActive) break
                 scanAndTranslateVisibleMessages()
             }
@@ -401,32 +392,24 @@ class TranslationAccessibilityService : AccessibilityService() {
             return 0
         }
 
-        val translations = java.util.Collections.synchronizedList(mutableListOf<Pair<Rect?, String>>())
-        val pendingCounter = java.util.concurrent.atomic.AtomicInteger(dedupedCandidates.size)
-
-        fun onCandidateProcessed() {
-            if (pendingCounter.decrementAndGet() <= 0) {
-                checkBatchComplete(translations)
-            }
-        }
+        val immediateResults = mutableListOf<Pair<Rect?, String>>()
+        val pendingCandidates = mutableListOf<MessageCandidate>()
 
         for (candidate in dedupedCandidates) {
             val cleanText = candidate.text
             val rect = candidate.bounds
 
-            // Message pills only translate from source to target; reverse translation is reserved for keyboard typing
             val msgSource = if (configuredSource != "AUTO") configuredSource else AppDefaults.SOURCE_LANGUAGE
             val msgTarget = configuredTarget
 
-            // Check cache first (in-memory + persistent) for fast scroll rendering
+            // Check cache first (in-memory + persistent) for instantaneous rendering
             val cachedTranslation = getCachedTranslation(cleanText)
             if (cachedTranslation != null) {
-                translations.add(Pair(rect, cachedTranslation))
-                onCandidateProcessed()
+                immediateResults.add(Pair(rect, cachedTranslation))
                 continue
             }
 
-            // 1. Pre-translation idiom and sense resolution (e.g. holidays, slang, common questions)
+            // Pre-translation idiom and sense resolution (e.g. holidays, slang, common questions)
             val idiomaticTranslation = TranslationSenseEngine.resolveIdiomPreTranslation(
                 cleanText,
                 msgSource,
@@ -434,99 +417,59 @@ class TranslationAccessibilityService : AccessibilityService() {
             )
             if (idiomaticTranslation != null) {
                 putCachedTranslation(cleanText, idiomaticTranslation)
-                translations.add(Pair(rect, idiomaticTranslation))
-                onCandidateProcessed()
+                immediateResults.add(Pair(rect, idiomaticTranslation))
                 continue
             }
 
-            // 2. Strict language validation pipeline
-            languageIdentifier.identifyPossibleLanguages(cleanText)
-                .addOnSuccessListener { candidatesList ->
-                    val isEligible = TranslationSenseEngine.isEligibleSourceText(
-                        cleanText,
-                        msgSource,
-                        msgTarget,
-                        candidatesList
-                    )
-                    if (!isEligible) {
-                        // Drop non-source text (English links/previews, etc.)
-                        onCandidateProcessed()
-                        return@addOnSuccessListener
-                    }
-
-                    val normalizedText = if (msgSource == TranslateLanguage.ROMANIAN) {
-                        TextNormalizer.restoreRomanianDiacritics(cleanText)
-                    } else {
-                        cleanText
-                    }
-                    val protected = TextNormalizer.protectEmojis(normalizedText)
-
-                    translateText(msgSource, msgTarget, protected.text) { rawTranslated ->
-                        if (rawTranslated != null) {
-                            val restoredEmojis = TextNormalizer.restoreEmojis(rawTranslated, protected.tokens)
-                            val senseCorrected = TranslationSenseEngine.applyPostTranslationSenseLogic(
-                                originalText = normalizedText,
-                                translatedText = restoredEmojis,
-                                sourceLang = msgSource,
-                                targetLang = msgTarget
-                            )
-                            putCachedTranslation(cleanText, senseCorrected)
-                            translations.add(Pair(rect, senseCorrected))
-                        }
-                        onCandidateProcessed()
-                    }
-                }
-                .addOnFailureListener {
-                    val isEligible = TranslationSenseEngine.isEligibleSourceText(
-                        cleanText,
-                        msgSource,
-                        msgTarget,
-                        emptyList()
-                    )
-                    if (isEligible) {
-                        val normalizedText = if (msgSource == TranslateLanguage.ROMANIAN) {
-                            TextNormalizer.restoreRomanianDiacritics(cleanText)
-                        } else {
-                            cleanText
-                        }
-                        val protected = TextNormalizer.protectEmojis(normalizedText)
-
-                        translateText(msgSource, msgTarget, protected.text) { rawTranslated ->
-                            if (rawTranslated != null) {
-                                val restoredEmojis = TextNormalizer.restoreEmojis(rawTranslated, protected.tokens)
-                                val senseCorrected = TranslationSenseEngine.applyPostTranslationSenseLogic(
-                                    originalText = normalizedText,
-                                    translatedText = restoredEmojis,
-                                    sourceLang = msgSource,
-                                    targetLang = msgTarget
-                                )
-                                putCachedTranslation(cleanText, senseCorrected)
-                                translations.add(Pair(rect, senseCorrected))
-                            }
-                            onCandidateProcessed()
-                        }
-                    } else {
-                        onCandidateProcessed()
-                    }
-                }
+            pendingCandidates.add(candidate)
         }
-        return candidates.size
-    }
 
-    private var lastFeedbackToastTime = 0L
-
-    private fun checkBatchComplete(results: List<Pair<Rect?, String>>) {
-        val snapshot = synchronized(results) { ArrayList(results) }
-        mainHandler.post {
-            if (ServiceBridge.isTranslatingActive) {
-                overlayManager.updateOverlays(snapshot)
-                val now = System.currentTimeMillis()
-                if (snapshot.isNotEmpty() && now - lastFeedbackToastTime > 5000) {
-                    lastFeedbackToastTime = now
-                    Toast.makeText(this, "Translated ${snapshot.size} message(s)", Toast.LENGTH_SHORT).show()
+        // Por qué: Renderizar de forma inmediata todas las traducciones ya resueltas (en caché o por modismos)
+        // para que aparezcan en pantalla en menos de 2ms sin esperar a las peticiones de red.
+        if (immediateResults.isNotEmpty()) {
+            mainHandler.post {
+                if (ServiceBridge.isTranslatingActive) {
+                    overlayManager.updateOverlays(immediateResults, isFullSync = pendingCandidates.isEmpty())
                 }
             }
         }
+
+        // Por qué: Traducir de forma asíncrona cada mensaje pendiente sin bloquearse mutuamente,
+        // actualizando su pastilla de forma individual tan pronto como el motor responda.
+        for (candidate in pendingCandidates) {
+            val cleanText = candidate.text
+            val rect = candidate.bounds
+            val msgSource = if (configuredSource != "AUTO") configuredSource else AppDefaults.SOURCE_LANGUAGE
+            val msgTarget = configuredTarget
+
+            serviceScope.launch {
+                val normalizedText = if (msgSource == TranslateLanguage.ROMANIAN) {
+                    TextNormalizer.restoreRomanianDiacritics(cleanText)
+                } else {
+                    cleanText
+                }
+                val protected = TextNormalizer.protectEmojis(normalizedText)
+
+                val rawTranslated = hybridEngine.translate(protected.text, msgSource, msgTarget)
+                if (rawTranslated != null && rawTranslated.isNotBlank()) {
+                    val restoredEmojis = TextNormalizer.restoreEmojis(rawTranslated, protected.tokens)
+                    val senseCorrected = TranslationSenseEngine.applyPostTranslationSenseLogic(
+                        originalText = normalizedText,
+                        translatedText = restoredEmojis,
+                        sourceLang = msgSource,
+                        targetLang = msgTarget
+                    )
+                    putCachedTranslation(cleanText, senseCorrected)
+                    mainHandler.post {
+                        if (ServiceBridge.isTranslatingActive) {
+                            overlayManager.addOrUpdateOverlay(rect, senseCorrected)
+                        }
+                    }
+                }
+            }
+        }
+
+        return candidates.size
     }
 
     private fun collectMessageCandidates(

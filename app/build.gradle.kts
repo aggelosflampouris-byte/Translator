@@ -51,8 +51,8 @@ android {
         applicationId = "com.example.translator"
         minSdk = 24
         targetSdk = 33
-        versionCode = 56
-        versionName = "1.0.56"
+        versionCode = 57
+        versionName = "1.0.57"
 
         val safeApiKey = envGeminiApiKey.replace("\\", "\\\\").replace("\"", "\\\"")
         buildConfigField("String", "GEMINI_API_KEY", "\"$safeApiKey\"")

@@ -35,7 +35,29 @@ class OverlayManager(private val context: Context) {
 
     // Called on Main Thread
     @Synchronized
-    fun updateOverlays(results: List<Pair<Rect?, String>>) {
+    fun addOrUpdateOverlay(rect: Rect, translatedText: String) {
+        if (translatedText.isBlank()) return
+        val draftBounds = currentDraftOverlayBounds
+        if (draftBounds != null && Rect.intersects(draftBounds, rect)) return
+
+        val matchedId = findMatchingBubble(rect, translatedText)
+        if (matchedId != null) {
+            val bubble = activeBubbles[matchedId]
+            if (bubble != null) {
+                updateBubble(bubble, rect, translatedText)
+                return
+            }
+        }
+
+        val view = inflater.inflate(R.layout.bubble_overlay, null)
+        val (params, overlayBounds) = calculateBubbleLayout(rect, view, translatedText)
+        val newId = "bubble_${bubbleIdCounter.incrementAndGet()}"
+        addBubble(rect, translatedText, newId, view, params, overlayBounds)
+    }
+
+    // Called on Main Thread
+    @Synchronized
+    fun updateOverlays(results: List<Pair<Rect?, String>>, isFullSync: Boolean = true) {
         val updatedIds = mutableSetOf<String>()
 
         val draftBounds = currentDraftOverlayBounds
@@ -73,24 +95,12 @@ class OverlayManager(private val context: Context) {
                 continue
             }
 
-            val mainBubbleBounds = ServiceBridge.currentBubbleBounds
-            if (mainBubbleBounds != null && Rect.intersects(mainBubbleBounds, rect)) {
-                // Por qué: Evitar tapar el botón flotante principal si el mensaje coincide en esa posición
-                val screenWidth = context.resources.displayMetrics.widthPixels
-                if (mainBubbleBounds.left > screenWidth / 2 && rect.left >= mainBubbleBounds.left) {
-                    continue
-                }
-            }
-
             val matchedId = findMatchingBubble(rect, translatedText)
             if (matchedId != null) {
                 // Actualizar burbuja existente
                 val bubble = activeBubbles[matchedId]
                 if (bubble != null) {
                     if (draftBounds != null && Rect.intersects(draftBounds, bubble.overlayBounds)) {
-                        continue
-                    }
-                    if (mainBubbleBounds != null && Rect.intersects(mainBubbleBounds, bubble.overlayBounds)) {
                         continue
                     }
                     updateBubble(bubble, rect, translatedText)
@@ -103,9 +113,6 @@ class OverlayManager(private val context: Context) {
                 if (draftBounds != null && Rect.intersects(draftBounds, overlayBounds)) {
                     continue
                 }
-                if (mainBubbleBounds != null && Rect.intersects(mainBubbleBounds, overlayBounds)) {
-                    continue
-                }
                 acceptedBoundsInBatch.add(overlayBounds)
                 // Por qué: Reutilizamos la vista ya inflada y las dimensiones calculadas para evitar doble inflación
                 val newId = "bubble_${bubbleIdCounter.incrementAndGet()}"
@@ -114,11 +121,18 @@ class OverlayManager(private val context: Context) {
             }
         }
 
-        // Por qué: Eliminar overlays antiguos que ya no están visibles en pantalla tras el desplazamiento
+        // Por qué: Si es sincronización completa, eliminar overlays que ya no están visibles en pantalla.
+        // Si no es sincronización completa (ej: renderizado incremental), conservar los activos no colisionantes.
+        val screenHeight = context.resources.displayMetrics.heightPixels
         val iterator = activeBubbles.iterator()
         while (iterator.hasNext()) {
             val entry = iterator.next()
-            if (!updatedIds.contains(entry.key)) {
+            val shouldRemove = if (isFullSync) {
+                !updatedIds.contains(entry.key)
+            } else {
+                entry.value.targetRect.bottom < 0 || entry.value.targetRect.top > screenHeight
+            }
+            if (shouldRemove) {
                 try {
                     windowManager.removeView(entry.value.view)
                 } catch (e: Exception) {
@@ -200,6 +214,9 @@ class OverlayManager(private val context: Context) {
     private fun updateBubble(bubble: ActiveBubble, targetRect: Rect, text: String) {
         val (params, overlayBounds) = calculateBubbleLayout(targetRect, bubble.view, text)
         bubble.overlayBounds = overlayBounds
+        // Por qué: Mantener targetRect y text actualizados para que las comparaciones de proximidad en frames subsiguientes sean precisas
+        bubble.targetRect = targetRect
+        bubble.text = text
 
         params.type = (bubble.view.layoutParams as? WindowManager.LayoutParams)?.type
             ?: WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
@@ -212,7 +229,6 @@ class OverlayManager(private val context: Context) {
     }
 
     private fun calculateBubbleLayout(targetRect: Rect, view: View, text: String): Pair<WindowManager.LayoutParams, Rect> {
-        val density = context.resources.displayMetrics.density
         val screenWidth = context.resources.displayMetrics.widthPixels
 
         // Por qué: Diferencia entre mensajes salientes (lado derecho) y entrantes (lado izquierdo)
@@ -233,11 +249,6 @@ class OverlayManager(private val context: Context) {
         val textView = view.findViewById<TextView>(R.id.translated_text)
         textView.text = text
 
-        view.layoutParams = android.view.ViewGroup.LayoutParams(
-            bubbleWidth,
-            android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-        )
-
         view.measure(
             View.MeasureSpec.makeMeasureSpec(bubbleWidth, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
@@ -247,7 +258,7 @@ class OverlayManager(private val context: Context) {
         // que líneas de texto o marcas de tiempo previas queden descubiertas por debajo o por los lados.
         val bubbleHeight = max(targetRect.height(), view.measuredHeight)
 
-        val params = WindowManager.LayoutParams(
+        val params = (view.layoutParams as? WindowManager.LayoutParams) ?: WindowManager.LayoutParams(
             bubbleWidth,
             bubbleHeight,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
@@ -258,12 +269,14 @@ class OverlayManager(private val context: Context) {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = posX
-            y = posY
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
                 layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
             }
         }
+        params.width = bubbleWidth
+        params.height = bubbleHeight
+        params.x = posX
+        params.y = posY
 
         val overlayBounds = Rect(posX, posY, posX + bubbleWidth, posY + bubbleHeight)
         return Pair(params, overlayBounds)

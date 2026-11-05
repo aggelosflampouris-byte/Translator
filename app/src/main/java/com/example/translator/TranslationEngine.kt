@@ -39,15 +39,14 @@ interface TranslationEngine {
 class GeminiTranslationEngine(private val apiKey: String) : TranslationEngine {
 
     companion object {
-        // Por qué: Limita las peticiones simultáneas a 2 para evitar saturar el límite de tasa de Google AI Studio (HTTP 503/429)
-        // cuando se traducen múltiples mensajes en pantalla a la vez.
-        private val requestSemaphore = Semaphore(2)
+        // Por qué: Limita las peticiones simultáneas a 4 para balancear rendimiento rápido con el límite de tasa de Google AI Studio (HTTP 503/429).
+        private val requestSemaphore = Semaphore(4)
         private val candidateModels = listOf("gemini-3.5-flash-lite", "gemini-3.5-flash")
     }
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(8, TimeUnit.SECONDS)
+        .connectTimeout(3, TimeUnit.SECONDS)
+        .readTimeout(5, TimeUnit.SECONDS)
         .build()
 
     private val gson = Gson()
@@ -118,7 +117,7 @@ class GeminiTranslationEngine(private val apiKey: String) : TranslationEngine {
                             break
                         } else if (response.code == 503 || response.code == 429) {
                             Log.w("GeminiEngine", "Model $model returned HTTP ${response.code}, attempt $attempt. Retrying...")
-                            delay(350L * attempt)
+                            delay(200L * attempt)
                             continue
                         } else {
                             Log.w("GeminiEngine", "Gemini API failed with HTTP ${response.code} for $model")
@@ -126,7 +125,7 @@ class GeminiTranslationEngine(private val apiKey: String) : TranslationEngine {
                         }
                     } catch (e: Exception) {
                         Log.e("GeminiEngine", "Network error with $model on attempt $attempt", e)
-                        delay(350L * attempt)
+                        delay(200L * attempt)
                     }
                 }
             }
