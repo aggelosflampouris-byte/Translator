@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Por qué: Define las rutas seguras accesibles mediante FileProvider para que el instalador de paquetes del sistema operativo Android pueda leer e instalar la actualización del APK descargada -->
+<paths>
+    <cache-path name="cache" path="." />
+    <external-cache-path name="external_cache" path="." />
+    <external-files-path name="external_files" path="." />
+</paths>

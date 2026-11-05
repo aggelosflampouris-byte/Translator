@@ -31,7 +31,10 @@ import com.example.translator.FloatingBubbleService
 import com.example.translator.ServiceBridge
 import com.example.translator.TranslationNotificationManager
 import com.example.translator.TranslatorPool
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import java.io.File
 import java.util.Locale
 
 @Composable
@@ -42,31 +45,230 @@ fun MainScreen(
   val context = LocalContext.current
   val lifecycleOwner = LocalLifecycleOwner.current
   val snackbarHostState = remember { SnackbarHostState() }
+  val coroutineScope = rememberCoroutineScope()
 
-  // ── Update check ──────────────────────────────────────────────────────────
+  // ── Actualizador interno directo (descarga e instalación in-app) ────────────
+  val appUpdater = remember { AppUpdater(context) }
   var pendingUpdate by remember { mutableStateOf<AppUpdater.UpdateInfo?>(null) }
+  var isCheckingForUpdate by remember { mutableStateOf(false) }
+  var isDownloadingUpdate by remember { mutableStateOf(false) }
+  var downloadProgress by remember { mutableStateOf(0f) }
+  var downloadStatusText by remember { mutableStateOf("") }
+  var downloadedApkFile by remember { mutableStateOf<File?>(null) }
+  var downloadErrorMessage by remember { mutableStateOf<String?>(null) }
+  var downloadJob by remember { mutableStateOf<Job?>(null) }
 
+  // Por qué: Verifica silenciosamente al iniciar si existe una versión más reciente en GitHub
   LaunchedEffect(Unit) {
-      val info = AppUpdater(context).checkForUpdates()
-      if (info != null) pendingUpdate = info
+      val info = appUpdater.checkForUpdates()
+      if (info != null) {
+          pendingUpdate = info
+          val dest = appUpdater.getUpdateFile(info.version)
+          if (dest.exists() && dest.length() > 0L && (info.apkSize == 0L || dest.length() == info.apkSize)) {
+              downloadedApkFile = dest
+          }
+      }
   }
 
+  // Por qué: Muestra un diálogo interactivo para descargar el APK directamente en la app
+  // y lanzar el instalador de paquetes sin redirigir al usuario al repositorio ni al navegador web.
   pendingUpdate?.let { info ->
       AlertDialog(
-          onDismissRequest = { pendingUpdate = null },
-          title = { Text("Update Available") },
-          text = { Text("Version ${info.version} is available on GitHub. Open download page?") },
-          confirmButton = {
-              TextButton(onClick = {
-                  val target = pendingUpdate
+          onDismissRequest = {
+              if (!isDownloadingUpdate) {
                   pendingUpdate = null
-                  if (target != null) {
-                      AppUpdater(context).openUpdatePage(context, target)
+                  downloadErrorMessage = null
+              }
+          },
+          title = {
+              Text(
+                  text = when {
+                      downloadedApkFile != null -> "Update Ready to Install"
+                      isDownloadingUpdate -> "Downloading Update"
+                      downloadErrorMessage != null -> "Update Failed"
+                      else -> "Update Available"
                   }
-              }) { Text("View Update") }
+              )
+          },
+          text = {
+              Column(modifier = Modifier.fillMaxWidth()) {
+                  when {
+                      isDownloadingUpdate -> {
+                          Text(
+                              text = "Downloading ${info.version} directly...",
+                              style = MaterialTheme.typography.bodyMedium
+                          )
+                          Spacer(modifier = Modifier.height(12.dp))
+                          LinearProgressIndicator(
+                              progress = { downloadProgress },
+                              modifier = Modifier.fillMaxWidth()
+                          )
+                          Spacer(modifier = Modifier.height(8.dp))
+                          Text(
+                              text = downloadStatusText,
+                              style = MaterialTheme.typography.bodySmall,
+                              color = MaterialTheme.colorScheme.onSurfaceVariant
+                          )
+                      }
+                      downloadedApkFile != null -> {
+                          Text(
+                              text = "Version ${info.version} has been downloaded and is ready to install.",
+                              style = MaterialTheme.typography.bodyMedium
+                          )
+                          Spacer(modifier = Modifier.height(8.dp))
+                          Text(
+                              text = "Tap Install to apply the update immediately.",
+                              style = MaterialTheme.typography.bodySmall,
+                              color = MaterialTheme.colorScheme.onSurfaceVariant
+                          )
+                      }
+                      downloadErrorMessage != null -> {
+                          Text(
+                              text = downloadErrorMessage ?: "An error occurred during download.",
+                              style = MaterialTheme.typography.bodyMedium,
+                              color = MaterialTheme.colorScheme.error
+                          )
+                          Spacer(modifier = Modifier.height(8.dp))
+                          Text(
+                              text = "You can retry downloading or open the release page in your browser.",
+                              style = MaterialTheme.typography.bodySmall,
+                              color = MaterialTheme.colorScheme.onSurfaceVariant
+                          )
+                      }
+                      else -> {
+                          val sizeFormatted = if (info.apkSize > 0) {
+                              String.format(Locale.US, " (%.1f MB)", info.apkSize / (1024f * 1024f))
+                          } else ""
+                          Text(
+                              text = "Version ${info.version}$sizeFormatted is available.",
+                              style = MaterialTheme.typography.bodyMedium
+                          )
+                          Spacer(modifier = Modifier.height(8.dp))
+                          Text(
+                              text = "Download and update directly within the app?",
+                              style = MaterialTheme.typography.bodySmall,
+                              color = MaterialTheme.colorScheme.onSurfaceVariant
+                          )
+                      }
+                  }
+              }
+          },
+          confirmButton = {
+              when {
+                  isDownloadingUpdate -> {
+                      // Descargando en progreso
+                  }
+                  downloadedApkFile != null -> {
+                      Button(
+                          onClick = {
+                              val file = downloadedApkFile
+                              if (file != null) {
+                                  val result = appUpdater.installApk(context, file)
+                                  if (result is AppUpdater.InstallResult.PermissionRequired) {
+                                      coroutineScope.launch {
+                                          snackbarHostState.showSnackbar("Enable 'Allow from this source' to install update")
+                                      }
+                                  } else if (result is AppUpdater.InstallResult.Success) {
+                                      pendingUpdate = null
+                                  }
+                              }
+                          }
+                      ) {
+                          Text("Install Now")
+                      }
+                  }
+                  downloadErrorMessage != null -> {
+                      Button(
+                          onClick = {
+                              downloadErrorMessage = null
+                              isDownloadingUpdate = true
+                              downloadProgress = 0f
+                              downloadStatusText = "Connecting..."
+                              val destination = appUpdater.getUpdateFile(info.version)
+                              downloadJob = coroutineScope.launch {
+                                  val success = appUpdater.downloadApk(info.apkUrl, destination) { bytesDownloaded, totalBytes ->
+                                      downloadProgress = if (totalBytes > 0) bytesDownloaded.toFloat() / totalBytes.toFloat() else 0f
+                                      val mbDownloaded = bytesDownloaded / (1024f * 1024f)
+                                      val mbTotal = totalBytes / (1024f * 1024f)
+                                      val percent = if (totalBytes > 0) (bytesDownloaded * 100 / totalBytes).toInt() else 0
+                                      downloadStatusText = String.format(Locale.US, "%.1f MB / %.1f MB (%d%%)", mbDownloaded, mbTotal, percent)
+                                  }
+                                  isDownloadingUpdate = false
+                                  if (success) {
+                                      downloadedApkFile = destination
+                                      appUpdater.installApk(context, destination)
+                                  } else {
+                                      downloadErrorMessage = "Download failed. Check your internet connection."
+                                  }
+                              }
+                          }
+                      ) {
+                          Text("Retry")
+                      }
+                  }
+                  else -> {
+                      Button(
+                          onClick = {
+                              downloadErrorMessage = null
+                              isDownloadingUpdate = true
+                              downloadProgress = 0f
+                              downloadStatusText = "Connecting..."
+                              val destination = appUpdater.getUpdateFile(info.version)
+                              downloadJob = coroutineScope.launch {
+                                  val success = appUpdater.downloadApk(info.apkUrl, destination) { bytesDownloaded, totalBytes ->
+                                      downloadProgress = if (totalBytes > 0) bytesDownloaded.toFloat() / totalBytes.toFloat() else 0f
+                                      val mbDownloaded = bytesDownloaded / (1024f * 1024f)
+                                      val mbTotal = totalBytes / (1024f * 1024f)
+                                      val percent = if (totalBytes > 0) (bytesDownloaded * 100 / totalBytes).toInt() else 0
+                                      downloadStatusText = String.format(Locale.US, "%.1f MB / %.1f MB (%d%%)", mbDownloaded, mbTotal, percent)
+                                  }
+                                  isDownloadingUpdate = false
+                                  if (success) {
+                                      downloadedApkFile = destination
+                                      appUpdater.installApk(context, destination)
+                                  } else {
+                                      downloadErrorMessage = "Download failed. Check your internet connection."
+                                  }
+                              }
+                          }
+                      ) {
+                          Text("Download & Install")
+                      }
+                  }
+              }
           },
           dismissButton = {
-              TextButton(onClick = { pendingUpdate = null }) { Text("Later") }
+              if (isDownloadingUpdate) {
+                  TextButton(
+                      onClick = {
+                          downloadJob?.cancel()
+                          isDownloadingUpdate = false
+                          downloadStatusText = ""
+                      }
+                  ) {
+                      Text("Cancel")
+                  }
+              } else {
+                  Row {
+                      if (downloadErrorMessage != null) {
+                          TextButton(
+                              onClick = {
+                                  appUpdater.openUpdatePage(context, info.htmlUrl)
+                              }
+                          ) {
+                              Text("Open Browser")
+                          }
+                      }
+                      TextButton(
+                          onClick = {
+                              pendingUpdate = null
+                              downloadErrorMessage = null
+                          }
+                      ) {
+                          Text("Later")
+                      }
+                  }
+              }
           }
       )
   }
@@ -257,10 +459,29 @@ fun MainScreen(
           )
           Surface(
               shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
-              color = MaterialTheme.colorScheme.surfaceVariant
+              color = MaterialTheme.colorScheme.surfaceVariant,
+              // Por qué: Permite al usuario comprobar manualmente actualizaciones al pulsar sobre la versión
+              modifier = Modifier.clickable {
+                  if (!isCheckingForUpdate && !isDownloadingUpdate) {
+                      isCheckingForUpdate = true
+                      coroutineScope.launch {
+                          val info = appUpdater.checkForUpdates()
+                          isCheckingForUpdate = false
+                          if (info != null) {
+                              pendingUpdate = info
+                              val dest = appUpdater.getUpdateFile(info.version)
+                              if (dest.exists() && dest.length() > 0L && (info.apkSize == 0L || dest.length() == info.apkSize)) {
+                                  downloadedApkFile = dest
+                              }
+                          } else {
+                              snackbarHostState.showSnackbar("You're on the latest version (v${BuildConfig.VERSION_NAME})")
+                          }
+                      }
+                  }
+              }
           ) {
               Text(
-                  text = "v${BuildConfig.VERSION_NAME}",
+                  text = if (isCheckingForUpdate) "Checking..." else "v${BuildConfig.VERSION_NAME}",
                   style = MaterialTheme.typography.labelSmall,
                   color = MaterialTheme.colorScheme.onSurfaceVariant,
                   modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
