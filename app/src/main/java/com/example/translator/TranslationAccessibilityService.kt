@@ -38,6 +38,12 @@ class TranslationAccessibilityService : AccessibilityService() {
     private var typingJob: Job? = null
     private var scanJob: Job? = null
 
+    // Por qué: Control de estabilidad de pantalla para ocultar las píldoras durante el desplazamiento
+    // y traducir únicamente cuando la pantalla se encuentre completamente estática.
+    private var lastScrollTimestamp: Long = 0L
+    @Volatile private var isScreenScrolling: Boolean = false
+    private var scrollSettleJob: Job? = null
+
     // In-memory LRU cache for fast scroll rendering without unbounded SharedPreferences growth
     private val translationCache = LruCache<String, String>(500)
 
@@ -106,8 +112,10 @@ class TranslationAccessibilityService : AccessibilityService() {
                 overlayManager.removeAllOverlays()
                 typingJob?.cancel()
                 scanDebounceJob?.cancel()
+                scrollSettleJob?.cancel()
                 activeScanLoopJob?.cancel()
                 overlayWatchdogJob?.cancel()
+                isScreenScrolling = false
             } else {
                 startOverlayWatchdog()
                 startActiveScanning()
@@ -121,6 +129,8 @@ class TranslationAccessibilityService : AccessibilityService() {
         // Por qué: Callback ejecutado cuando el usuario pulsa "Translate Screen" en la notificación o mosaico
         ServiceBridge.onScanRequested = {
             serviceScope.launch {
+                isScreenScrolling = false
+                lastScrollTimestamp = 0L
                 if (!isWhatsAppInForeground()) {
                     mainHandler.post {
                         overlayManager.removeAllOverlays()
@@ -257,11 +267,31 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         when (event.eventType) {
             AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
-                overlayManager.removeSingleMessagePill()
-                if (!isKeyboardVisible()) {
-                    overlayManager.removeDraftOverlay()
+                lastScrollTimestamp = android.os.SystemClock.uptimeMillis()
+                isScreenScrolling = true
+                scanDebounceJob?.cancel()
+                scrollSettleJob?.cancel()
+
+                // Por qué: Oculta inmediatamente las píldoras de traducción durante el desplazamiento del chat
+                // para evitar que se queden atascadas o flotando sobre mensajes en movimiento.
+                mainHandler.post {
+                    overlayManager.removeAllMessageOverlays()
+                    if (!isKeyboardVisible()) {
+                        overlayManager.removeDraftOverlay()
+                    }
                 }
-                scheduleScan(120L, event.source)
+
+                if (translationMode == AppDefaults.MODE_ALL) {
+                    scrollSettleJob = serviceScope.launch {
+                        // Por qué: Espera 350ms de quietud absoluta tras finalizar el desplazamiento
+                        // antes de traducir, garantizando que la pantalla esté 100% estable.
+                        delay(350L)
+                        isScreenScrolling = false
+                        if (isWhatsAppInForeground() && ServiceBridge.isTranslatingActive) {
+                            scanAndTranslateVisibleMessages()
+                        }
+                    }
+                }
             }
             AccessibilityEvent.TYPE_VIEW_CLICKED -> {
                 if (translationMode == AppDefaults.MODE_TAP) {
@@ -275,7 +305,11 @@ class TranslationAccessibilityService : AccessibilityService() {
                 } else if (isKeyboardTranslatorEnabled) {
                     handleOutgoingTyping()
                 }
-                scheduleScan(200L, event.source)
+                // Por qué: Ignora cambios de contenido si la lista aún se encuentra en movimiento por desplazamiento
+                val now = android.os.SystemClock.uptimeMillis()
+                if (!isScreenScrolling && (now - lastScrollTimestamp >= 350L)) {
+                    scheduleScan(350L, event.source)
+                }
             }
             AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED,
             AccessibilityEvent.TYPE_VIEW_FOCUSED -> {
@@ -298,10 +332,15 @@ class TranslationAccessibilityService : AccessibilityService() {
             }
             return
         }
+        val now = android.os.SystemClock.uptimeMillis()
+        if (isScreenScrolling || (now - lastScrollTimestamp < 350L)) {
+            return
+        }
         scanDebounceJob?.cancel()
         scanDebounceJob = serviceScope.launch {
             delay(delayMs)
-            if (isWhatsAppInForeground()) {
+            val elapsed = android.os.SystemClock.uptimeMillis() - lastScrollTimestamp
+            if (isWhatsAppInForeground() && !isScreenScrolling && elapsed >= 350L) {
                 scanAndTranslateVisibleMessages(eventSource)
             }
         }
@@ -335,16 +374,18 @@ class TranslationAccessibilityService : AccessibilityService() {
         activeScanLoopJob = serviceScope.launch {
             delay(50L)
             if (!ServiceBridge.isTranslatingActive) return@launch
-            if (isWhatsAppInForeground()) {
+            val elapsedInit = android.os.SystemClock.uptimeMillis() - lastScrollTimestamp
+            if (isWhatsAppInForeground() && !isScreenScrolling && elapsedInit >= 350L) {
                 scanAndTranslateVisibleMessages()
             }
 
             while (ServiceBridge.isTranslatingActive) {
                 delay(2000L)
                 if (!ServiceBridge.isTranslatingActive) break
-                if (isWhatsAppInForeground()) {
+                val timeSinceScroll = android.os.SystemClock.uptimeMillis() - lastScrollTimestamp
+                if (isWhatsAppInForeground() && !isScreenScrolling && timeSinceScroll >= 350L) {
                     scanAndTranslateVisibleMessages()
-                } else if (overlayManager.hasOverlays()) {
+                } else if (!isWhatsAppInForeground() && overlayManager.hasOverlays()) {
                     mainHandler.post { overlayManager.removeAllOverlays() }
                 }
             }
@@ -398,6 +439,12 @@ class TranslationAccessibilityService : AccessibilityService() {
     // Called on serviceScope background coroutine
     private fun scanAndTranslateVisibleMessages(eventSource: AccessibilityNodeInfo? = null): Int {
         if (!ServiceBridge.isTranslatingActive) {
+            return 0
+        }
+
+        // Por qué: Valida que la pantalla esté completamente quieta y no en pleno desplazamiento antes de escanear
+        val timeSinceScroll = android.os.SystemClock.uptimeMillis() - lastScrollTimestamp
+        if (isScreenScrolling || timeSinceScroll < 350L) {
             return 0
         }
 
@@ -1125,7 +1172,9 @@ class TranslationAccessibilityService : AccessibilityService() {
         ServiceBridge.isAccessibilityActive = false
         ServiceBridge.onTranslationStateChanged = null
         ServiceBridge.onScanRequested = null
+        scrollSettleJob?.cancel()
         overlayWatchdogJob?.cancel()
+        isScreenScrolling = false
         TranslationNotificationManager.cancelNotification(this)
         overlayManager.removeAllOverlays()
         try {
@@ -1144,7 +1193,9 @@ class TranslationAccessibilityService : AccessibilityService() {
         ServiceBridge.isAccessibilityActive = false
         ServiceBridge.onTranslationStateChanged = null
         ServiceBridge.onScanRequested = null
+        scrollSettleJob?.cancel()
         overlayWatchdogJob?.cancel()
+        isScreenScrolling = false
         TranslationNotificationManager.cancelNotification(this)
         overlayManager.removeAllOverlays()
         try {
