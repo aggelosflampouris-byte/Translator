@@ -7,15 +7,15 @@
     android:gravity="center_vertical"
     android:paddingStart="12dp"
     android:paddingEnd="12dp"
-    android:paddingTop="6dp"
-    android:paddingBottom="6dp">
+    android:paddingTop="7dp"
+    android:paddingBottom="7dp">
 
     <TextView
         android:id="@+id/translated_text"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:textColor="#E9EDEF"
-        android:textSize="14.5sp"
-        android:textStyle="normal"
+        android:textColor="#F8FAFC"
+        android:textSize="14sp"
+        android:fontFamily="sans-serif"
         android:lineSpacingExtra="2dp" />
 </LinearLayout>

@@ -45,25 +45,6 @@ object TranslationSenseEngine {
     private val GENERIC_ROMANCE_PREPOSITIONS = setOf("de", "in", "e", "a", "la")
 
     /**
-     * Determines whether a WhatsApp message bubble is an incoming message from the contact
-     * rather than an outgoing message sent by the user.
-     * In WhatsApp, incoming bubbles hug the left screen edge (left < 35% of screen width),
-     * while outgoing bubbles are right-aligned and date pills are centered.
-     */
-    fun isIncomingMessage(rectLeft: Int, rectRight: Int, screenWidth: Int): Boolean {
-        if (screenWidth <= 0) return true
-        val isLeftAligned = rectLeft < (screenWidth * 0.22f)
-        val isNotRightHugging = rectRight < (screenWidth * 0.88f)
-        val width = rectRight - rectLeft
-        val hasReasonableWidth = width < (screenWidth * 0.95f) && width > 20
-        return isLeftAligned && isNotRightHugging && hasReasonableWidth
-    }
-
-    fun isIncomingMessage(rect: Rect, screenWidth: Int): Boolean {
-        return isIncomingMessage(rect.left, rect.right, screenWidth)
-    }
-
-    /**
      * Determines whether a recognized rectangle corresponds to a chat message bubble
      * (either incoming on the left or sent outgoing on the right), while filtering out
      * centered date pills (e.g. "Σήμερα", "Πέμπτη") and full-width background chrome.
@@ -188,10 +169,6 @@ object TranslationSenseEngine {
         return matchingCandidate != null && matchingCandidate.confidence >= 0.20f
     }
 
-    /**
-     * Resolves known idioms, holiday greetings, and slang expressions before submitting to ML Kit.
-     * Prevents literal or nonsensical machine translations for cultural phrases.
-     */
     /**
      * Resolves known idioms, holiday greetings, and conversational expressions before submitting to ML Kit.
      * Prevents literal or nonsensical machine translations for cultural phrases.

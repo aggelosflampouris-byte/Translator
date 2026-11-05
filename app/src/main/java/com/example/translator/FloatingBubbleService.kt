@@ -4,7 +4,9 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.os.IBinder
+import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -22,24 +24,6 @@ class FloatingBubbleService : Service() {
     private var layoutParams: WindowManager.LayoutParams? = null
 
     companion object {
-        var isRunning: Boolean = false
-            private set
-        var isTranslatingActive: Boolean = false
-            private set
-        var instance: FloatingBubbleService? = null
-            private set
-
-        val currentBubbleBounds: android.graphics.Rect?
-            get() {
-                val inst = instance ?: return null
-                val p = inst.layoutParams ?: return null
-                val density = inst.resources.displayMetrics.density
-                val defaultSize = (54 * density).toInt()
-                val w = inst.sphereView?.width?.takeIf { it > 0 } ?: p.width.takeIf { it > 0 } ?: defaultSize
-                val h = inst.sphereView?.height?.takeIf { it > 0 } ?: p.height.takeIf { it > 0 } ?: defaultSize
-                return android.graphics.Rect(p.x, p.y, p.x + w, p.y + h)
-            }
-
         const val ACTION_TOGGLE_ACTIVE = "com.example.translator.ACTION_TOGGLE_ACTIVE"
         const val ACTION_STOP_SERVICE = "com.example.translator.ACTION_STOP_SERVICE"
     }
@@ -48,9 +32,8 @@ class FloatingBubbleService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        instance = this
-        isRunning = true
-        isTranslatingActive = false
+        ServiceBridge.isBubbleRunning = true
+        ServiceBridge.isTranslatingActive = false
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         createFloatingSphere()
     }
@@ -68,9 +51,26 @@ class FloatingBubbleService : Service() {
         return START_STICKY
     }
 
+    /**
+     * Recomputes the floating sphere's bounding rect from the current layout params
+     * and publishes it to [ServiceBridge]. Called after every position change so that
+     * [OverlayManager] can avoid drawing translation bubbles on top of the sphere.
+     */
+    private fun updateBridgeBounds() {
+        val p = layoutParams ?: run {
+            ServiceBridge.currentBubbleBounds = null
+            return
+        }
+        val density = resources.displayMetrics.density
+        val defaultSize = (52 * density).toInt()
+        val w = sphereView?.width?.takeIf { it > 0 } ?: p.width.takeIf { it > 0 } ?: defaultSize
+        val h = sphereView?.height?.takeIf { it > 0 } ?: p.height.takeIf { it > 0 } ?: defaultSize
+        ServiceBridge.currentBubbleBounds = Rect(p.x, p.y, p.x + w, p.y + h)
+    }
+
     private fun createFloatingSphere() {
         val density = resources.displayMetrics.density
-        val sphereSize = (54 * density).toInt()
+        val sphereSize = (52 * density).toInt()
 
         val params = WindowManager.LayoutParams(
             sphereSize,
@@ -117,6 +117,7 @@ class FloatingBubbleService : Service() {
                         p.x = initialX + dx
                         p.y = initialY + dy
                         windowManager?.updateViewLayout(view, p)
+                        updateBridgeBounds()
                     }
                     true
                 }
@@ -134,6 +135,7 @@ class FloatingBubbleService : Service() {
                             screenWidth - sphereSize - margin
                         }
                         windowManager?.updateViewLayout(view, p)
+                        updateBridgeBounds()
                     }
                     true
                 }
@@ -143,7 +145,9 @@ class FloatingBubbleService : Service() {
 
         try {
             windowManager?.addView(view, params)
+            updateBridgeBounds()
         } catch (e: Exception) {
+            Log.e("Translator", "FloatingBubbleService: failed to add overlay view", e)
             stopSelf()
         }
     }
@@ -151,9 +155,9 @@ class FloatingBubbleService : Service() {
     private fun toggleTranslationState() {
         val root = sphereView?.findViewById<FrameLayout>(R.id.sphere_root)
 
-        if (!isTranslatingActive) {
-            // Verify accessibility service instance is connected
-            if (!TranslationAccessibilityService.isSharedInstanceActive) {
+        if (!ServiceBridge.isTranslatingActive) {
+            // Verify accessibility service is connected before activating
+            if (!ServiceBridge.isAccessibilityActive) {
                 Toast.makeText(this, "⚠️ Accessibility Service is OFF. Please toggle it ON in Settings!", Toast.LENGTH_LONG).show()
                 val intent = Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -161,29 +165,30 @@ class FloatingBubbleService : Service() {
                 startActivity(intent)
                 return
             }
-            isTranslatingActive = true
+            ServiceBridge.isTranslatingActive = true
             root?.setBackgroundResource(R.drawable.bg_floating_sphere_active)
             Toast.makeText(this, "Translation Active (Scanning WhatsApp)", Toast.LENGTH_SHORT).show()
-            TranslationAccessibilityService.onTranslationStateChanged(true)
+            ServiceBridge.onTranslationStateChanged?.invoke(true)
         } else {
-            isTranslatingActive = false
+            ServiceBridge.isTranslatingActive = false
             root?.setBackgroundResource(R.drawable.bg_floating_sphere_idle)
             Toast.makeText(this, "Translation Paused (Idle)", Toast.LENGTH_SHORT).show()
-            TranslationAccessibilityService.onTranslationStateChanged(false)
+            ServiceBridge.onTranslationStateChanged?.invoke(false)
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        isRunning = false
-        isTranslatingActive = false
-        instance = null
-        TranslationAccessibilityService.onTranslationStateChanged(false)
+        ServiceBridge.isBubbleRunning = false
+        ServiceBridge.isTranslatingActive = false
+        ServiceBridge.currentBubbleBounds = null
+        // Notify the accessibility service that translation stopped
+        ServiceBridge.onTranslationStateChanged?.invoke(false)
         sphereView?.let {
             try {
                 windowManager?.removeView(it)
             } catch (e: Exception) {
-                // View may already be removed
+                Log.w("Translator", "FloatingBubbleService: failed to removeView in onDestroy", e)
             }
         }
         sphereView = null

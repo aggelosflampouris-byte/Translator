@@ -17,10 +17,13 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.navigation3.runtime.NavKey
+import com.example.translator.AppDefaults
+import com.example.translator.AppUpdater
 import com.example.translator.BuildConfig
 import com.example.translator.FloatingBubbleService
 import com.example.translator.ScreenCaptureService
-import com.example.translator.TranslationAccessibilityService
+import com.example.translator.ServiceBridge
+import com.example.translator.TranslatorPool
 import kotlinx.coroutines.delay
 import java.util.Locale
 
@@ -33,15 +36,56 @@ fun MainScreen(
   val lifecycleOwner = LocalLifecycleOwner.current
   val snackbarHostState = remember { SnackbarHostState() }
 
-  val prefs = context.getSharedPreferences("translator_prefs", Context.MODE_PRIVATE)
+  // ── Update check ──────────────────────────────────────────────────────────
+  var pendingUpdate by remember { mutableStateOf<AppUpdater.UpdateInfo?>(null) }
+  var updateError by remember { mutableStateOf<String?>(null) }
+
+  LaunchedEffect(Unit) {
+      val info = AppUpdater(context).checkForUpdates()
+      if (info != null) pendingUpdate = info
+  }
+
+  pendingUpdate?.let { info ->
+      AlertDialog(
+          onDismissRequest = { pendingUpdate = null },
+          title = { Text("Update Available") },
+          text = { Text("Version ${info.version} is available. Download and install now?") },
+          confirmButton = {
+              TextButton(onClick = {
+                  pendingUpdate = null
+                  AppUpdater(context).downloadAndInstall(
+                      activityContext = context,
+                      updateInfo = info,
+                      onError = { msg -> updateError = msg }
+                  )
+              }) { Text("Update") }
+          },
+          dismissButton = {
+              TextButton(onClick = { pendingUpdate = null }) { Text("Later") }
+          }
+      )
+  }
+
+  updateError?.let { msg ->
+      AlertDialog(
+          onDismissRequest = { updateError = null },
+          title = { Text("Update Failed") },
+          text = { Text(msg) },
+          confirmButton = {
+              TextButton(onClick = { updateError = null }) { Text("OK") }
+          }
+      )
+  }
+
+  val prefs = remember { context.getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE) }
   var sourceLanguage by remember {
-      mutableStateOf(prefs.getString("source_language", com.google.mlkit.nl.translate.TranslateLanguage.ROMANIAN) ?: com.google.mlkit.nl.translate.TranslateLanguage.ROMANIAN)
+      mutableStateOf(prefs.getString(AppDefaults.KEY_SOURCE_LANGUAGE, AppDefaults.SOURCE_LANGUAGE) ?: AppDefaults.SOURCE_LANGUAGE)
   }
   var targetLanguage by remember {
-      mutableStateOf(prefs.getString("target_language", com.google.mlkit.nl.translate.TranslateLanguage.GREEK) ?: com.google.mlkit.nl.translate.TranslateLanguage.GREEK)
+      mutableStateOf(prefs.getString(AppDefaults.KEY_TARGET_LANGUAGE, AppDefaults.TARGET_LANGUAGE) ?: AppDefaults.TARGET_LANGUAGE)
   }
   var keyboardTranslatorEnabled by remember {
-      mutableStateOf(prefs.getBoolean("keyboard_translator_enabled", false))
+      mutableStateOf(prefs.getBoolean(AppDefaults.KEY_KEYBOARD_ENABLED, false))
   }
 
   val supportedLanguages = remember { com.google.mlkit.nl.translate.TranslateLanguage.getAllLanguages() }
@@ -49,12 +93,8 @@ fun MainScreen(
 
   fun ensureModelsDownloaded(source: String, target: String) {
       val conditions = com.google.mlkit.common.model.DownloadConditions.Builder().build()
-      val sourceCode = if (source != "AUTO") source else com.google.mlkit.nl.translate.TranslateLanguage.ROMANIAN
-      val options = com.google.mlkit.nl.translate.TranslatorOptions.Builder()
-          .setSourceLanguage(sourceCode)
-          .setTargetLanguage(target)
-          .build()
-      val client = com.google.mlkit.nl.translate.Translation.getClient(options)
+      val sourceCode = if (source != "AUTO") source else AppDefaults.SOURCE_LANGUAGE
+      val client = TranslatorPool.get(sourceCode, target)
       modelStatus = "Downloading language models..."
       client.downloadModelIfNeeded(conditions)
           .addOnSuccessListener {
@@ -66,11 +106,11 @@ fun MainScreen(
   }
 
   LaunchedEffect(sourceLanguage, targetLanguage) {
-      if (!prefs.contains("source_language")) {
-          prefs.edit().putString("source_language", sourceLanguage).apply()
+      if (!prefs.contains(AppDefaults.KEY_SOURCE_LANGUAGE)) {
+          prefs.edit().putString(AppDefaults.KEY_SOURCE_LANGUAGE, sourceLanguage).apply()
       }
-      if (!prefs.contains("target_language")) {
-          prefs.edit().putString("target_language", targetLanguage).apply()
+      if (!prefs.contains(AppDefaults.KEY_TARGET_LANGUAGE)) {
+          prefs.edit().putString(AppDefaults.KEY_TARGET_LANGUAGE, targetLanguage).apply()
       }
       ensureModelsDownloaded(sourceLanguage, targetLanguage)
   }
@@ -156,17 +196,47 @@ fun MainScreen(
       modifier = modifier
           .fillMaxSize()
           .padding(innerPadding)
-          .padding(horizontal = 16.dp, vertical = 20.dp)
+          .padding(horizontal = 20.dp, vertical = 24.dp)
           .verticalScroll(scrollState),
-      horizontalAlignment = Alignment.CenterHorizontally,
+      horizontalAlignment = Alignment.Start,
       verticalArrangement = Arrangement.Top
     ) {
-      Text("Translator", style = MaterialTheme.typography.headlineMedium)
-      Spacer(modifier = Modifier.height(16.dp))
+      // Cabecera sobria y nativa con versión discreta
+      Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically
+      ) {
+          Text(
+              text = "Translator",
+              style = MaterialTheme.typography.headlineLarge,
+              color = MaterialTheme.colorScheme.onBackground
+          )
+          Surface(
+              shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+              color = MaterialTheme.colorScheme.surfaceVariant
+          ) {
+              Text(
+                  text = "v${BuildConfig.VERSION_NAME}",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+              )
+          }
+      }
+      Spacer(modifier = Modifier.height(4.dp))
+      Text(
+          text = "Instant, offline translation assistant for WhatsApp",
+          style = MaterialTheme.typography.bodyMedium,
+          color = MaterialTheme.colorScheme.onSurfaceVariant
+      )
 
-      // App Info Section Card with Version and (In Development)
+      Spacer(modifier = Modifier.height(24.dp))
+
+      // Sección de configuración de idiomas
       OutlinedCard(
           modifier = Modifier.fillMaxWidth(),
+          shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
           colors = CardDefaults.outlinedCardColors(
               containerColor = MaterialTheme.colorScheme.surface
           )
@@ -174,61 +244,50 @@ fun MainScreen(
           Column(
               modifier = Modifier
                   .fillMaxWidth()
-                  .padding(14.dp)
+                  .padding(16.dp)
           ) {
+              Text(
+                  text = "Translation Pair",
+                  style = MaterialTheme.typography.titleMedium,
+                  color = MaterialTheme.colorScheme.onSurface
+              )
+              Spacer(modifier = Modifier.height(12.dp))
+
+              LanguageDropdown("Source Language", sourceLanguage, listOf("AUTO") + supportedLanguages) {
+                  sourceLanguage = it
+                  prefs.edit().putString(AppDefaults.KEY_SOURCE_LANGUAGE, it).apply()
+              }
+              Spacer(modifier = Modifier.height(10.dp))
+              LanguageDropdown("Target Language", targetLanguage, supportedLanguages) {
+                  targetLanguage = it
+                  prefs.edit().putString(AppDefaults.KEY_TARGET_LANGUAGE, it).apply()
+              }
+              Spacer(modifier = Modifier.height(10.dp))
               Row(
-                  modifier = Modifier.fillMaxWidth(),
-                  horizontalArrangement = Arrangement.SpaceBetween,
                   verticalAlignment = Alignment.CenterVertically
               ) {
+                  val isReady = modelStatus.contains("ready", ignoreCase = true)
+                  Surface(
+                      modifier = Modifier.size(8.dp),
+                      shape = androidx.compose.foundation.shape.CircleShape,
+                      color = if (isReady) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
+                  ) {}
+                  Spacer(modifier = Modifier.width(8.dp))
                   Text(
-                      text = "App Information",
-                      style = MaterialTheme.typography.titleSmall
-                  )
-                  Text(
-                      text = "v${BuildConfig.VERSION_NAME} (In Development)",
+                      text = modelStatus,
                       style = MaterialTheme.typography.bodySmall,
                       color = MaterialTheme.colorScheme.onSurfaceVariant
                   )
               }
-              Spacer(modifier = Modifier.height(6.dp))
-              Text(
-                  text = "Engine: Google ML Kit (On-Device)",
-                  style = MaterialTheme.typography.bodySmall,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant
-              )
-              Text(
-                  text = "Scope: WhatsApp Chat & Keyboard Assistant",
-                  style = MaterialTheme.typography.bodySmall,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant
-              )
           }
       }
 
-      Spacer(modifier = Modifier.height(20.dp))
-
-      // Language Selection
-      LanguageDropdown("Source Language", sourceLanguage, listOf("AUTO") + supportedLanguages) {
-          sourceLanguage = it
-          prefs.edit().putString("source_language", it).apply()
-      }
-      Spacer(modifier = Modifier.height(8.dp))
-      LanguageDropdown("Target Language", targetLanguage, supportedLanguages) {
-          targetLanguage = it
-          prefs.edit().putString("target_language", it).apply()
-      }
-      Spacer(modifier = Modifier.height(6.dp))
-      Text(
-          text = modelStatus,
-          style = MaterialTheme.typography.bodySmall,
-          color = if (modelStatus.contains("ready", ignoreCase = true)) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
-      )
-
       Spacer(modifier = Modifier.height(16.dp))
 
-      // Keyboard Translation Assistant Switch (Default OFF)
+      // Asistente de escritura en teclado
       OutlinedCard(
           modifier = Modifier.fillMaxWidth(),
+          shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
           colors = CardDefaults.outlinedCardColors(
               containerColor = MaterialTheme.colorScheme.surface
           )
@@ -236,27 +295,29 @@ fun MainScreen(
           Row(
               modifier = Modifier
                   .fillMaxWidth()
-                  .padding(horizontal = 16.dp, vertical = 12.dp),
+                  .padding(16.dp),
               verticalAlignment = Alignment.CenterVertically,
               horizontalArrangement = Arrangement.SpaceBetween
           ) {
               Column(modifier = Modifier.weight(1f)) {
                   Text(
                       text = "Keyboard Assistant",
-                      style = MaterialTheme.typography.titleSmall
+                      style = MaterialTheme.typography.titleMedium,
+                      color = MaterialTheme.colorScheme.onSurface
                   )
+                  Spacer(modifier = Modifier.height(2.dp))
                   Text(
                       text = "Show translation pill above keyboard while typing",
                       style = MaterialTheme.typography.bodySmall,
                       color = MaterialTheme.colorScheme.onSurfaceVariant
                   )
               }
-              Spacer(modifier = Modifier.width(12.dp))
+              Spacer(modifier = Modifier.width(16.dp))
               Switch(
                   checked = keyboardTranslatorEnabled,
                   onCheckedChange = { isChecked ->
                       keyboardTranslatorEnabled = isChecked
-                      prefs.edit().putBoolean("keyboard_translator_enabled", isChecked).apply()
+                      prefs.edit().putBoolean(AppDefaults.KEY_KEYBOARD_ENABLED, isChecked).apply()
                   }
               )
           }
@@ -264,25 +325,43 @@ fun MainScreen(
 
       Spacer(modifier = Modifier.height(16.dp))
 
-      // Per-permission status rows with individual Fix buttons
-      PermissionStatusRow(label = "Display over other apps", granted = canDrawOverlays) {
-          val intent = Intent(
-              Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-              Uri.parse("package:${context.packageName}")
+      // Sección de permisos del sistema
+      OutlinedCard(
+          modifier = Modifier.fillMaxWidth(),
+          shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+          colors = CardDefaults.outlinedCardColors(
+              containerColor = MaterialTheme.colorScheme.surface
           )
-          context.startActivity(intent)
-      }
-      Spacer(modifier = Modifier.height(8.dp))
-      PermissionStatusRow(label = "Accessibility service", granted = isAccessibilityEnabled) {
-          val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-          context.startActivity(intent)
+      ) {
+          Column(modifier = Modifier.padding(16.dp)) {
+              Text(
+                  text = "System Permissions",
+                  style = MaterialTheme.typography.titleMedium,
+                  color = MaterialTheme.colorScheme.onSurface
+              )
+              Spacer(modifier = Modifier.height(12.dp))
+
+              PermissionStatusRow(label = "Display over other apps", granted = canDrawOverlays) {
+                  val intent = Intent(
+                      Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                      Uri.parse("package:${context.packageName}")
+                  )
+                  context.startActivity(intent)
+              }
+              Spacer(modifier = Modifier.height(10.dp))
+              PermissionStatusRow(label = "Accessibility service", granted = isAccessibilityEnabled) {
+                  val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                  context.startActivity(intent)
+              }
+          }
       }
 
-      // Restricted settings guidance — only shown when accessibility is not yet enabled
+      // Guía discreta para Android 13+ con restricciones
       if (!isAccessibilityEnabled) {
-          Spacer(modifier = Modifier.height(16.dp))
+          Spacer(modifier = Modifier.height(12.dp))
           OutlinedCard(
               modifier = Modifier.fillMaxWidth(),
+              shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
               colors = CardDefaults.outlinedCardColors(
                   containerColor = MaterialTheme.colorScheme.surface
               )
@@ -290,7 +369,8 @@ fun MainScreen(
               Column(modifier = Modifier.padding(16.dp)) {
                   Text(
                       "Android 13+ Restricted Settings",
-                      style = MaterialTheme.typography.titleSmall
+                      style = MaterialTheme.typography.titleSmall,
+                      color = MaterialTheme.colorScheme.onSurface
                   )
                   Spacer(modifier = Modifier.height(4.dp))
                   Text(
@@ -313,13 +393,15 @@ fun MainScreen(
           }
       }
 
-      Spacer(modifier = Modifier.height(32.dp))
+      Spacer(modifier = Modifier.height(28.dp))
 
-      // Start Translating — disabled (not hidden) until all permissions are granted.
-      // This prevents the button from silently redirecting the user to settings.
+      // Botón principal de activación
       val allPermissionsGranted = canDrawOverlays && isAccessibilityEnabled
       Button(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(50.dp),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
         enabled = allPermissionsGranted,
         onClick = {
             ensureModelsDownloaded(sourceLanguage, targetLanguage)
@@ -334,20 +416,24 @@ fun MainScreen(
       ) {
         Text(
             if (allPermissionsGranted) "Start Floating Translator"
-            else "Grant permissions above to start"
+            else "Grant permissions above to start",
+            style = MaterialTheme.typography.bodyLarge
         )
       }
 
-      Spacer(modifier = Modifier.height(12.dp))
+      Spacer(modifier = Modifier.height(10.dp))
 
       OutlinedButton(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(50.dp),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
         onClick = {
             context.stopService(Intent(context, FloatingBubbleService::class.java))
             context.stopService(Intent(context, ScreenCaptureService::class.java))
         }
       ) {
-        Text("Stop Translator")
+        Text("Stop Translator", style = MaterialTheme.typography.bodyLarge)
       }
     }
   }
@@ -400,37 +486,46 @@ private fun PermissionStatusRow(label: String, granted: Boolean, onFix: () -> Un
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.weight(1f)
+        ) {
             Surface(
-                shape = MaterialTheme.shapes.extraSmall,
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
                 color = if (granted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-                modifier = Modifier.padding(end = 10.dp)
+                modifier = Modifier.padding(end = 12.dp)
             ) {
                 Text(
-                    text = if (granted) "ON" else "OFF",
+                    text = if (granted) "Active" else "Required",
                     style = MaterialTheme.typography.labelSmall,
                     color = if (granted) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                 )
             }
-            Text(label, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
         }
         if (!granted) {
-            TextButton(onClick = onFix) { Text("Configure") }
+            TextButton(
+                onClick = onFix,
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+            ) {
+                Text("Enable", style = MaterialTheme.typography.labelMedium)
+            }
         }
     }
 }
 
 fun checkAccessibilityEnabled(context: Context): Boolean {
-    // Ultimate fallback: if the live service instance is active, trust it
-    if (TranslationAccessibilityService.isSharedInstanceActive) {
+    // Primary check: if the bridge reports the service is active, trust it
+    if (ServiceBridge.isAccessibilityActive) {
         return true
     }
 
-    val expectedComponentName = android.content.ComponentName(
-        context,
-        TranslationAccessibilityService::class.java
-    )
+    val serviceClassName = "com.example.translator.TranslationAccessibilityService"
 
     // Method 1: Read Settings.Secure directly (most reliable on OEM ROMs)
     val settingValue = Settings.Secure.getString(
@@ -448,12 +543,13 @@ fun checkAccessibilityEnabled(context: Context): Boolean {
     }
 
     // Method 2: Fallback to AccessibilityManager query
-    val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as android.view.accessibility.AccessibilityManager
+    val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE)
+        as android.view.accessibility.AccessibilityManager
     val enabledServices = am.getEnabledAccessibilityServiceList(
         android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_ALL_MASK
     )
     return enabledServices.any {
-        it.resolveInfo.serviceInfo.packageName == expectedComponentName.packageName &&
-        it.resolveInfo.serviceInfo.name == expectedComponentName.className
+        it.resolveInfo.serviceInfo.packageName == context.packageName &&
+        it.resolveInfo.serviceInfo.name == serviceClassName
     }
 }

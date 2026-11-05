@@ -32,11 +32,14 @@ jobs:
         run: ./gradlew assembleRelease --no-daemon
 
       - name: Prepare Release Artifact
-        run: cp app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/app-release-signed.apk
+        run: |
+          cp app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/app-release-signed.apk
+          cd app/build/outputs/apk/release
+          sha256sum app-release-signed.apk | awk '{print $1}' > app-release-signed.apk.sha256
 
       - name: Create GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create ${{ github.ref_name }} --title "Release ${{ github.ref_name }}" --generate-notes || true
-          gh release upload ${{ github.ref_name }} app/build/outputs/apk/release/app-release-signed.apk --clobber
+          gh release upload ${{ github.ref_name }} app/build/outputs/apk/release/app-release-signed.apk app/build/outputs/apk/release/app-release-signed.apk.sha256 --clobber

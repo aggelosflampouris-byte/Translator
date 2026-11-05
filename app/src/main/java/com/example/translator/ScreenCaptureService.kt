@@ -48,11 +48,34 @@ class ScreenCaptureService : Service() {
     private var isProcessing = false
     private var isDestroyed = false
 
+    private var configuredSource: String = AppDefaults.SOURCE_LANGUAGE
+    private var configuredTarget: String = AppDefaults.TARGET_LANGUAGE
+
+    private val prefListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { prefs, key ->
+        if (key == AppDefaults.KEY_SOURCE_LANGUAGE) {
+            configuredSource = prefs.getString(key, AppDefaults.SOURCE_LANGUAGE) ?: AppDefaults.SOURCE_LANGUAGE
+        }
+        if (key == AppDefaults.KEY_TARGET_LANGUAGE) {
+            configuredTarget = prefs.getString(key, AppDefaults.TARGET_LANGUAGE) ?: AppDefaults.TARGET_LANGUAGE
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         isDestroyed = false
         overlayManager = OverlayManager(this)
         isRunning = true
+
+        val channelId = "screen_capture_channel"
+        val channelName = "Screen Capture Service"
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val channel = NotificationChannel(channelId, channelName, NotificationManager.IMPORTANCE_LOW)
+        notificationManager.createNotificationChannel(channel)
+
+        val prefs = getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
+        configuredSource = prefs.getString(AppDefaults.KEY_SOURCE_LANGUAGE, AppDefaults.SOURCE_LANGUAGE) ?: AppDefaults.SOURCE_LANGUAGE
+        configuredTarget = prefs.getString(AppDefaults.KEY_TARGET_LANGUAGE, AppDefaults.TARGET_LANGUAGE) ?: AppDefaults.TARGET_LANGUAGE
+        prefs.registerOnSharedPreferenceChangeListener(prefListener)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -63,14 +86,10 @@ class ScreenCaptureService : Service() {
     }
 
     private var sourceLanguage: String = "AUTO"
-    private var targetLanguage: String = TranslateLanguage.ENGLISH
+    private var targetLanguage: String = AppDefaults.TARGET_LANGUAGE
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val channelId = "screen_capture_channel"
-        val channelName = "Screen Capture Service"
-        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val channel = NotificationChannel(channelId, channelName, NotificationManager.IMPORTANCE_LOW)
-        notificationManager.createNotificationChannel(channel)
 
         val notification: Notification = NotificationCompat.Builder(this, channelId)
             .setContentTitle("Translation Overlay Active")
@@ -162,19 +181,6 @@ class ScreenCaptureService : Service() {
         }, handler)
     }
 
-    private val translators = mutableMapOf<String, Translator>()
-
-    private fun getTranslator(sourceLang: String, targetLang: String): Translator {
-        val key = "$sourceLang-$targetLang"
-        return translators.getOrPut(key) {
-            val options = TranslatorOptions.Builder()
-                .setSourceLanguage(sourceLang)
-                .setTargetLanguage(targetLang)
-                .build()
-            Translation.getClient(options)
-        }
-    }
-
     private fun processImage(image: Image, width: Int, height: Int) {
         if (isDestroyed || !isRunning) {
             image.close()
@@ -251,9 +257,8 @@ class ScreenCaptureService : Service() {
                         return@addOnSuccessListener
                     }
 
-                    val prefs = getSharedPreferences("translator_prefs", Context.MODE_PRIVATE)
-                    val configuredSource = prefs.getString("source_language", sourceLanguage) ?: sourceLanguage
-                    val configuredTarget = prefs.getString("target_language", targetLanguage) ?: targetLanguage
+                    val effectiveSource = if (sourceLanguage != "AUTO") sourceLanguage else configuredSource
+                    val effectiveTarget = if (targetLanguage.isNotBlank() && targetLanguage != AppDefaults.TARGET_LANGUAGE) targetLanguage else configuredTarget
 
                     val density = resources.displayMetrics.density
                     val topInset = (48 * density).toInt()
@@ -265,7 +270,7 @@ class ScreenCaptureService : Service() {
                         rect != null &&
                             rect.top >= topInset &&
                             rect.bottom <= (cropHeight - bottomInset) &&
-                            TranslationFilter.shouldTranslate(text, configuredTarget) &&
+                            TranslationFilter.shouldTranslate(text, effectiveTarget) &&
                             !overlayRects.any { Rect.intersects(rect, it) }
                     }
 
@@ -275,80 +280,76 @@ class ScreenCaptureService : Service() {
                         return@addOnSuccessListener
                     }
 
-                    val translations = mutableListOf<Pair<Rect?, String>>()
-                    var pendingTranslations = validBlocks.size
+                    val translations = java.util.Collections.synchronizedList(mutableListOf<Pair<Rect?, String>>())
+                    val pendingCounter = java.util.concurrent.atomic.AtomicInteger(validBlocks.size)
+
+                    fun onSubtaskDone() {
+                        if (pendingCounter.decrementAndGet() <= 0) {
+                            checkTranslationComplete(translations)
+                        }
+                    }
 
                     for (block in validBlocks) {
                         val rawText = block.text
                         val cleanText = TranslationFilter.cleanMessageText(rawText)
                         val rect = block.boundingBox
 
-                        if (cleanText.isBlank() || !TranslationFilter.shouldTranslate(cleanText, configuredTarget)) {
-                            pendingTranslations--
-                            checkTranslationComplete(pendingTranslations, translations)
+                        if (cleanText.isBlank() || !TranslationFilter.shouldTranslate(cleanText, effectiveTarget)) {
+                            onSubtaskDone()
                             continue
                         }
 
-                        if (configuredSource != "AUTO") {
+                        if (effectiveSource != "AUTO") {
                             // User selected explicit source language (e.g. RO or EN)
                             languageIdentifier.identifyPossibleLanguages(cleanText)
                                 .addOnSuccessListener { possibleLanguages ->
                                     if (isDestroyed || !isRunning) {
-                                        pendingTranslations--
-                                        checkTranslationComplete(pendingTranslations, translations)
+                                        onSubtaskDone()
                                         return@addOnSuccessListener
                                     }
 
-                                    val isTarget = TranslationFilter.isTargetLanguage(cleanText, configuredTarget, possibleLanguages)
-                                    val isSource = !isTarget && TranslationFilter.isMatchingSourceLanguage(cleanText, configuredSource, possibleLanguages)
+                                    val isTarget = TranslationFilter.isTargetLanguage(cleanText, effectiveTarget, possibleLanguages)
+                                    val isSource = !isTarget && TranslationFilter.isMatchingSourceLanguage(cleanText, effectiveSource, possibleLanguages)
 
                                     if (isSource) {
-                                        translateBlock(configuredSource, configuredTarget, cleanText, rect, translations) {
-                                            pendingTranslations--
-                                            checkTranslationComplete(pendingTranslations, translations)
+                                        translateBlock(effectiveSource, effectiveTarget, cleanText, rect, translations) {
+                                            onSubtaskDone()
                                         }
                                     } else {
-                                        pendingTranslations--
-                                        checkTranslationComplete(pendingTranslations, translations)
+                                        onSubtaskDone()
                                     }
                                 }
                                 .addOnFailureListener {
-                                    pendingTranslations--
-                                    checkTranslationComplete(pendingTranslations, translations)
+                                    onSubtaskDone()
                                 }
                         } else {
                             // Auto-detect language
                             languageIdentifier.identifyPossibleLanguages(cleanText)
                                 .addOnSuccessListener { possibleLanguages ->
                                     if (isDestroyed || !isRunning) {
-                                        pendingTranslations--
-                                        checkTranslationComplete(pendingTranslations, translations)
+                                        onSubtaskDone()
                                         return@addOnSuccessListener
                                     }
 
-                                    val isTarget = TranslationFilter.isTargetLanguage(cleanText, configuredTarget, possibleLanguages)
+                                    val isTarget = TranslationFilter.isTargetLanguage(cleanText, effectiveTarget, possibleLanguages)
                                     if (isTarget) {
-                                        pendingTranslations--
-                                        checkTranslationComplete(pendingTranslations, translations)
+                                        onSubtaskDone()
                                         return@addOnSuccessListener
                                     }
 
                                     val bestCandidate = possibleLanguages.firstOrNull { it.languageTag != "und" && it.confidence >= 0.25f }
                                     val bcp47Code = bestCandidate?.let { TranslateLanguage.fromLanguageTag(it.languageTag) }
 
-                                    if (bcp47Code != null && bcp47Code != configuredTarget) {
-                                        translateBlock(bcp47Code, configuredTarget, cleanText, rect, translations) {
-                                            pendingTranslations--
-                                            checkTranslationComplete(pendingTranslations, translations)
+                                    if (bcp47Code != null && bcp47Code != effectiveTarget) {
+                                        translateBlock(bcp47Code, effectiveTarget, cleanText, rect, translations) {
+                                            onSubtaskDone()
                                         }
                                     } else {
-                                        pendingTranslations--
-                                        checkTranslationComplete(pendingTranslations, translations)
+                                        onSubtaskDone()
                                     }
                                 }
                                 .addOnFailureListener {
-                                    pendingTranslations--
-                                    checkTranslationComplete(pendingTranslations, translations)
+                                    onSubtaskDone()
                                 }
                         }
                     }
@@ -374,7 +375,13 @@ class ScreenCaptureService : Service() {
         onComplete: () -> Unit
     ) {
         try {
-            val translator = getTranslator(sourceLang, targetLang)
+            val normalizedText = if (sourceLang == com.google.mlkit.nl.translate.TranslateLanguage.ROMANIAN) {
+                TextNormalizer.restoreRomanianDiacritics(text)
+            } else {
+                text
+            }
+            val protected = TextNormalizer.protectEmojis(normalizedText)
+            val translator = TranslatorPool.get(sourceLang, targetLang)
             translator.downloadModelIfNeeded()
                 .addOnSuccessListener {
                     if (isDestroyed || !isRunning) {
@@ -382,10 +389,17 @@ class ScreenCaptureService : Service() {
                         return@addOnSuccessListener
                     }
                     try {
-                        translator.translate(text)
+                        translator.translate(protected.text)
                             .addOnSuccessListener { translatedText ->
                                 if (!isDestroyed && isRunning && translatedText.isNotBlank()) {
-                                    translations.add(Pair(rect, translatedText))
+                                    val restored = TextNormalizer.restoreEmojis(translatedText, protected.tokens)
+                                    val senseCorrected = TranslationSenseEngine.applyPostTranslationSenseLogic(
+                                        originalText = normalizedText,
+                                        translatedText = restored,
+                                        sourceLang = sourceLang,
+                                        targetLang = targetLang
+                                    )
+                                    translations.add(Pair(rect, senseCorrected))
                                 }
                                 onComplete()
                             }
@@ -406,17 +420,16 @@ class ScreenCaptureService : Service() {
         }
     }
 
-    private fun checkTranslationComplete(pending: Int, translations: List<Pair<Rect?, String>>) {
-        if (pending <= 0) {
-            handler.post {
-                if (isDestroyed || !isRunning) {
-                    isProcessing = false
-                    return@post
-                }
-                overlayManager.updateOverlays(translations)
-                // Add a delay before taking the next frame to save battery
-                handler.postDelayed({ isProcessing = false }, 1000) 
+    private fun checkTranslationComplete(translations: List<Pair<Rect?, String>>) {
+        val snapshot = synchronized(translations) { ArrayList(translations) }
+        handler.post {
+            if (isDestroyed || !isRunning) {
+                isProcessing = false
+                return@post
             }
+            overlayManager.updateOverlays(snapshot)
+            // Add a delay before taking the next frame to save battery
+            handler.postDelayed({ isProcessing = false }, 1000) 
         }
     }
 
@@ -434,16 +447,16 @@ class ScreenCaptureService : Service() {
         mediaProjection?.stop()
         mediaProjection = null
         overlayManager.removeAllOverlays()
+
+        try {
+            val prefs = getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
+        } catch (e: Exception) {
+            Log.w("Translator", "Error unregistering prefListener", e)
+        }
         
         // Clean up ML Kit resources to prevent memory leaks
-        translators.values.forEach { 
-            try {
-                it.close()
-            } catch (e: Exception) {
-                Log.w("Translator", "Error closing translator", e)
-            }
-        }
-        translators.clear()
+        TranslatorPool.releaseAll()
         try {
             textRecognizer.close()
         } catch (e: Exception) {

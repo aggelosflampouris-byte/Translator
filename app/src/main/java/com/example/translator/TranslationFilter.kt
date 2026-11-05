@@ -166,13 +166,6 @@ object TranslationFilter {
         return false
     }
 
-    private val COMMON_ROMANIAN_WORDS = setOf(
-        "la", "multi", "ani", "un", "an", "nou", "fericit", "si",
-        "ce", "faci", "buna", "salut", "unde", "esti", "cum", "bine",
-        "da", "nu", "multumesc", "mersi", "te", "iubesc", "prieten",
-        "noapte", "ziua", "seara", "drag", "draga", "acum", "maine", "azi"
-    )
-
     /**
      * Validates that text matches the explicitly configured source language.
      * Prevents random UI strings, other languages, or low-confidence garbage from being translated.
@@ -184,7 +177,7 @@ object TranslationFilter {
             if (hasRomanianDiacritics) return true
 
             val words = text.lowercase().split(Regex("""[^a-zăâîșț]+""")).filter { it.isNotBlank() }
-            if (words.any { COMMON_ROMANIAN_WORDS.contains(it) }) return true
+            if (words.any { TranslationSenseEngine.COMMON_ROMANIAN_WORDS.contains(it) }) return true
 
             val latinCharCount = text.count { it in 'a'..'z' || it in 'A'..'Z' || it in "ăâîșțĂÂÎȘȚ" }
             if (latinCharCount >= 2) {

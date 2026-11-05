@@ -152,14 +152,6 @@ class TranslationSenseEngineTest {
     }
 
     @Test
-    fun isIncomingMessage_identifiesLeftAndRightMessages() {
-        val screenWidth = 1080
-        assertTrue(TranslationSenseEngine.isIncomingMessage(36, 750, screenWidth))
-        assertFalse(TranslationSenseEngine.isIncomingMessage(380, 1040, screenWidth))
-        assertFalse(TranslationSenseEngine.isIncomingMessage(420, 660, screenWidth))
-    }
-
-    @Test
     fun resolveIdiomPreTranslation_resolvesHolidayGreetingsAccurately() {
         val greetingWithAddress = TranslationSenseEngine.resolveIdiomPreTranslation(
             "La mulți ani și un An Nou fericit, Angelos.",
@@ -248,15 +240,6 @@ class TranslationSenseEngineTest {
         assertFalse(corrected.contains("μαύρο χρώμα"))
         assertFalse(corrected.contains("είσαι πατήσαμε"))
         assertTrue(corrected.contains("μαύροι") || corrected.contains("από μαύρους"))
-    }
-
-    @Test
-    fun isIncomingMessage_rejectsWideOutgoingMessages() {
-        val screenWidth = 1080
-        // Outgoing message bubble: "Cum esti prietenul meu Giannis" (left ~340, right ~1036)
-        assertFalse(TranslationSenseEngine.isIncomingMessage(340, 1036, screenWidth))
-        // Long outgoing message expanding left (left ~220, right ~1045)
-        assertFalse(TranslationSenseEngine.isIncomingMessage(220, 1045, screenWidth))
     }
 
     @Test
