@@ -30,7 +30,7 @@ object TextNormalizer {
             }
         }
         return when {
-            greekCount > latinCount -> ScriptType.GREEK
+            greekCount > 0 && greekCount >= latinCount -> ScriptType.GREEK
             latinCount > greekCount -> ScriptType.LATIN
             else -> ScriptType.NEUTRAL
         }

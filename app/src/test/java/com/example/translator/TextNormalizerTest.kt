@@ -18,6 +18,12 @@ class TextNormalizerTest {
     }
 
     @Test
+    fun detectScriptType_identifiesGreekWithLatinName() {
+        val type = TextNormalizer.detectScriptType("Γεια John")
+        assertEquals(TextNormalizer.ScriptType.GREEK, type)
+    }
+
+    @Test
     fun detectScriptType_returnsNeutralForPunctuationOnly() {
         val type = TextNormalizer.detectScriptType("123 ??? 😊")
         assertEquals(TextNormalizer.ScriptType.NEUTRAL, type)

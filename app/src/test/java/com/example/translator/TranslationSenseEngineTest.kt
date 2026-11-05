@@ -567,5 +567,30 @@ class TranslationSenseEngineTest {
             )
         )
     }
+
+    // Por qué: Verifica las resoluciones instantáneas del asistente inverso del teclado
+    // tanto para expresiones comunes en griego hacia rumano como en rumano hacia griego.
+    @Test
+    fun resolveIdiomPreTranslation_keyboardReverseAssistantExpressions() {
+        // Greek -> Romanian
+        val kalimera = TranslationSenseEngine.resolveIdiomPreTranslation("Καλημέρα", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN)
+        assertEquals("Bună dimineața!", kalimera)
+
+        val kalisperaGianni = TranslationSenseEngine.resolveIdiomPreTranslation("Καλησπέρα Γιάννη", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN)
+        assertEquals("Bună seara, Giannis!", kalisperaGianni)
+
+        val tiKaneis = TranslationSenseEngine.resolveIdiomPreTranslation("Τι κάνεις φίλε μου;", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN)
+        assertEquals("Ce faci, prietene?", tiKaneis)
+
+        val olaKala = TranslationSenseEngine.resolveIdiomPreTranslation("Όλα καλά;", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN)
+        assertEquals("Totul e bine?", olaKala)
+
+        // Romanian -> Greek
+        val duteDracu = TranslationSenseEngine.resolveIdiomPreTranslation("Du-te dracului", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK)
+        assertEquals("Άντε στο διάολο!", duteDracu)
+
+        val multumesc = TranslationSenseEngine.resolveIdiomPreTranslation("Multumesc", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK)
+        assertEquals("Ευχαριστώ!", multumesc)
+    }
 }
 

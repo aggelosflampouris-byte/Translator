@@ -16,6 +16,7 @@ import kotlin.math.min
 class OverlayManager(private val context: Context) {
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val inflater = LayoutInflater.from(context)
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val bubbleIdCounter = AtomicLong(0)
 
     private data class ActiveBubble(
@@ -301,7 +302,8 @@ class OverlayManager(private val context: Context) {
         targetLangCode: String,
         showReplace: Boolean,
         onInsertClicked: () -> Unit,
-        onDismissClicked: () -> Unit
+        onDismissClicked: () -> Unit,
+        onBadgeClicked: (() -> Unit)? = null
     ) {
         val textView = view.findViewById<TextView>(R.id.draft_text)
         val badgeView = view.findViewById<TextView>(R.id.draft_badge)
@@ -326,6 +328,16 @@ class OverlayManager(private val context: Context) {
         }
         view.findViewById<View>(R.id.draft_action_close).setOnClickListener {
             onDismissClicked()
+        }
+
+        // Por qué: Permite pulsar directamente sobre la insignia de idioma para alternar manualmente
+        // la dirección de traducción (ej. cambiar de ⇄ RO a ⇄ EL) cuando la autodetección de alfabeto no sea la deseada.
+        if (onBadgeClicked != null) {
+            badgeView.setOnClickListener {
+                onBadgeClicked()
+            }
+        } else {
+            badgeView.setOnClickListener(null)
         }
     }
 
@@ -375,8 +387,16 @@ class OverlayManager(private val context: Context) {
         targetLangCode: String = "RO",
         showReplace: Boolean = true,
         onInsertClicked: () -> Unit,
-        onDismissClicked: () -> Unit
+        onDismissClicked: () -> Unit,
+        onBadgeClicked: (() -> Unit)? = null
     ) {
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            mainHandler.post {
+                updateDraftOverlay(inputRect, text, targetLangCode, showReplace, onInsertClicked, onDismissClicked, onBadgeClicked)
+            }
+            return
+        }
+
         if (text.isBlank()) {
             removeDraftOverlay()
             return
@@ -386,8 +406,15 @@ class OverlayManager(private val context: Context) {
         val screenWidth = metrics.widthPixels
         val density = metrics.density
 
+        // Por qué: Si la coordenada superior del campo de texto no es válida o está fuera de la zona inferior normal,
+        // no se dibuja la píldora para evitar que flote sobre la barra de estado o encabezados.
+        if (inputRect.top <= (100 * density).toInt()) {
+            removeDraftOverlay()
+            return
+        }
+
         val view = draftOverlayView ?: inflater.inflate(R.layout.draft_preview_overlay, null)
-        bindDraftView(view, text, targetLangCode, showReplace, onInsertClicked, onDismissClicked)
+        bindDraftView(view, text, targetLangCode, showReplace, onInsertClicked, onDismissClicked, onBadgeClicked)
 
         val layout = computeDraftLayout(view, inputRect, screenWidth, density)
         currentDraftOverlayBounds = layout.overlayBounds
@@ -442,6 +469,10 @@ class OverlayManager(private val context: Context) {
     }
 
     fun removeDraftOverlay() {
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            mainHandler.post { removeDraftOverlay() }
+            return
+        }
         currentDraftOverlayBounds = null
         draftOverlayView?.let {
             try {

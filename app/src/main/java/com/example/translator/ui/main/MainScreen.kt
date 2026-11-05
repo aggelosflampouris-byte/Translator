@@ -79,7 +79,7 @@ fun MainScreen(
       mutableStateOf(prefs.getString(AppDefaults.KEY_TARGET_LANGUAGE, AppDefaults.TARGET_LANGUAGE) ?: AppDefaults.TARGET_LANGUAGE)
   }
   var keyboardTranslatorEnabled by remember {
-      mutableStateOf(prefs.getBoolean(AppDefaults.KEY_KEYBOARD_ENABLED, false))
+      mutableStateOf(prefs.getBoolean(AppDefaults.KEY_KEYBOARD_ENABLED, true))
   }
   var translationMode by remember {
       mutableStateOf(prefs.getString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_TAP) ?: AppDefaults.MODE_TAP)
@@ -119,14 +119,23 @@ fun MainScreen(
   val supportedLanguages = remember { com.google.mlkit.nl.translate.TranslateLanguage.getAllLanguages() }
   var modelStatus by remember { mutableStateOf("Checking language models...") }
 
+  // Por qué: Descarga de forma bidireccional los modelos locales (rumano a griego y griego a rumano)
+  // garantizando que tanto la traducción en pantalla como el asistente inverso del teclado funcionen 100% offline.
   fun ensureModelsDownloaded(source: String, target: String) {
       val conditions = com.google.mlkit.common.model.DownloadConditions.Builder().build()
       val sourceCode = if (source != "AUTO") source else AppDefaults.SOURCE_LANGUAGE
-      val client = TranslatorPool.get(sourceCode, target)
+      val clientForward = TranslatorPool.get(sourceCode, target)
+      val clientReverse = TranslatorPool.get(target, sourceCode)
       modelStatus = "Downloading language models..."
-      client.downloadModelIfNeeded(conditions)
+      clientForward.downloadModelIfNeeded(conditions)
           .addOnSuccessListener {
-              modelStatus = "Language models ready (offline)"
+              clientReverse.downloadModelIfNeeded(conditions)
+                  .addOnSuccessListener {
+                      modelStatus = "Language models ready (offline)"
+                  }
+                  .addOnFailureListener {
+                      modelStatus = "Model download error. Check connection."
+                  }
           }
           .addOnFailureListener {
               modelStatus = "Model download error. Check connection."

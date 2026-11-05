@@ -57,9 +57,11 @@ class TranslationAccessibilityService : AccessibilityService() {
 
     private var configuredSource: String = AppDefaults.SOURCE_LANGUAGE
     private var configuredTarget: String = AppDefaults.TARGET_LANGUAGE
-    private var isKeyboardTranslatorEnabled: Boolean = false
+    private var isKeyboardTranslatorEnabled: Boolean = true
     private var translationMode: String = AppDefaults.MODE_TAP
     private lateinit var hybridEngine: HybridTranslationEngine
+    private val mlKitDraftEngine = MLKitTranslationEngine()
+    private var manualDraftTargetLang: String? = null
 
     private val prefListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { prefs, key ->
         when (key) {
@@ -70,7 +72,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                 configuredTarget = prefs.getString(key, AppDefaults.TARGET_LANGUAGE) ?: AppDefaults.TARGET_LANGUAGE
             }
             AppDefaults.KEY_KEYBOARD_ENABLED -> {
-                isKeyboardTranslatorEnabled = prefs.getBoolean(key, false)
+                isKeyboardTranslatorEnabled = prefs.getBoolean(key, true)
             }
             AppDefaults.KEY_TRANSLATE_MODE -> {
                 translationMode = prefs.getString(key, AppDefaults.MODE_TAP) ?: AppDefaults.MODE_TAP
@@ -98,7 +100,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         val prefs = getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
         configuredSource = prefs.getString(AppDefaults.KEY_SOURCE_LANGUAGE, AppDefaults.SOURCE_LANGUAGE) ?: AppDefaults.SOURCE_LANGUAGE
         configuredTarget = prefs.getString(AppDefaults.KEY_TARGET_LANGUAGE, AppDefaults.TARGET_LANGUAGE) ?: AppDefaults.TARGET_LANGUAGE
-        isKeyboardTranslatorEnabled = prefs.getBoolean(AppDefaults.KEY_KEYBOARD_ENABLED, false)
+        isKeyboardTranslatorEnabled = prefs.getBoolean(AppDefaults.KEY_KEYBOARD_ENABLED, true)
         translationMode = prefs.getString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_TAP) ?: AppDefaults.MODE_TAP
         prefs.registerOnSharedPreferenceChangeListener(prefListener)
 
@@ -303,7 +305,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                 if (!isKeyboardVisible()) {
                     overlayManager.removeDraftOverlay()
                 } else if (isKeyboardTranslatorEnabled) {
-                    handleOutgoingTyping()
+                    handleOutgoingTyping(event)
                 }
                 // Por qué: Ignora cambios de contenido si la lista aún se encuentra en movimiento por desplazamiento
                 val now = android.os.SystemClock.uptimeMillis()
@@ -313,7 +315,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             }
             AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED,
             AccessibilityEvent.TYPE_VIEW_FOCUSED -> {
-                if (!isKeyboardVisible()) {
+                if (!isKeyboardVisible(event.source)) {
                     overlayManager.removeDraftOverlay()
                 } else {
                     handleOutgoingTyping(event)
@@ -731,35 +733,35 @@ class TranslationAccessibilityService : AccessibilityService() {
         return accepted
     }
 
-    private fun isKeyboardVisible(): Boolean {
+    // Por qué: Verifica la elevación del campo de texto de WhatsApp sobre la barra de navegación
+    // para confirmar con certeza si el teclado está visible sin depender de ventanas restringidas de otros paquetes.
+    private fun isKeyboardVisible(candidateNode: AccessibilityNodeInfo? = null): Boolean {
         val screenHeight = resources.displayMetrics.heightPixels
         val density = resources.displayMetrics.density
 
-        // 1. Primary check: If WhatsApp input field is found, verify its vertical elevation
+        // 1. Verificación primaria: Si el campo de entrada de WhatsApp está activo, medir su posición vertical
         try {
-            val input = findCurrentEditableNode()
+            val input = candidateNode ?: findCurrentEditableNode()
             if (input != null) {
                 val inputRect = Rect()
                 input.getBoundsInScreen(inputRect)
                 if (inputRect.bottom > 0) {
                     val bottomOffset = screenHeight - inputRect.bottom
-                    // If input is docked near the bottom of the screen (above navigation bar only),
-                    // the soft keyboard is definitely closed.
-                    if (bottomOffset <= (120 * density).toInt()) {
+                    // Por qué: Con el teclado cerrado el campo descansa a ras de la barra de navegación (<= 95dp).
+                    // Con el teclado desplegado se eleva de forma inmediata (> 100dp).
+                    if (bottomOffset <= (95 * density).toInt()) {
                         return false
                     }
-                    // If input is displaced upwards above the keyboard by more than 150dp,
-                    // the soft keyboard is definitely open.
-                    if (bottomOffset > (150 * density).toInt()) {
+                    if (bottomOffset > (100 * density).toInt()) {
                         return true
                     }
                 }
             }
         } catch (e: Exception) {
-            // Fallback
+            // Ignorar y pasar a verificación secundaria
         }
 
-        // 2. Secondary check: AccessibilityWindowInfo for TYPE_INPUT_METHOD visibly on screen
+        // 2. Verificación secundaria: Inspeccionar ventanas del sistema para ventana de método de entrada (IME)
         try {
             val windowList = windows
             if (windowList != null) {
@@ -767,16 +769,15 @@ class TranslationAccessibilityService : AccessibilityService() {
                     if (w.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD) {
                         val rect = Rect()
                         w.getBoundsInScreen(rect)
-                        // Must be visibly on screen with top above the bottom navigation margin
-                        if (rect.top in 1 until (screenHeight - (120 * density).toInt()) &&
-                            rect.height() > (150 * density).toInt()) {
+                        if (rect.top in 1 until (screenHeight - (95 * density).toInt()) &&
+                            rect.height() > (100 * density).toInt()) {
                             return true
                         }
                     }
                 }
             }
         } catch (e: Exception) {
-            // Ignore
+            // Ignorar
         }
 
         return false
@@ -831,12 +832,12 @@ class TranslationAccessibilityService : AccessibilityService() {
     }
 
     private fun handleOutgoingTyping(event: AccessibilityEvent? = null) {
-        if (!isKeyboardTranslatorEnabled || !isKeyboardVisible()) {
+        val node = (if (event?.source?.isEditable == true) event.source else null) ?: findCurrentEditableNode()
+
+        if (!isKeyboardTranslatorEnabled || node == null || !isKeyboardVisible(node)) {
             overlayManager.removeDraftOverlay()
             return
         }
-
-        val node = findCurrentEditableNode() ?: (if (event?.source?.isEditable == true) event.source else null) ?: return
 
         val rawText = node.text?.toString()?.trim() ?: ""
         val hintText = node.hintText?.toString()?.trim() ?: ""
@@ -847,52 +848,50 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
         lastInsertedText = null
 
-        // Auto-detect script direction for zero-friction bilingual typing
+        val isPlaceholder = isPlaceholderText(rawText, hintText)
+        if (isPlaceholder) {
+            // Por qué: Si el campo está vacío o muestra el placeholder de WhatsApp,
+            // se limpia de inmediato la pastilla para mantener la pantalla 100% limpia sin textos distractores.
+            typingJob?.cancel()
+            manualDraftTargetLang = null
+            overlayManager.removeDraftOverlay()
+            return
+        }
+
+        // Auto-detect script direction or respect user manual override
         val scriptType = TextNormalizer.detectScriptType(rawText)
-        val draftSourceLang = when (scriptType) {
+        val defaultDraftSourceLang = when (scriptType) {
             TextNormalizer.ScriptType.GREEK -> com.google.mlkit.nl.translate.TranslateLanguage.GREEK
             TextNormalizer.ScriptType.LATIN -> com.google.mlkit.nl.translate.TranslateLanguage.ROMANIAN
             TextNormalizer.ScriptType.NEUTRAL -> if (configuredSource != "AUTO") configuredTarget else AppDefaults.TARGET_LANGUAGE
         }
-        val draftTargetLang = when (scriptType) {
+        val defaultDraftTargetLang = when (scriptType) {
             TextNormalizer.ScriptType.GREEK -> com.google.mlkit.nl.translate.TranslateLanguage.ROMANIAN
             TextNormalizer.ScriptType.LATIN -> com.google.mlkit.nl.translate.TranslateLanguage.GREEK
             TextNormalizer.ScriptType.NEUTRAL -> if (configuredSource != "AUTO") configuredSource else AppDefaults.SOURCE_LANGUAGE
         }
-        val langBadge = draftTargetLang.uppercase()
 
-        val isPlaceholder = isPlaceholderText(rawText, hintText)
-
-        val inputRect = Rect()
-        node.getBoundsInScreen(inputRect)
-
-        if (isPlaceholder) {
-            if (inputRect.top > 0) {
-                overlayManager.updateDraftOverlay(
-                    inputRect = inputRect,
-                    text = "Type message...",
-                    targetLangCode = langBadge,
-                    showReplace = false,
-                    onInsertClicked = {},
-                    onDismissClicked = {
-                        overlayManager.removeDraftOverlay()
-                    }
-                )
-            }
-            return
+        val draftTargetLang = manualDraftTargetLang ?: defaultDraftTargetLang
+        val draftSourceLang = if (draftTargetLang == com.google.mlkit.nl.translate.TranslateLanguage.GREEK) {
+            com.google.mlkit.nl.translate.TranslateLanguage.ROMANIAN
+        } else {
+            com.google.mlkit.nl.translate.TranslateLanguage.GREEK
         }
 
         typingJob?.cancel()
         typingJob = serviceScope.launch {
-            delay(150) // 150ms debounce while user is typing
+            // Por qué: Debounce de 200ms para responder de forma ágil a la escritura fluida sin saturar ejecuciones redundantes
+            delay(200L)
 
-            overlayManager.removeAllMessageOverlays()
-
-            val liveNode = findCurrentEditableNode() ?: node
+            val liveNode = (if (event?.source?.isEditable == true) event.source else null) ?: findCurrentEditableNode() ?: node
             val liveText = liveNode.text?.toString()?.trim() ?: rawText
             val liveHint = liveNode.hintText?.toString()?.trim() ?: hintText
 
-            val livePlaceholder = isPlaceholderText(liveText, liveHint)
+            if (isPlaceholderText(liveText, liveHint)) {
+                manualDraftTargetLang = null
+                overlayManager.removeDraftOverlay()
+                return@launch
+            }
 
             val freshRect = Rect()
             liveNode.getBoundsInScreen(freshRect)
@@ -900,33 +899,17 @@ class TranslationAccessibilityService : AccessibilityService() {
                 node.getBoundsInScreen(freshRect)
             }
 
-            if (livePlaceholder) {
-                if (freshRect.top > 0) {
-                    overlayManager.updateDraftOverlay(
-                        inputRect = freshRect,
-                        text = "Type message...",
-                        targetLangCode = langBadge,
-                        showReplace = false,
-                        onInsertClicked = {},
-                        onDismissClicked = {
-                            overlayManager.removeDraftOverlay()
-                        }
-                    )
-                }
-                return@launch
-            }
-
-            // Re-detect script direction on debounced text
+            // Re-evaluar idioma según el texto actualizado si no hay selección manual fijada
             val liveScriptType = TextNormalizer.detectScriptType(liveText)
-            val effectiveSourceLang = when (liveScriptType) {
-                TextNormalizer.ScriptType.GREEK -> com.google.mlkit.nl.translate.TranslateLanguage.GREEK
-                TextNormalizer.ScriptType.LATIN -> com.google.mlkit.nl.translate.TranslateLanguage.ROMANIAN
-                TextNormalizer.ScriptType.NEUTRAL -> draftSourceLang
-            }
-            val effectiveTargetLang = when (liveScriptType) {
+            val effectiveTargetLang = manualDraftTargetLang ?: when (liveScriptType) {
                 TextNormalizer.ScriptType.GREEK -> com.google.mlkit.nl.translate.TranslateLanguage.ROMANIAN
                 TextNormalizer.ScriptType.LATIN -> com.google.mlkit.nl.translate.TranslateLanguage.GREEK
                 TextNormalizer.ScriptType.NEUTRAL -> draftTargetLang
+            }
+            val effectiveSourceLang = if (effectiveTargetLang == com.google.mlkit.nl.translate.TranslateLanguage.GREEK) {
+                com.google.mlkit.nl.translate.TranslateLanguage.ROMANIAN
+            } else {
+                com.google.mlkit.nl.translate.TranslateLanguage.GREEK
             }
             val effectiveBadge = effectiveTargetLang.uppercase()
 
@@ -947,6 +930,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                     trimmedLine
                 }
 
+                // 1. Pre-traducción idiomática instantánea
                 val lineIdiom = TranslationSenseEngine.resolveIdiomPreTranslation(
                     normalizedLine,
                     effectiveSourceLang,
@@ -954,40 +938,73 @@ class TranslationAccessibilityService : AccessibilityService() {
                 )
                 if (lineIdiom != null) {
                     translatedLines.add(lineIdiom)
+                    continue
+                }
+
+                // 2. Caché local instantánea
+                val cached = getCachedTranslation(normalizedLine)
+                if (cached != null) {
+                    translatedLines.add(cached)
+                    continue
+                }
+
+                // 3. Traducción local rápida con ML Kit (on-device, sin latencia ni cuotas de API)
+                val protected = TextNormalizer.protectEmojis(normalizedLine)
+                var rawTranslated = mlKitDraftEngine.translate(protected.text, effectiveSourceLang, effectiveTargetLang)
+
+                // Respaldo transparente en el motor híbrido si ML Kit no tiene descargado el par aún
+                if (rawTranslated.isNullOrBlank()) {
+                    rawTranslated = translateTextAsync(effectiveSourceLang, effectiveTargetLang, protected.text)
+                }
+
+                if (rawTranslated != null && rawTranslated.isNotBlank() && rawTranslated != protected.text) {
+                    val restoredEmojis = TextNormalizer.restoreEmojis(rawTranslated, protected.tokens)
+                    val senseCorrected = TranslationSenseEngine.applyPostTranslationSenseLogic(
+                        originalText = normalizedLine,
+                        translatedText = restoredEmojis,
+                        sourceLang = effectiveSourceLang,
+                        targetLang = effectiveTargetLang
+                    )
+                    translatedLines.add(senseCorrected)
                 } else {
-                    val protected = TextNormalizer.protectEmojis(normalizedLine)
-                    val rawTranslated = translateTextAsync(effectiveSourceLang, effectiveTargetLang, protected.text)
-                    if (rawTranslated != null && rawTranslated.isNotBlank() && rawTranslated != protected.text) {
-                        val restoredEmojis = TextNormalizer.restoreEmojis(rawTranslated, protected.tokens)
-                        val senseCorrected = TranslationSenseEngine.applyPostTranslationSenseLogic(
-                            originalText = normalizedLine,
-                            translatedText = restoredEmojis,
-                            sourceLang = effectiveSourceLang,
-                            targetLang = effectiveTargetLang
-                        )
-                        translatedLines.add(senseCorrected)
-                    } else {
-                        translatedLines.add(trimmedLine)
-                    }
+                    translatedLines.add(trimmedLine)
                 }
             }
 
             val finalTranslatedDraft = translatedLines.joinToString("\n")
             if (finalTranslatedDraft.isNotBlank() && finalTranslatedDraft != liveText) {
-                overlayManager.updateDraftOverlay(
-                    inputRect = freshRect,
-                    text = finalTranslatedDraft,
-                    targetLangCode = effectiveBadge,
-                    showReplace = true,
-                    onInsertClicked = {
-                        insertTranslatedTextIntoInput(finalTranslatedDraft, liveNode)
-                    },
-                    onDismissClicked = {
+                mainHandler.post {
+                    if (isKeyboardVisible(liveNode)) {
+                        overlayManager.updateDraftOverlay(
+                            inputRect = freshRect,
+                            text = finalTranslatedDraft,
+                            targetLangCode = effectiveBadge,
+                            showReplace = true,
+                            onInsertClicked = {
+                                insertTranslatedTextIntoInput(finalTranslatedDraft, liveNode)
+                            },
+                            onDismissClicked = {
+                                manualDraftTargetLang = null
+                                overlayManager.removeDraftOverlay()
+                            },
+                            onBadgeClicked = {
+                                // Por qué: Alterna manualmente la dirección de traducción al tocar la insignia
+                                manualDraftTargetLang = if (effectiveTargetLang == com.google.mlkit.nl.translate.TranslateLanguage.GREEK) {
+                                    com.google.mlkit.nl.translate.TranslateLanguage.ROMANIAN
+                                } else {
+                                    com.google.mlkit.nl.translate.TranslateLanguage.GREEK
+                                }
+                                handleOutgoingTyping(event)
+                            }
+                        )
+                    } else {
                         overlayManager.removeDraftOverlay()
                     }
-                )
+                }
             } else {
-                overlayManager.removeDraftOverlay()
+                mainHandler.post {
+                    overlayManager.removeDraftOverlay()
+                }
             }
         }
     }
@@ -1009,6 +1026,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                     node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, selArgs)
                     node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
                     mainHandler.post {
+                        overlayManager.removeDraftOverlay()
                         Toast.makeText(this, "Replaced in chat", Toast.LENGTH_SHORT).show()
                     }
                 } else {
@@ -1016,6 +1034,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                     val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                     clipboard.setPrimaryClip(ClipData.newPlainText("Translated Text", text))
                     mainHandler.post {
+                        overlayManager.removeDraftOverlay()
                         Toast.makeText(this, "Copied to clipboard (Tap Paste in chat)", Toast.LENGTH_SHORT).show()
                     }
                 }
@@ -1023,13 +1042,18 @@ class TranslationAccessibilityService : AccessibilityService() {
                 val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 clipboard.setPrimaryClip(ClipData.newPlainText("Translated Text", text))
                 mainHandler.post {
+                    overlayManager.removeDraftOverlay()
                     Toast.makeText(this, "Copied to clipboard (Tap Paste in chat)", Toast.LENGTH_SHORT).show()
                 }
             }
-            overlayManager.removeDraftOverlay()
+            mainHandler.post {
+                overlayManager.removeDraftOverlay()
+            }
         } catch (e: Exception) {
             Log.e("Translator", "Failed to set text in input", e)
-            overlayManager.removeDraftOverlay()
+            mainHandler.post {
+                overlayManager.removeDraftOverlay()
+            }
         }
     }
 
