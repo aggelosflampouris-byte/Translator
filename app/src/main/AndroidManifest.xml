@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Únicos permisos estrictamente necesarios: superposición sobre WhatsApp e Internet para modelos ML Kit -->
+    <!-- Permisos estrictamente necesarios: superposición sobre WhatsApp, Internet para traducción y notificaciones del sistema -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:name=".TranslatorApplication"
@@ -26,6 +27,23 @@
         <service
             android:name=".FloatingBubbleService"
             android:exported="false" />
+
+        <!-- Receptor de acciones del menú de notificaciones del sistema -->
+        <receiver
+            android:name=".TranslationNotificationReceiver"
+            android:exported="false" />
+
+        <!-- Mosaico de Ajustes Rápidos (Quick Settings Tile) para activar/desactivar la traducción en un toque -->
+        <service
+            android:name=".TranslationTileService"
+            android:label="WhatsApp Translator"
+            android:icon="@drawable/ic_translate_sphere"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
 
         <service
             android:name=".TranslationAccessibilityService"

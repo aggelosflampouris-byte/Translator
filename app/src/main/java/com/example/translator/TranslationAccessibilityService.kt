@@ -112,6 +112,13 @@ class TranslationAccessibilityService : AccessibilityService() {
             }
         }
 
+        // Por qué: Callback ejecutado cuando el usuario pulsa "Translate Screen" en la notificación o mosaico
+        ServiceBridge.onScanRequested = {
+            serviceScope.launch {
+                scanAndTranslateVisibleMessages()
+            }
+        }
+
         try {
             val info = serviceInfo ?: android.accessibilityservice.AccessibilityServiceInfo()
             // Por qué: Restringir a WhatsApp y eventos requeridos para preservar la privacidad y rendimiento
@@ -998,6 +1005,8 @@ class TranslationAccessibilityService : AccessibilityService() {
     override fun onUnbind(intent: android.content.Intent?): Boolean {
         ServiceBridge.isAccessibilityActive = false
         ServiceBridge.onTranslationStateChanged = null
+        ServiceBridge.onScanRequested = null
+        TranslationNotificationManager.cancelNotification(this)
         overlayManager.removeAllOverlays()
         try {
             val prefs = getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
@@ -1014,6 +1023,8 @@ class TranslationAccessibilityService : AccessibilityService() {
         super.onDestroy()
         ServiceBridge.isAccessibilityActive = false
         ServiceBridge.onTranslationStateChanged = null
+        ServiceBridge.onScanRequested = null
+        TranslationNotificationManager.cancelNotification(this)
         overlayManager.removeAllOverlays()
         try {
             val prefs = getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)

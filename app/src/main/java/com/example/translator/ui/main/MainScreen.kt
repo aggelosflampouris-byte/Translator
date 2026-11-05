@@ -1,9 +1,15 @@
 package com.example.translator.ui.main
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -12,16 +18,18 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.navigation3.runtime.NavKey
 import com.example.translator.AppDefaults
 import com.example.translator.AppUpdater
 import com.example.translator.BuildConfig
 import com.example.translator.FloatingBubbleService
 import com.example.translator.ServiceBridge
+import com.example.translator.TranslationNotificationManager
 import com.example.translator.TranslatorPool
 import kotlinx.coroutines.delay
 import java.util.Locale
@@ -78,6 +86,26 @@ fun MainScreen(
   }
   var aiTranslationEnabled by remember {
       mutableStateOf(prefs.getBoolean(AppDefaults.KEY_AI_ENABLED, true))
+  }
+  var controlInterface by remember {
+      mutableStateOf(prefs.getString(AppDefaults.KEY_CONTROL_INTERFACE, AppDefaults.INTERFACE_NOTIFICATION) ?: AppDefaults.INTERFACE_NOTIFICATION)
+  }
+  var isNotificationPermissionGranted by remember {
+      mutableStateOf(
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+              ContextCompat.checkSelfPermission(
+                  context,
+                  Manifest.permission.POST_NOTIFICATIONS
+              ) == PackageManager.PERMISSION_GRANTED
+          } else {
+              true
+          }
+      )
+  }
+  val notificationPermissionLauncher = rememberLauncherForActivityResult(
+      ActivityResultContracts.RequestPermission()
+  ) { granted ->
+      isNotificationPermissionGranted = granted
   }
 
   // Por qué: Limpia cualquier clave de API que pudiera haber sido guardada previamente en SharedPreferences
@@ -167,6 +195,12 @@ fun MainScreen(
           if (event == Lifecycle.Event.ON_RESUME) {
               canDrawOverlays = Settings.canDrawOverlays(context)
               isAccessibilityEnabled = checkAccessibilityEnabled(context)
+              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                  isNotificationPermissionGranted = ContextCompat.checkSelfPermission(
+                      context,
+                      Manifest.permission.POST_NOTIFICATIONS
+                  ) == PackageManager.PERMISSION_GRANTED
+              }
           }
       }
       lifecycleOwner.lifecycle.addObserver(observer)
@@ -437,6 +471,115 @@ fun MainScreen(
 
       Spacer(modifier = Modifier.height(16.dp))
 
+      // Por qué: Permite al usuario elegir entre el menú nativo en la barra de notificaciones
+      // (sin obstrucción visual en pantalla) o la tradicional burbuja flotante sobre el chat.
+      OutlinedCard(
+          modifier = Modifier.fillMaxWidth(),
+          shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+          colors = CardDefaults.outlinedCardColors(
+              containerColor = MaterialTheme.colorScheme.surface
+          )
+      ) {
+          Column(modifier = Modifier.padding(16.dp)) {
+              Text(
+                  text = "Control Interface",
+                  style = MaterialTheme.typography.titleMedium,
+                  color = MaterialTheme.colorScheme.onSurface
+              )
+              Spacer(modifier = Modifier.height(4.dp))
+              Text(
+                  text = "Select how you want to trigger and control translations",
+                  style = MaterialTheme.typography.bodySmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant
+              )
+              Spacer(modifier = Modifier.height(12.dp))
+
+              // Opción 1: Menú de Notificación del Sistema (Recomendado)
+              Row(
+                  modifier = Modifier
+                      .fillMaxWidth()
+                      .clickable {
+                          controlInterface = AppDefaults.INTERFACE_NOTIFICATION
+                          prefs.edit().putString(AppDefaults.KEY_CONTROL_INTERFACE, AppDefaults.INTERFACE_NOTIFICATION).apply()
+                      },
+                  verticalAlignment = Alignment.CenterVertically
+              ) {
+                  RadioButton(
+                      selected = controlInterface == AppDefaults.INTERFACE_NOTIFICATION,
+                      onClick = {
+                          controlInterface = AppDefaults.INTERFACE_NOTIFICATION
+                          prefs.edit().putString(AppDefaults.KEY_CONTROL_INTERFACE, AppDefaults.INTERFACE_NOTIFICATION).apply()
+                      }
+                  )
+                  Spacer(modifier = Modifier.width(8.dp))
+                  Column {
+                      Row(verticalAlignment = Alignment.CenterVertically) {
+                          Text(
+                              text = "Notification Menu",
+                              style = MaterialTheme.typography.bodyMedium,
+                              color = MaterialTheme.colorScheme.onSurface
+                          )
+                          Spacer(modifier = Modifier.width(6.dp))
+                          Surface(
+                              shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
+                              color = MaterialTheme.colorScheme.primaryContainer
+                          ) {
+                              Text(
+                                  text = "Recommended",
+                                  style = MaterialTheme.typography.labelSmall,
+                                  color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                  modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                              )
+                          }
+                      }
+                      Spacer(modifier = Modifier.height(2.dp))
+                      Text(
+                          text = "Zero screen clutter. Scan screen & toggle from notification drawer.",
+                          style = MaterialTheme.typography.bodySmall,
+                          color = MaterialTheme.colorScheme.onSurfaceVariant
+                      )
+                  }
+              }
+
+              Spacer(modifier = Modifier.height(8.dp))
+
+              // Opción 2: Burbuja Flotante
+              Row(
+                  modifier = Modifier
+                      .fillMaxWidth()
+                      .clickable {
+                          controlInterface = AppDefaults.INTERFACE_BUBBLE
+                          prefs.edit().putString(AppDefaults.KEY_CONTROL_INTERFACE, AppDefaults.INTERFACE_BUBBLE).apply()
+                      },
+                  verticalAlignment = Alignment.CenterVertically
+              ) {
+                  RadioButton(
+                      selected = controlInterface == AppDefaults.INTERFACE_BUBBLE,
+                      onClick = {
+                          controlInterface = AppDefaults.INTERFACE_BUBBLE
+                          prefs.edit().putString(AppDefaults.KEY_CONTROL_INTERFACE, AppDefaults.INTERFACE_BUBBLE).apply()
+                      }
+                  )
+                  Spacer(modifier = Modifier.width(8.dp))
+                  Column {
+                      Text(
+                          text = "Floating Screen Bubble",
+                          style = MaterialTheme.typography.bodyMedium,
+                          color = MaterialTheme.colorScheme.onSurface
+                      )
+                      Spacer(modifier = Modifier.height(2.dp))
+                      Text(
+                          text = "Traditional draggable floating button over WhatsApp.",
+                          style = MaterialTheme.typography.bodySmall,
+                          color = MaterialTheme.colorScheme.onSurfaceVariant
+                      )
+                  }
+              }
+          }
+      }
+
+      Spacer(modifier = Modifier.height(16.dp))
+
       // Sección de permisos del sistema
       OutlinedCard(
           modifier = Modifier.fillMaxWidth(),
@@ -464,6 +607,12 @@ fun MainScreen(
               PermissionStatusRow(label = "Accessibility service", granted = isAccessibilityEnabled) {
                   val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
                   context.startActivity(intent)
+              }
+              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                  Spacer(modifier = Modifier.height(10.dp))
+                  PermissionStatusRow(label = "Notification drawer", granted = isNotificationPermissionGranted) {
+                      notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                  }
               }
           }
       }
@@ -508,7 +657,8 @@ fun MainScreen(
       Spacer(modifier = Modifier.height(28.dp))
 
       // Botón principal de activación
-      val allPermissionsGranted = canDrawOverlays && isAccessibilityEnabled
+      val isNotificationRequired = controlInterface == AppDefaults.INTERFACE_NOTIFICATION && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+      val allPermissionsGranted = canDrawOverlays && isAccessibilityEnabled && (!isNotificationRequired || isNotificationPermissionGranted)
       Button(
         modifier = Modifier
             .fillMaxWidth()
@@ -517,18 +667,36 @@ fun MainScreen(
         enabled = allPermissionsGranted,
         onClick = {
             ensureModelsDownloaded(sourceLanguage, targetLanguage)
-            val intent = Intent(context, FloatingBubbleService::class.java)
-            context.startService(intent)
-            android.widget.Toast.makeText(
-                context,
-                "Floating menu opened. Switch to WhatsApp!",
-                android.widget.Toast.LENGTH_SHORT
-            ).show()
+            if (controlInterface == AppDefaults.INTERFACE_NOTIFICATION) {
+                // Por qué: Activa la sesión de traducción y despliega el menú en el panel de notificaciones
+                // evitando bloquear la lectura de mensajes en WhatsApp con iconos flotantes.
+                if (ServiceBridge.isBubbleRunning) {
+                    context.stopService(Intent(context, FloatingBubbleService::class.java))
+                }
+                ServiceBridge.isTranslatingActive = true
+                ServiceBridge.onTranslationStateChanged?.invoke(true)
+                TranslationNotificationManager.showNotification(context, isTranslating = true)
+                android.widget.Toast.makeText(
+                    context,
+                    "Translation menu active in notification drawer! Switch to WhatsApp.",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            } else {
+                TranslationNotificationManager.cancelNotification(context)
+                val intent = Intent(context, FloatingBubbleService::class.java)
+                context.startService(intent)
+                android.widget.Toast.makeText(
+                    context,
+                    "Floating bubble opened. Switch to WhatsApp!",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
         }
       ) {
         Text(
-            if (allPermissionsGranted) "Start Floating Translator"
-            else "Grant permissions above to start",
+            if (!allPermissionsGranted) "Grant permissions above to start"
+            else if (controlInterface == AppDefaults.INTERFACE_NOTIFICATION) "Start Notification Menu"
+            else "Start Floating Translator",
             style = MaterialTheme.typography.bodyLarge
         )
       }
@@ -541,7 +709,12 @@ fun MainScreen(
             .height(50.dp),
         shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
         onClick = {
+            // Por qué: Detiene de forma segura ambos modos (burbuja y notificación) y limpia las superposiciones
             context.stopService(Intent(context, FloatingBubbleService::class.java))
+            TranslationNotificationManager.cancelNotification(context)
+            ServiceBridge.isTranslatingActive = false
+            ServiceBridge.onTranslationStateChanged?.invoke(false)
+            android.widget.Toast.makeText(context, "Translation stopped", android.widget.Toast.LENGTH_SHORT).show()
         }
       ) {
         Text("Stop Translator", style = MaterialTheme.typography.bodyLarge)

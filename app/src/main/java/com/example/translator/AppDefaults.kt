@@ -20,5 +20,10 @@ object AppDefaults {
     const val KEY_TRANSLATE_MODE = "translate_mode"
     const val MODE_TAP = "TAP"
     const val MODE_ALL = "ALL"
+
+    // Por qué: Tipo de interfaz de control preferida por el usuario: NOTIFICATION (menú sin obstrucción en la barra de notificaciones) o BUBBLE (esfera flotante)
+    const val KEY_CONTROL_INTERFACE = "control_interface"
+    const val INTERFACE_NOTIFICATION = "NOTIFICATION"
+    const val INTERFACE_BUBBLE = "BUBBLE"
 }
 

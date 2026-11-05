@@ -40,5 +40,16 @@ object ServiceBridge {
      * Cleared in [onUnbind] / [onDestroy] — never holds a Service reference after unbind.
      */
     @Volatile var onTranslationStateChanged: ((Boolean) -> Unit)? = null
+
+    // ── System Notification Menu & Tile state ───────────────────────────────────
+
+    /** True while the persistent system notification menu is posted in the notification shade. */
+    @Volatile var isNotificationActive: Boolean = false
+
+    /**
+     * Callback to trigger an immediate scan and translation of the visible WhatsApp chat.
+     * Invoked when the user taps "Translate Screen" in the notification menu or Quick Settings tile.
+     */
+    @Volatile var onScanRequested: (() -> Unit)? = null
 }
 
