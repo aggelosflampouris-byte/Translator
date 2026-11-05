@@ -98,13 +98,17 @@ object TranslationFilter {
             return false
         }
 
-        // Por qué: Ignorar mensajes de error o advertencias para no reenviarlos a traducir ni mostrarlos en pantalla
-        if (trimmed.startsWith("[Error", ignoreCase = true) || trimmed.startsWith("Error:", ignoreCase = true)) {
+        val lower = trimmed.lowercase()
+        // Por qué: Ignorar mensajes de error, negativas conversacionales o ecos de prompts de IA
+        // para no reenviarlos a traducir ni mostrarlos nunca como globos en la pantalla del usuario.
+        if (trimmed.startsWith("[Error", ignoreCase = true) ||
+            trimmed.startsWith("Error:", ignoreCase = true) ||
+            lower.contains("no message was provided") ||
+            lower.contains("please provide the") ||
+            lower.contains("expert chat translator") ||
+            lower.contains("translate this informal")) {
             return false
         }
-
-        // Filter out common UI labels, status, and navigation markers
-        val lower = trimmed.lowercase()
         if (COMMON_UI_TOKENS.contains(lower) || MESSAGE_STATUS_TOKENS.contains(lower)) {
             return false
         }

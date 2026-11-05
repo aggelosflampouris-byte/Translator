@@ -307,13 +307,11 @@ class OverlayManager(private val context: Context) {
     ) {
         val textView = view.findViewById<TextView>(R.id.draft_text)
         val badgeView = view.findViewById<TextView>(R.id.draft_badge)
-        val labelView = view.findViewById<TextView>(R.id.draft_label)
         val replaceBtn = view.findViewById<View>(R.id.draft_action_replace)
 
         textView.text = text
         textView.setTextColor(if (showReplace) 0xFFF8FAFC.toInt() else 0xFF94A3B8.toInt())
         badgeView.text = "⇄ $targetLangCode"
-        labelView.text = if (showReplace) "Tap to replace in chat" else "Translate to $targetLangCode"
         replaceBtn.visibility = if (showReplace) View.VISIBLE else View.GONE
 
         if (showReplace) {
@@ -611,6 +609,34 @@ class OverlayManager(private val context: Context) {
         removeSingleMessagePill()
     }
 
+    // Por qué: Elimina de inmediato cualquier burbuja activa cuyas coordenadas ya no coincidan
+    // con ninguno de los mensajes visibles actuales (por ejemplo, tras desplazarse o eliminarse),
+    // impidiendo que burbujas huérfanas queden congeladas cubriendo nuevos mensajes en pantalla.
+    @Synchronized
+    fun purgeOrphans(currentValidRects: List<Rect>) {
+        if (activeBubbles.isEmpty()) return
+        val density = context.resources.displayMetrics.density
+        val tolerance = (25 * density).toInt()
+
+        val iterator = activeBubbles.iterator()
+        while (iterator.hasNext()) {
+            val entry = iterator.next()
+            val bubbleRect = entry.value.targetRect
+            val matchesAny = currentValidRects.any { valid ->
+                abs(valid.top - bubbleRect.top) < tolerance &&
+                abs(valid.bottom - bubbleRect.bottom) < tolerance
+            }
+            if (!matchesAny) {
+                try {
+                    windowManager.removeView(entry.value.view)
+                } catch (e: Exception) {
+                    // Ignorar si ya fue removida
+                }
+                iterator.remove()
+            }
+        }
+    }
+
     // Por qué: Permite verificar de forma atómica si hay alguna superposición activa dibujada en pantalla
     // para que el vigilante en segundo plano pueda purgar la pantalla inmediatamente al salir de WhatsApp.
     @Synchronized
@@ -618,6 +644,7 @@ class OverlayManager(private val context: Context) {
         return activeBubbles.isNotEmpty() || singlePillView != null || draftOverlayView != null
     }
 
+    @Synchronized
     fun removeAllOverlays() {
         removeAllMessageOverlays()
         removeDraftOverlay()

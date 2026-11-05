@@ -369,11 +369,11 @@ fun MainScreen(
               crashLog = null
           },
           title = { Text("App Crashed") },
-          text = { 
+          text = {
               androidx.compose.foundation.lazy.LazyColumn {
                   item {
                       Text(
-                          "The app crashed during the last session. Please send this log to the developer:\n\n\$crashLog",
+                          "The app encountered an error in the previous session:\n\n$crashLog",
                           style = MaterialTheme.typography.bodySmall
                       )
                   }
@@ -431,7 +431,17 @@ fun MainScreen(
       }
   }
 
+  val prioritizedLanguages = remember(supportedLanguages) {
+      val top = listOf("ro", "el", "en")
+      val rest = supportedLanguages.filter { !top.contains(it) }.sortedBy {
+          Locale.forLanguageTag(it).displayLanguage
+      }
+      top + rest
+  }
 
+  val isNotificationRequired = controlInterface == AppDefaults.INTERFACE_NOTIFICATION && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+  val allPermissionsGranted = canDrawOverlays && isAccessibilityEnabled && (!isNotificationRequired || isNotificationPermissionGranted)
+  val isServiceActive = ServiceBridge.isTranslatingActive || ServiceBridge.isBubbleRunning || ServiceBridge.isNotificationActive
 
   Scaffold(
     snackbarHost = { SnackbarHost(snackbarHostState) }
@@ -441,22 +451,31 @@ fun MainScreen(
       modifier = modifier
           .fillMaxSize()
           .padding(innerPadding)
-          .padding(horizontal = 20.dp, vertical = 24.dp)
+          .padding(horizontal = 20.dp, vertical = 20.dp)
           .verticalScroll(scrollState),
       horizontalAlignment = Alignment.Start,
       verticalArrangement = Arrangement.Top
     ) {
-      // Cabecera sobria y nativa con versión discreta
+      // Cabecera sobria y nativa con versión interactiva
       Row(
           modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.SpaceBetween,
           verticalAlignment = Alignment.CenterVertically
       ) {
-          Text(
-              text = "Translator",
-              style = MaterialTheme.typography.headlineLarge,
-              color = MaterialTheme.colorScheme.onBackground
-          )
+          Column {
+              Text(
+                  text = "Translator",
+                  style = MaterialTheme.typography.headlineMedium,
+                  color = MaterialTheme.colorScheme.onBackground
+              )
+              Spacer(modifier = Modifier.height(2.dp))
+              Text(
+                  text = "WhatsApp Bilingual Assistant",
+                  style = MaterialTheme.typography.bodySmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant
+              )
+          }
+
           Surface(
               shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
               color = MaterialTheme.colorScheme.surfaceVariant,
@@ -484,85 +503,202 @@ fun MainScreen(
                   text = if (isCheckingForUpdate) "Checking..." else "v${BuildConfig.VERSION_NAME}",
                   style = MaterialTheme.typography.labelSmall,
                   color = MaterialTheme.colorScheme.onSurfaceVariant,
-                  modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
               )
           }
       }
-      Spacer(modifier = Modifier.height(4.dp))
-      Text(
-          text = "Instant, offline translation assistant for WhatsApp",
-          style = MaterialTheme.typography.bodyMedium,
-          color = MaterialTheme.colorScheme.onSurfaceVariant
-      )
 
-      Spacer(modifier = Modifier.height(24.dp))
+      Spacer(modifier = Modifier.height(18.dp))
 
-      // Sección de configuración de idiomas
+      // ── Sección 1: Configuración de Traducción ────────────────────────────
       OutlinedCard(
           modifier = Modifier.fillMaxWidth(),
           shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
-          colors = CardDefaults.outlinedCardColors(
-              containerColor = MaterialTheme.colorScheme.surface
-          )
+          colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
       ) {
-          Column(
-              modifier = Modifier
-                  .fillMaxWidth()
-                  .padding(16.dp)
-          ) {
+          Column(modifier = Modifier.padding(16.dp)) {
               Text(
-                  text = "Translation Pair",
+                  text = "Translation",
                   style = MaterialTheme.typography.titleMedium,
                   color = MaterialTheme.colorScheme.onSurface
               )
               Spacer(modifier = Modifier.height(12.dp))
 
-              LanguageDropdown("Source Language", sourceLanguage, listOf("AUTO") + supportedLanguages) {
-                  sourceLanguage = it
-                  prefs.edit().putString(AppDefaults.KEY_SOURCE_LANGUAGE, it).apply()
-              }
-              Spacer(modifier = Modifier.height(10.dp))
-              LanguageDropdown("Target Language", targetLanguage, supportedLanguages) {
-                  targetLanguage = it
-                  prefs.edit().putString(AppDefaults.KEY_TARGET_LANGUAGE, it).apply()
-              }
-              Spacer(modifier = Modifier.height(10.dp))
+              // Selector de pares lingüísticos con botón de intercambio simétrico
               Row(
+                  modifier = Modifier.fillMaxWidth(),
                   verticalAlignment = Alignment.CenterVertically
               ) {
+                  Box(modifier = Modifier.weight(1f)) {
+                      LanguageDropdown("From", sourceLanguage, listOf("AUTO") + prioritizedLanguages) {
+                          sourceLanguage = it
+                          prefs.edit().putString(AppDefaults.KEY_SOURCE_LANGUAGE, it).apply()
+                      }
+                  }
+
+                  IconButton(
+                      onClick = {
+                          if (sourceLanguage != "AUTO") {
+                              val temp = sourceLanguage
+                              sourceLanguage = targetLanguage
+                              targetLanguage = temp
+                              prefs.edit()
+                                  .putString(AppDefaults.KEY_SOURCE_LANGUAGE, sourceLanguage)
+                                  .putString(AppDefaults.KEY_TARGET_LANGUAGE, targetLanguage)
+                                  .apply()
+                          }
+                      },
+                      enabled = sourceLanguage != "AUTO",
+                      modifier = Modifier.padding(horizontal = 4.dp)
+                  ) {
+                      Text(
+                          text = "⇄",
+                          style = MaterialTheme.typography.titleMedium,
+                          color = if (sourceLanguage != "AUTO") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                      )
+                  }
+
+                  Box(modifier = Modifier.weight(1f)) {
+                      LanguageDropdown("To", targetLanguage, prioritizedLanguages) {
+                          targetLanguage = it
+                          prefs.edit().putString(AppDefaults.KEY_TARGET_LANGUAGE, it).apply()
+                      }
+                  }
+              }
+
+              Spacer(modifier = Modifier.height(8.dp))
+
+              // Estado de descarga de modelos sin conexión
+              Row(verticalAlignment = Alignment.CenterVertically) {
                   val isReady = modelStatus.contains("ready", ignoreCase = true)
                   Surface(
                       modifier = Modifier.size(8.dp),
                       shape = androidx.compose.foundation.shape.CircleShape,
                       color = if (isReady) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
                   ) {}
-                  Spacer(modifier = Modifier.width(8.dp))
+                  Spacer(modifier = Modifier.width(6.dp))
                   Text(
                       text = modelStatus,
                       style = MaterialTheme.typography.bodySmall,
                       color = MaterialTheme.colorScheme.onSurfaceVariant
                   )
               }
+
+              HorizontalDivider(
+                  modifier = Modifier.padding(vertical = 14.dp),
+                  color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+              )
+
+              // Modo de traducción de mensajes (reemplaza switch confuso con selectores directos)
+              Text(
+                  text = "Chat Message Translation",
+                  style = MaterialTheme.typography.bodyMedium,
+                  color = MaterialTheme.colorScheme.onSurface
+              )
+              Spacer(modifier = Modifier.height(8.dp))
+              Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.spacedBy(8.dp)
+              ) {
+                  FilterChip(
+                      selected = translationMode == AppDefaults.MODE_TAP,
+                      onClick = {
+                          translationMode = AppDefaults.MODE_TAP
+                          prefs.edit().putString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_TAP).apply()
+                      },
+                      label = { Text("Tap Message") },
+                      modifier = Modifier.weight(1f)
+                  )
+                  FilterChip(
+                      selected = translationMode == AppDefaults.MODE_ALL,
+                      onClick = {
+                          translationMode = AppDefaults.MODE_ALL
+                          prefs.edit().putString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_ALL).apply()
+                      },
+                      label = { Text("Auto-Translate All") },
+                      modifier = Modifier.weight(1f)
+                  )
+              }
+              Spacer(modifier = Modifier.height(4.dp))
+              Text(
+                  text = if (translationMode == AppDefaults.MODE_TAP)
+                      "Tap any message in chat to reveal its translation. Leaves timestamps clean."
+                  else
+                      "Translates all messages on screen automatically as you view them.",
+                  style = MaterialTheme.typography.bodySmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant
+              )
+
+              HorizontalDivider(
+                  modifier = Modifier.padding(vertical = 14.dp),
+                  color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+              )
+
+              // Traducción contextual con IA (jerga, idiotismos y expresiones informales)
+              val isAiConfigured = BuildConfig.GEMINI_API_KEY.isNotBlank()
+              val isAiActive = isAiConfigured && aiTranslationEnabled
+              Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.SpaceBetween
+              ) {
+                  Column(modifier = Modifier.weight(1f)) {
+                      Row(verticalAlignment = Alignment.CenterVertically) {
+                          Text(
+                              text = "AI Contextual Engine",
+                              style = MaterialTheme.typography.bodyMedium,
+                              color = MaterialTheme.colorScheme.onSurface
+                          )
+                          Spacer(modifier = Modifier.width(6.dp))
+                          Surface(
+                              shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
+                              color = if (isAiActive) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                          ) {
+                              Text(
+                                  text = if (isAiActive) "Gemini" else "Offline",
+                                  style = MaterialTheme.typography.labelSmall,
+                                  color = if (isAiActive) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                  modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                              )
+                          }
+                      }
+                      Spacer(modifier = Modifier.height(2.dp))
+                      Text(
+                          text = "Understands informal idioms, colloquial slang, and swearing accurately.",
+                          style = MaterialTheme.typography.bodySmall,
+                          color = MaterialTheme.colorScheme.onSurfaceVariant
+                      )
+                  }
+                  Spacer(modifier = Modifier.width(12.dp))
+                  Switch(
+                      checked = isAiActive,
+                      enabled = isAiConfigured,
+                      onCheckedChange = { isChecked ->
+                          aiTranslationEnabled = isChecked
+                          prefs.edit().putBoolean(AppDefaults.KEY_AI_ENABLED, isChecked).apply()
+                      }
+                  )
+              }
           }
       }
 
-      Spacer(modifier = Modifier.height(16.dp))
+      Spacer(modifier = Modifier.height(14.dp))
 
-      // Modo de interacción para traducción de mensajes
+      // ── Sección 2: Asistente de Teclado e Interfaz ─────────────────────────
       OutlinedCard(
           modifier = Modifier.fillMaxWidth(),
           shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
-          colors = CardDefaults.outlinedCardColors(
-              containerColor = MaterialTheme.colorScheme.surface
-          )
+          colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
       ) {
           Column(modifier = Modifier.padding(16.dp)) {
               Text(
-                  text = "Chat Translation Mode",
+                  text = "Typing & Controls",
                   style = MaterialTheme.typography.titleMedium,
                   color = MaterialTheme.colorScheme.onSurface
               )
-              Spacer(modifier = Modifier.height(6.dp))
+              Spacer(modifier = Modifier.height(12.dp))
+
+              // Asistente de escritura en teclado
               Row(
                   modifier = Modifier.fillMaxWidth(),
                   verticalAlignment = Alignment.CenterVertically,
@@ -570,384 +706,237 @@ fun MainScreen(
               ) {
                   Column(modifier = Modifier.weight(1f)) {
                       Text(
-                          text = if (translationMode == AppDefaults.MODE_TAP) "Tap to Translate (Recommended)" else "Auto-Translate All",
+                          text = "Keyboard Assistant",
                           style = MaterialTheme.typography.bodyMedium,
                           color = MaterialTheme.colorScheme.onSurface
                       )
                       Spacer(modifier = Modifier.height(2.dp))
                       Text(
-                          text = if (translationMode == AppDefaults.MODE_TAP)
-                              "Tap any message in WhatsApp to see its translation pill. Leaves timestamps and other messages clean."
-                          else
-                              "Overlays translations on all visible messages automatically.",
+                          text = "Translates outgoing drafts in real-time above the keyboard while typing.",
                           style = MaterialTheme.typography.bodySmall,
                           color = MaterialTheme.colorScheme.onSurfaceVariant
                       )
                   }
                   Spacer(modifier = Modifier.width(12.dp))
                   Switch(
-                      checked = translationMode == AppDefaults.MODE_TAP,
-                      onCheckedChange = { isTap ->
-                          translationMode = if (isTap) AppDefaults.MODE_TAP else AppDefaults.MODE_ALL
-                          prefs.edit().putString(AppDefaults.KEY_TRANSLATE_MODE, translationMode).apply()
+                      checked = keyboardTranslatorEnabled,
+                      onCheckedChange = { isChecked ->
+                          keyboardTranslatorEnabled = isChecked
+                          prefs.edit().putBoolean(AppDefaults.KEY_KEYBOARD_ENABLED, isChecked).apply()
                       }
                   )
               }
-          }
-      }
 
-      Spacer(modifier = Modifier.height(16.dp))
-
-      // Por qué: Proporciona control de activación para la traducción con IA en la nube sin exponer
-      // jamás la clave de API ni permitir que el usuario visualice credenciales sensibles del desarrollador.
-      OutlinedCard(
-          modifier = Modifier.fillMaxWidth(),
-          shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
-          colors = CardDefaults.outlinedCardColors(
-              containerColor = MaterialTheme.colorScheme.surface
-          )
-      ) {
-          Row(
-              modifier = Modifier
-                  .fillMaxWidth()
-                  .padding(16.dp),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.SpaceBetween
-          ) {
-              Column(modifier = Modifier.weight(1f)) {
-                  val isAiConfigured = BuildConfig.GEMINI_API_KEY.isNotBlank()
-                  val isAiActive = isAiConfigured && aiTranslationEnabled
-                  Row(verticalAlignment = Alignment.CenterVertically) {
-                      Text(
-                          text = "AI Slang & Logic",
-                          style = MaterialTheme.typography.titleMedium,
-                          color = MaterialTheme.colorScheme.onSurface
-                      )
-                      Spacer(modifier = Modifier.width(8.dp))
-                      Surface(
-                          shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
-                          color = if (isAiActive) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
-                      ) {
-                          Text(
-                              text = if (isAiActive) "Gemini 3.5 Active" else "ML Kit Offline",
-                              style = MaterialTheme.typography.labelSmall,
-                              color = if (isAiActive) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                              modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                          )
-                      }
-                  }
-                  Spacer(modifier = Modifier.height(2.dp))
-                  Text(
-                      text = if (isAiActive)
-                          "Using cloud AI for conversational slang, swear words, and contextual logic."
-                      else
-                          "Using standard offline dictionary translation.",
-                      style = MaterialTheme.typography.bodySmall,
-                      color = MaterialTheme.colorScheme.onSurfaceVariant
-                  )
-              }
-              Spacer(modifier = Modifier.width(12.dp))
-              Switch(
-                  checked = aiTranslationEnabled && BuildConfig.GEMINI_API_KEY.isNotBlank(),
-                  enabled = BuildConfig.GEMINI_API_KEY.isNotBlank(),
-                  onCheckedChange = { isChecked ->
-                      aiTranslationEnabled = isChecked
-                      prefs.edit().putBoolean(AppDefaults.KEY_AI_ENABLED, isChecked).apply()
-                  }
+              HorizontalDivider(
+                  modifier = Modifier.padding(vertical = 14.dp),
+                  color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
               )
-          }
-      }
 
-      Spacer(modifier = Modifier.height(16.dp))
-
-      // Asistente de escritura en teclado
-      OutlinedCard(
-          modifier = Modifier.fillMaxWidth(),
-          shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
-          colors = CardDefaults.outlinedCardColors(
-              containerColor = MaterialTheme.colorScheme.surface
-          )
-      ) {
-          Row(
-              modifier = Modifier
-                  .fillMaxWidth()
-                  .padding(16.dp),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.SpaceBetween
-          ) {
-              Column(modifier = Modifier.weight(1f)) {
-                  Text(
-                      text = "Keyboard Assistant",
-                      style = MaterialTheme.typography.titleMedium,
-                      color = MaterialTheme.colorScheme.onSurface
-                  )
-                  Spacer(modifier = Modifier.height(2.dp))
-                  Text(
-                      text = "Show translation pill above keyboard while typing",
-                      style = MaterialTheme.typography.bodySmall,
-                      color = MaterialTheme.colorScheme.onSurfaceVariant
-                  )
-              }
-              Spacer(modifier = Modifier.width(16.dp))
-              Switch(
-                  checked = keyboardTranslatorEnabled,
-                  onCheckedChange = { isChecked ->
-                      keyboardTranslatorEnabled = isChecked
-                      prefs.edit().putBoolean(AppDefaults.KEY_KEYBOARD_ENABLED, isChecked).apply()
-                  }
-              )
-          }
-      }
-
-      Spacer(modifier = Modifier.height(16.dp))
-
-      // Por qué: Permite al usuario elegir entre el menú nativo en la barra de notificaciones
-      // (sin obstrucción visual en pantalla) o la tradicional burbuja flotante sobre el chat.
-      OutlinedCard(
-          modifier = Modifier.fillMaxWidth(),
-          shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
-          colors = CardDefaults.outlinedCardColors(
-              containerColor = MaterialTheme.colorScheme.surface
-          )
-      ) {
-          Column(modifier = Modifier.padding(16.dp)) {
+              // Método de control preferido
               Text(
                   text = "Control Interface",
-                  style = MaterialTheme.typography.titleMedium,
+                  style = MaterialTheme.typography.bodyMedium,
                   color = MaterialTheme.colorScheme.onSurface
               )
-              Spacer(modifier = Modifier.height(4.dp))
-              Text(
-                  text = "Select how you want to trigger and control translations",
-                  style = MaterialTheme.typography.bodySmall,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant
-              )
-              Spacer(modifier = Modifier.height(12.dp))
-
-              // Opción 1: Menú de Notificación del Sistema (Recomendado)
+              Spacer(modifier = Modifier.height(8.dp))
               Row(
-                  modifier = Modifier
-                      .fillMaxWidth()
-                      .clickable {
-                          controlInterface = AppDefaults.INTERFACE_NOTIFICATION
-                          prefs.edit().putString(AppDefaults.KEY_CONTROL_INTERFACE, AppDefaults.INTERFACE_NOTIFICATION).apply()
-                      },
-                  verticalAlignment = Alignment.CenterVertically
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.spacedBy(8.dp)
               ) {
-                  RadioButton(
+                  FilterChip(
                       selected = controlInterface == AppDefaults.INTERFACE_NOTIFICATION,
                       onClick = {
                           controlInterface = AppDefaults.INTERFACE_NOTIFICATION
                           prefs.edit().putString(AppDefaults.KEY_CONTROL_INTERFACE, AppDefaults.INTERFACE_NOTIFICATION).apply()
-                      }
-                  )
-                  Spacer(modifier = Modifier.width(8.dp))
-                  Column {
-                      Row(verticalAlignment = Alignment.CenterVertically) {
-                          Text(
-                              text = "Notification Menu",
-                              style = MaterialTheme.typography.bodyMedium,
-                              color = MaterialTheme.colorScheme.onSurface
-                          )
-                          Spacer(modifier = Modifier.width(6.dp))
-                          Surface(
-                              shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
-                              color = MaterialTheme.colorScheme.primaryContainer
-                          ) {
-                              Text(
-                                  text = "Recommended",
-                                  style = MaterialTheme.typography.labelSmall,
-                                  color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                  modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                              )
-                          }
-                      }
-                      Spacer(modifier = Modifier.height(2.dp))
-                      Text(
-                          text = "Zero screen clutter. Scan screen & toggle from notification drawer.",
-                          style = MaterialTheme.typography.bodySmall,
-                          color = MaterialTheme.colorScheme.onSurfaceVariant
-                      )
-                  }
-              }
-
-              Spacer(modifier = Modifier.height(8.dp))
-
-              // Opción 2: Burbuja Flotante
-              Row(
-                  modifier = Modifier
-                      .fillMaxWidth()
-                      .clickable {
-                          controlInterface = AppDefaults.INTERFACE_BUBBLE
-                          prefs.edit().putString(AppDefaults.KEY_CONTROL_INTERFACE, AppDefaults.INTERFACE_BUBBLE).apply()
                       },
-                  verticalAlignment = Alignment.CenterVertically
-              ) {
-                  RadioButton(
+                      label = { Text("Notification Menu") },
+                      modifier = Modifier.weight(1f)
+                  )
+                  FilterChip(
                       selected = controlInterface == AppDefaults.INTERFACE_BUBBLE,
                       onClick = {
                           controlInterface = AppDefaults.INTERFACE_BUBBLE
                           prefs.edit().putString(AppDefaults.KEY_CONTROL_INTERFACE, AppDefaults.INTERFACE_BUBBLE).apply()
-                      }
+                      },
+                      label = { Text("Floating Bubble") },
+                      modifier = Modifier.weight(1f)
                   )
-                  Spacer(modifier = Modifier.width(8.dp))
-                  Column {
-                      Text(
-                          text = "Floating Screen Bubble",
-                          style = MaterialTheme.typography.bodyMedium,
-                          color = MaterialTheme.colorScheme.onSurface
-                      )
-                      Spacer(modifier = Modifier.height(2.dp))
-                      Text(
-                          text = "Traditional draggable floating button over WhatsApp.",
-                          style = MaterialTheme.typography.bodySmall,
-                          color = MaterialTheme.colorScheme.onSurfaceVariant
-                      )
-                  }
               }
+              Spacer(modifier = Modifier.height(4.dp))
+              Text(
+                  text = if (controlInterface == AppDefaults.INTERFACE_NOTIFICATION)
+                      "Controls appear in your notification drawer. Zero screen clutter over chat."
+                  else
+                      "Shows a movable floating button on your screen over WhatsApp.",
+                  style = MaterialTheme.typography.bodySmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant
+              )
           }
       }
 
-      Spacer(modifier = Modifier.height(16.dp))
+      Spacer(modifier = Modifier.height(14.dp))
 
-      // Sección de permisos del sistema
+      // ── Sección 3: Permisos del Sistema ────────────────────────────────────
       OutlinedCard(
           modifier = Modifier.fillMaxWidth(),
           shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
-          colors = CardDefaults.outlinedCardColors(
-              containerColor = MaterialTheme.colorScheme.surface
-          )
+          colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
       ) {
           Column(modifier = Modifier.padding(16.dp)) {
-              Text(
-                  text = "System Permissions",
-                  style = MaterialTheme.typography.titleMedium,
-                  color = MaterialTheme.colorScheme.onSurface
-              )
-              Spacer(modifier = Modifier.height(12.dp))
-
-              PermissionStatusRow(label = "Display over other apps", granted = canDrawOverlays) {
-                  val intent = Intent(
-                      Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                      Uri.parse("package:${context.packageName}")
+              Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.SpaceBetween,
+                  verticalAlignment = Alignment.CenterVertically
+              ) {
+                  Text(
+                      text = "System Permissions",
+                      style = MaterialTheme.typography.titleMedium,
+                      color = MaterialTheme.colorScheme.onSurface
                   )
-                  context.startActivity(intent)
+                  if (allPermissionsGranted) {
+                      Surface(
+                          shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
+                          color = MaterialTheme.colorScheme.primaryContainer
+                      ) {
+                          Text(
+                              text = "Ready",
+                              style = MaterialTheme.typography.labelSmall,
+                              color = MaterialTheme.colorScheme.onPrimaryContainer,
+                              modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                          )
+                      }
+                  }
               }
+
               Spacer(modifier = Modifier.height(10.dp))
-              PermissionStatusRow(label = "Accessibility service", granted = isAccessibilityEnabled) {
-                  val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                  context.startActivity(intent)
-              }
-              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                  Spacer(modifier = Modifier.height(10.dp))
-                  PermissionStatusRow(label = "Notification drawer", granted = isNotificationPermissionGranted) {
-                      notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+
+              if (allPermissionsGranted) {
+                  Row(verticalAlignment = Alignment.CenterVertically) {
+                      Text(
+                          text = "✓",
+                          color = MaterialTheme.colorScheme.primary,
+                          style = MaterialTheme.typography.titleMedium
+                      )
+                      Spacer(modifier = Modifier.width(8.dp))
+                      Text(
+                          text = "All required permissions are enabled and active.",
+                          style = MaterialTheme.typography.bodyMedium,
+                          color = MaterialTheme.colorScheme.onSurfaceVariant
+                      )
+                  }
+              } else {
+                  PermissionStatusRow(label = "Display over other apps", granted = canDrawOverlays) {
+                      val intent = Intent(
+                          Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                          Uri.parse("package:${context.packageName}")
+                      )
+                      context.startActivity(intent)
+                  }
+                  Spacer(modifier = Modifier.height(8.dp))
+                  PermissionStatusRow(label = "Accessibility Service", granted = isAccessibilityEnabled) {
+                      val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                      context.startActivity(intent)
+                  }
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                      Spacer(modifier = Modifier.height(8.dp))
+                      PermissionStatusRow(label = "Notifications", granted = isNotificationPermissionGranted) {
+                          notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                      }
+                  }
+
+                  if (!isAccessibilityEnabled) {
+                      Spacer(modifier = Modifier.height(10.dp))
+                      Row(
+                          modifier = Modifier.fillMaxWidth(),
+                          verticalAlignment = Alignment.CenterVertically,
+                          horizontalArrangement = Arrangement.SpaceBetween
+                      ) {
+                          Text(
+                              text = "Android 13+ restricted? App Info → ⋮ → Allow restricted settings.",
+                              style = MaterialTheme.typography.bodySmall,
+                              color = MaterialTheme.colorScheme.onSurfaceVariant,
+                              modifier = Modifier.weight(1f)
+                          )
+                          TextButton(
+                              onClick = {
+                                  val intent = Intent(
+                                      Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                      Uri.parse("package:${context.packageName}")
+                                  )
+                                  context.startActivity(intent)
+                              }
+                          ) {
+                              Text("App Info", style = MaterialTheme.typography.labelMedium)
+                          }
+                      }
                   }
               }
           }
       }
 
-      // Guía discreta para Android 13+ con restricciones
-      if (!isAccessibilityEnabled) {
-          Spacer(modifier = Modifier.height(12.dp))
-          OutlinedCard(
-              modifier = Modifier.fillMaxWidth(),
-              shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
-              colors = CardDefaults.outlinedCardColors(
-                  containerColor = MaterialTheme.colorScheme.surface
-              )
+      Spacer(modifier = Modifier.height(24.dp))
+
+      // ── Botón de Acción Principal Dinámico (unificado sin botones redundantes) ──
+      if (!allPermissionsGranted) {
+          Button(
+              modifier = Modifier
+                  .fillMaxWidth()
+                  .height(50.dp),
+              shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+              enabled = false,
+              onClick = {}
           ) {
-              Column(modifier = Modifier.padding(16.dp)) {
-                  Text(
-                      "Android 13+ Restricted Settings",
-                      style = MaterialTheme.typography.titleSmall,
-                      color = MaterialTheme.colorScheme.onSurface
-                  )
-                  Spacer(modifier = Modifier.height(4.dp))
-                  Text(
-                      "If you see 'App access denied', open App Info → tap ⋮ → " +
-                      "'Allow restricted settings', authenticate, then return here.",
-                      style = MaterialTheme.typography.bodySmall,
-                      color = MaterialTheme.colorScheme.onSurfaceVariant
-                  )
-                  Spacer(modifier = Modifier.height(8.dp))
-                  OutlinedButton(
-                      onClick = {
-                          val intent = Intent(
-                              Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                              Uri.parse("package:${context.packageName}")
-                          )
-                          context.startActivity(intent)
-                      }
-                  ) { Text("Open App Info") }
-              }
+              Text("Grant Required Permissions Above", style = MaterialTheme.typography.bodyLarge)
           }
-      }
-
-      Spacer(modifier = Modifier.height(28.dp))
-
-      // Botón principal de activación
-      val isNotificationRequired = controlInterface == AppDefaults.INTERFACE_NOTIFICATION && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
-      val allPermissionsGranted = canDrawOverlays && isAccessibilityEnabled && (!isNotificationRequired || isNotificationPermissionGranted)
-      Button(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(50.dp),
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-        enabled = allPermissionsGranted,
-        onClick = {
-            ensureModelsDownloaded(sourceLanguage, targetLanguage)
-            if (controlInterface == AppDefaults.INTERFACE_NOTIFICATION) {
-                // Por qué: Activa la sesión de traducción y despliega el menú en el panel de notificaciones
-                // evitando bloquear la lectura de mensajes en WhatsApp con iconos flotantes.
-                if (ServiceBridge.isBubbleRunning) {
-                    context.stopService(Intent(context, FloatingBubbleService::class.java))
-                }
-                ServiceBridge.isTranslatingActive = true
-                ServiceBridge.onTranslationStateChanged?.invoke(true)
-                TranslationNotificationManager.showNotification(context, isTranslating = true)
-                android.widget.Toast.makeText(
-                    context,
-                    "Translation menu active in notification drawer! Switch to WhatsApp.",
-                    android.widget.Toast.LENGTH_LONG
-                ).show()
-            } else {
-                TranslationNotificationManager.cancelNotification(context)
-                val intent = Intent(context, FloatingBubbleService::class.java)
-                context.startService(intent)
-                android.widget.Toast.makeText(
-                    context,
-                    "Floating bubble opened. Switch to WhatsApp!",
-                    android.widget.Toast.LENGTH_SHORT
-                ).show()
-            }
-        }
-      ) {
-        Text(
-            if (!allPermissionsGranted) "Grant permissions above to start"
-            else if (controlInterface == AppDefaults.INTERFACE_NOTIFICATION) "Start Notification Menu"
-            else "Start Floating Translator",
-            style = MaterialTheme.typography.bodyLarge
-        )
-      }
-
-      Spacer(modifier = Modifier.height(10.dp))
-
-      OutlinedButton(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(50.dp),
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-        onClick = {
-            // Por qué: Detiene de forma segura ambos modos (burbuja y notificación) y limpia las superposiciones
-            context.stopService(Intent(context, FloatingBubbleService::class.java))
-            TranslationNotificationManager.cancelNotification(context)
-            ServiceBridge.isTranslatingActive = false
-            ServiceBridge.onTranslationStateChanged?.invoke(false)
-            android.widget.Toast.makeText(context, "Translation stopped", android.widget.Toast.LENGTH_SHORT).show()
-        }
-      ) {
-        Text("Stop Translator", style = MaterialTheme.typography.bodyLarge)
+      } else if (isServiceActive) {
+          OutlinedButton(
+              modifier = Modifier
+                  .fillMaxWidth()
+                  .height(50.dp),
+              shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+              onClick = {
+                  context.stopService(Intent(context, FloatingBubbleService::class.java))
+                  TranslationNotificationManager.cancelNotification(context)
+                  ServiceBridge.isTranslatingActive = false
+                  ServiceBridge.onTranslationStateChanged?.invoke(false)
+                  android.widget.Toast.makeText(context, "Translator stopped", android.widget.Toast.LENGTH_SHORT).show()
+              }
+          ) {
+              Text(
+                  text = "Stop Translator",
+                  style = MaterialTheme.typography.bodyLarge,
+                  color = MaterialTheme.colorScheme.error
+              )
+          }
+      } else {
+          Button(
+              modifier = Modifier
+                  .fillMaxWidth()
+                  .height(50.dp),
+              shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+              onClick = {
+                  ensureModelsDownloaded(sourceLanguage, targetLanguage)
+                  if (controlInterface == AppDefaults.INTERFACE_NOTIFICATION) {
+                      if (ServiceBridge.isBubbleRunning) {
+                          context.stopService(Intent(context, FloatingBubbleService::class.java))
+                      }
+                      ServiceBridge.isTranslatingActive = true
+                      ServiceBridge.onTranslationStateChanged?.invoke(true)
+                      TranslationNotificationManager.showNotification(context, isTranslating = true)
+                      android.widget.Toast.makeText(context, "Translator active in notification drawer", android.widget.Toast.LENGTH_SHORT).show()
+                  } else {
+                      TranslationNotificationManager.cancelNotification(context)
+                      val intent = Intent(context, FloatingBubbleService::class.java)
+                      context.startService(intent)
+                      android.widget.Toast.makeText(context, "Floating bubble opened", android.widget.Toast.LENGTH_SHORT).show()
+                  }
+              }
+          ) {
+              Text(
+                  text = if (controlInterface == AppDefaults.INTERFACE_NOTIFICATION) "Start Notification Menu" else "Start Floating Bubble",
+                  style = MaterialTheme.typography.bodyLarge
+              )
+          }
       }
     }
   }
@@ -957,7 +946,7 @@ fun MainScreen(
 @Composable
 fun LanguageDropdown(label: String, selectedCode: String, options: List<String>, onSelected: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
-    
+
     val getDisplayName = { code: String ->
         if (code == "AUTO") "Auto-Detect"
         else Locale.forLanguageTag(code).displayLanguage.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }

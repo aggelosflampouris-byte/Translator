@@ -224,5 +224,7 @@ class TranslationFilterTest {
         assertFalse(TranslationFilter.shouldTranslate("[Error: No message was provided to translate. Please provide the Romanian text you would like translated into Greek.]", TranslateLanguage.GREEK))
         assertFalse(TranslationFilter.shouldTranslate("Error: Something went wrong", TranslateLanguage.GREEK))
         assertFalse(TranslationFilter.shouldTranslate("[Error: Empty prompt]", TranslateLanguage.ROMANIAN))
+        assertFalse(TranslationFilter.shouldTranslate("You are an expert chat translator between Greek and Romanian.", TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.shouldTranslate("Translate this informal WhatsApp chat message from Romanian to Greek", TranslateLanguage.GREEK))
     }
 }

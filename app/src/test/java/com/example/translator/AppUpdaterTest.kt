@@ -39,3 +39,4 @@ class AppUpdaterTest {
         assertFalse(AppUpdater.isNewerVersion("v1.0.9", "1.0.10"))
     }
 }
+
