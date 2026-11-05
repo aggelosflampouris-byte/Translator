@@ -52,6 +52,8 @@ class TranslationAccessibilityService : AccessibilityService() {
     private var configuredSource: String = AppDefaults.SOURCE_LANGUAGE
     private var configuredTarget: String = AppDefaults.TARGET_LANGUAGE
     private var isKeyboardTranslatorEnabled: Boolean = false
+    private var translationMode: String = AppDefaults.MODE_TAP
+    private lateinit var hybridEngine: HybridTranslationEngine
 
     private val prefListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { prefs, key ->
         when (key) {
@@ -63,6 +65,12 @@ class TranslationAccessibilityService : AccessibilityService() {
             }
             AppDefaults.KEY_KEYBOARD_ENABLED -> {
                 isKeyboardTranslatorEnabled = prefs.getBoolean(key, false)
+            }
+            AppDefaults.KEY_TRANSLATE_MODE -> {
+                translationMode = prefs.getString(key, AppDefaults.MODE_TAP) ?: AppDefaults.MODE_TAP
+                if (translationMode == AppDefaults.MODE_TAP) {
+                    overlayManager.removeAllMessageOverlays()
+                }
             }
         }
     }
@@ -79,11 +87,13 @@ class TranslationAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         overlayManager = OverlayManager(this)
+        hybridEngine = HybridTranslationEngine(this)
 
         val prefs = getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
         configuredSource = prefs.getString(AppDefaults.KEY_SOURCE_LANGUAGE, AppDefaults.SOURCE_LANGUAGE) ?: AppDefaults.SOURCE_LANGUAGE
         configuredTarget = prefs.getString(AppDefaults.KEY_TARGET_LANGUAGE, AppDefaults.TARGET_LANGUAGE) ?: AppDefaults.TARGET_LANGUAGE
         isKeyboardTranslatorEnabled = prefs.getBoolean(AppDefaults.KEY_KEYBOARD_ENABLED, false)
+        translationMode = prefs.getString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_TAP) ?: AppDefaults.MODE_TAP
         prefs.registerOnSharedPreferenceChangeListener(prefListener)
 
         // Publish to ServiceBridge — no static Service reference stored.
@@ -104,7 +114,7 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         try {
             val info = serviceInfo ?: android.accessibilityservice.AccessibilityServiceInfo()
-            // Por qué: Restringir a WhatsApp y eventos de texto/desplazamiento para proteger la privacidad del usuario
+            // Por qué: Restringir a WhatsApp y eventos requeridos para preservar la privacidad y rendimiento
             info.packageNames = arrayOf("com.whatsapp", "com.whatsapp.w4b")
             info.flags = info.flags or
                 android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
@@ -114,7 +124,8 @@ class TranslationAccessibilityService : AccessibilityService() {
                 AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
                 AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED or
                 AccessibilityEvent.TYPE_VIEW_SCROLLED or
-                AccessibilityEvent.TYPE_VIEW_FOCUSED
+                AccessibilityEvent.TYPE_VIEW_FOCUSED or
+                AccessibilityEvent.TYPE_VIEW_CLICKED
             info.feedbackType = android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_GENERIC
             serviceInfo = info
         } catch (e: Exception) {
@@ -226,15 +237,21 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         when (event.eventType) {
             AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
+                overlayManager.removeSingleMessagePill()
                 if (!isKeyboardVisible()) {
                     overlayManager.removeDraftOverlay()
                 }
-                // Fast tracking during scroll: minimal 16ms frame debounce
-                // Existing bubbles reuse their views via updateViewLayout with zero lag!
-                scanJob?.cancel()
-                scanJob = serviceScope.launch {
-                    delay(16)
-                    scanAndTranslateVisibleMessages(event.source)
+                if (translationMode == AppDefaults.MODE_ALL) {
+                    scanJob?.cancel()
+                    scanJob = serviceScope.launch {
+                        delay(16)
+                        scanAndTranslateVisibleMessages(event.source)
+                    }
+                }
+            }
+            AccessibilityEvent.TYPE_VIEW_CLICKED -> {
+                if (translationMode == AppDefaults.MODE_TAP) {
+                    handleMessageClicked(event.source)
                 }
             }
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
@@ -244,10 +261,12 @@ class TranslationAccessibilityService : AccessibilityService() {
                 } else if (isKeyboardTranslatorEnabled) {
                     handleOutgoingTyping()
                 }
-                scanJob?.cancel()
-                scanJob = serviceScope.launch {
-                    delay(40)
-                    scanAndTranslateVisibleMessages(event.source)
+                if (translationMode == AppDefaults.MODE_ALL) {
+                    scanJob?.cancel()
+                    scanJob = serviceScope.launch {
+                        delay(40)
+                        scanAndTranslateVisibleMessages(event.source)
+                    }
                 }
             }
             AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED,
@@ -262,6 +281,8 @@ class TranslationAccessibilityService : AccessibilityService() {
     }
 
     private fun startActiveScanning() {
+        if (translationMode != AppDefaults.MODE_ALL) return
+
         activeScanLoopJob?.cancel()
         activeScanLoopJob = serviceScope.launch {
             // Immediate rapid scans
@@ -928,39 +949,99 @@ class TranslationAccessibilityService : AccessibilityService() {
         text: String,
         onResult: (String?) -> Unit
     ) {
-        val key = "$sourceLang-$targetLang"
-        val translator = TranslatorPool.get(sourceLang, targetLang)
-        val conditions = com.google.mlkit.common.model.DownloadConditions.Builder().build()
-
-        translator.downloadModelIfNeeded(conditions)
-            .addOnSuccessListener {
-                translator.translate(text)
-                    .addOnSuccessListener { translated ->
-                        onResult(translated)
-                    }
-                    .addOnFailureListener { e ->
-                        Log.e("Translator", "ML Kit translation failed for: $text", e)
-                        onResult(null)
-                    }
-            }
-            .addOnFailureListener { e ->
-                Log.e("Translator", "ML Kit model download failed for $key", e)
-                mainHandler.post {
-                    Toast.makeText(this, "⚠️ Model download failed. Check internet connection.", Toast.LENGTH_SHORT).show()
-                }
-                onResult(null)
-            }
+        // Por qué: Usa el motor híbrido (Gemini si hay clave, o ML Kit local) de manera asíncrona
+        serviceScope.launch {
+            val result = hybridEngine.translate(text, sourceLang, targetLang)
+            onResult(result)
+        }
     }
 
     private suspend fun translateTextAsync(
         sourceLang: String,
         targetLang: String,
         text: String
-    ): String? = suspendCancellableCoroutine { continuation ->
-        translateText(sourceLang, targetLang, text) { result ->
-            if (continuation.isActive) {
-                continuation.resume(result)
+    ): String? {
+        return hybridEngine.translate(text, sourceLang, targetLang)
+    }
+
+    /**
+     * Traduce únicamente el mensaje específico sobre el que el usuario ha pulsado.
+     * Por qué: Proporciona la experiencia 'Tap to Translate', evitando cubrir toda la pantalla con overlays
+     * y permitiendo traducir con alta fidelidad solo el texto seleccionado.
+     */
+    private fun handleMessageClicked(sourceNode: AccessibilityNodeInfo?) {
+        if (!ServiceBridge.isTranslatingActive) return
+        if (sourceNode == null) return
+
+        try {
+            var nodeWithText: AccessibilityNodeInfo = sourceNode
+            var text = nodeWithText.text?.toString() ?: ""
+
+            if (text.isBlank() && sourceNode.childCount > 0) {
+                for (i in 0 until sourceNode.childCount) {
+                    val child = sourceNode.getChild(i) ?: continue
+                    val childText = child.text?.toString() ?: ""
+                    if (childText.isNotBlank()) {
+                        nodeWithText = child
+                        text = childText
+                        break
+                    }
+                }
             }
+
+            if (text.isBlank()) return
+            val cleanText = TranslationFilter.cleanMessageText(text).trim()
+            if (cleanText.isBlank() || !cleanText.any { it.isLetter() }) return
+
+            val rect = Rect()
+            nodeWithText.getBoundsInScreen(rect)
+            val screenWidth = resources.displayMetrics.widthPixels
+            if (!TranslationSenseEngine.isMessageBubble(rect, screenWidth)) return
+
+            val script = TextNormalizer.detectScriptType(cleanText)
+            val msgSource: String
+            val msgTarget: String
+
+            when (script) {
+                TextNormalizer.ScriptType.GREEK -> {
+                    msgSource = TranslateLanguage.GREEK
+                    msgTarget = TranslateLanguage.ROMANIAN
+                }
+                TextNormalizer.ScriptType.LATIN -> {
+                    msgSource = TranslateLanguage.ROMANIAN
+                    msgTarget = TranslateLanguage.GREEK
+                }
+                TextNormalizer.ScriptType.NEUTRAL -> {
+                    msgSource = configuredSource
+                    msgTarget = configuredTarget
+                }
+            }
+
+            val normalizedText = if (msgSource == TranslateLanguage.ROMANIAN) {
+                TextNormalizer.restoreRomanianDiacritics(cleanText)
+            } else {
+                cleanText
+            }
+            val protected = TextNormalizer.protectEmojis(normalizedText)
+
+            serviceScope.launch {
+                val translated = hybridEngine.translate(protected.text, msgSource, msgTarget)
+                if (!translated.isNullOrBlank()) {
+                    val restored = TextNormalizer.restoreEmojis(translated, protected.tokens)
+                    val corrected = TranslationSenseEngine.applyPostTranslationSenseLogic(
+                        originalText = normalizedText,
+                        translatedText = restored,
+                        sourceLang = msgSource,
+                        targetLang = msgTarget
+                    )
+                    val targetCode = if (msgTarget == TranslateLanguage.GREEK) "EL" else "RO"
+                    mainHandler.post {
+                        overlayManager.showSingleMessagePill(rect, corrected, targetCode)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("Translator", "Error handling clicked message", e)
         }
     }
 

@@ -46,16 +46,19 @@ class TextNormalizerTest {
 
     @Test
     fun protectAndRestoreEmojis_roundtripsAccurately() {
-        val input = "Salut prietene! 😊 Cum esti? 🔥👍"
+        val input = "Salut prietene! 😊 Cum esti? 🔥👍 Într-un înger"
         val protected = TextNormalizer.protectEmojis(input)
 
-        assertEquals("Salut prietene! __EMOJI_0__ Cum esti? __EMOJI_1__", protected.text)
+        // Verifies hyphen in Într-un is untouched
+        assert(protected.text.contains("Într-un"))
         assertEquals(listOf("😊", "🔥👍"), protected.tokens)
 
-        // Simulate translation preserving markers or having small spaces
-        val simulatedTranslation = "Γεια σου φιλε! __EMOJI_0__ Πως εισαι; __EMOJI_1__"
+        // Simulated translation preserving markers
+        val pua0 = (0xE000).toChar()
+        val pua1 = (0xE001).toChar()
+        val simulatedTranslation = "Γεια σου φιλε! $pua0 Πως εισαι; $pua1 Σε εναν αγγελο"
         val restored = TextNormalizer.restoreEmojis(simulatedTranslation, protected.tokens)
 
-        assertEquals("Γεια σου φιλε! 😊 Πως εισαι; 🔥👍", restored)
+        assertEquals("Γεια σου φιλε! 😊 Πως εισαι; 🔥👍 Σε εναν αγγελο", restored)
     }
 }

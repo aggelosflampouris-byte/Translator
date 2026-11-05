@@ -2,7 +2,7 @@
 <!-- Por qué: Delimitar estrictamente los paquetes a WhatsApp para evitar monitorear otras apps y cumplir las políticas de privacidad y seguridad de Play Protect -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:packageNames="com.whatsapp,com.whatsapp.w4b"
-    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewTextChanged|typeViewScrolled|typeViewFocused"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewTextChanged|typeViewScrolled|typeViewFocused|typeViewClicked"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews|flagReportViewIds"
     android:canRetrieveWindowContent="true"

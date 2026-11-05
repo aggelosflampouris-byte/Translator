@@ -73,6 +73,60 @@ fun MainScreen(
   var keyboardTranslatorEnabled by remember {
       mutableStateOf(prefs.getBoolean(AppDefaults.KEY_KEYBOARD_ENABLED, false))
   }
+  var translationMode by remember {
+      mutableStateOf(prefs.getString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_TAP) ?: AppDefaults.MODE_TAP)
+  }
+  var geminiApiKey by remember {
+      mutableStateOf(prefs.getString(AppDefaults.KEY_GEMINI_API_KEY, "") ?: "")
+  }
+  var showApiKeyDialog by remember { mutableStateOf(false) }
+  var tempApiKey by remember { mutableStateOf("") }
+
+  if (showApiKeyDialog) {
+      AlertDialog(
+          onDismissRequest = { showApiKeyDialog = false },
+          title = { Text("Gemini AI Translation Key") },
+          text = {
+              Column {
+                  Text(
+                      "Enter your free Google AI Studio key to unlock human-grade conversational translation with slang, idioms, and swear words (100% free, 1,500 messages/day). Leave empty to use offline ML Kit.",
+                      style = MaterialTheme.typography.bodySmall,
+                      color = MaterialTheme.colorScheme.onSurfaceVariant
+                  )
+                  Spacer(modifier = Modifier.height(12.dp))
+                  OutlinedTextField(
+                      value = tempApiKey,
+                      onValueChange = { tempApiKey = it },
+                      label = { Text("API Key") },
+                      placeholder = { Text("AIzaSy...") },
+                      singleLine = true,
+                      modifier = Modifier.fillMaxWidth()
+                  )
+                  Spacer(modifier = Modifier.height(8.dp))
+                  TextButton(
+                      onClick = {
+                          val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://aistudio.google.com/app/apikey")).apply {
+                              addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                          }
+                          context.startActivity(intent)
+                      }
+                  ) {
+                      Text("Get Free API Key on Google AI Studio ↗")
+                  }
+              }
+          },
+          confirmButton = {
+              TextButton(onClick = {
+                  geminiApiKey = tempApiKey.trim()
+                  prefs.edit().putString(AppDefaults.KEY_GEMINI_API_KEY, geminiApiKey).apply()
+                  showApiKeyDialog = false
+              }) { Text("Save") }
+          },
+          dismissButton = {
+              TextButton(onClick = { showApiKeyDialog = false }) { Text("Cancel") }
+          }
+      )
+  }
 
   val supportedLanguages = remember { com.google.mlkit.nl.translate.TranslateLanguage.getAllLanguages() }
   var modelStatus by remember { mutableStateOf("Checking language models...") }
@@ -264,6 +318,116 @@ fun MainScreen(
                       style = MaterialTheme.typography.bodySmall,
                       color = MaterialTheme.colorScheme.onSurfaceVariant
                   )
+              }
+          }
+      }
+
+      Spacer(modifier = Modifier.height(16.dp))
+
+      // Modo de interacción para traducción de mensajes
+      OutlinedCard(
+          modifier = Modifier.fillMaxWidth(),
+          shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+          colors = CardDefaults.outlinedCardColors(
+              containerColor = MaterialTheme.colorScheme.surface
+          )
+      ) {
+          Column(modifier = Modifier.padding(16.dp)) {
+              Text(
+                  text = "Chat Translation Mode",
+                  style = MaterialTheme.typography.titleMedium,
+                  color = MaterialTheme.colorScheme.onSurface
+              )
+              Spacer(modifier = Modifier.height(6.dp))
+              Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.SpaceBetween
+              ) {
+                  Column(modifier = Modifier.weight(1f)) {
+                      Text(
+                          text = if (translationMode == AppDefaults.MODE_TAP) "Tap to Translate (Recommended)" else "Auto-Translate All",
+                          style = MaterialTheme.typography.bodyMedium,
+                          color = MaterialTheme.colorScheme.onSurface
+                      )
+                      Spacer(modifier = Modifier.height(2.dp))
+                      Text(
+                          text = if (translationMode == AppDefaults.MODE_TAP)
+                              "Tap any message in WhatsApp to see its translation pill. Leaves timestamps and other messages clean."
+                          else
+                              "Overlays translations on all visible messages automatically.",
+                          style = MaterialTheme.typography.bodySmall,
+                          color = MaterialTheme.colorScheme.onSurfaceVariant
+                      )
+                  }
+                  Spacer(modifier = Modifier.width(12.dp))
+                  Switch(
+                      checked = translationMode == AppDefaults.MODE_TAP,
+                      onCheckedChange = { isTap ->
+                          translationMode = if (isTap) AppDefaults.MODE_TAP else AppDefaults.MODE_ALL
+                          prefs.edit().putString(AppDefaults.KEY_TRANSLATE_MODE, translationMode).apply()
+                      }
+                  )
+              }
+          }
+      }
+
+      Spacer(modifier = Modifier.height(16.dp))
+
+      // Motor de inteligencia artificial para comprensión conversacional y jerga
+      OutlinedCard(
+          modifier = Modifier.fillMaxWidth(),
+          shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+          colors = CardDefaults.outlinedCardColors(
+              containerColor = MaterialTheme.colorScheme.surface
+          )
+      ) {
+          Row(
+              modifier = Modifier
+                  .fillMaxWidth()
+                  .padding(16.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween
+          ) {
+              Column(modifier = Modifier.weight(1f)) {
+                  Row(verticalAlignment = Alignment.CenterVertically) {
+                      Text(
+                          text = "AI Slang & Logic",
+                          style = MaterialTheme.typography.titleMedium,
+                          color = MaterialTheme.colorScheme.onSurface
+                      )
+                      Spacer(modifier = Modifier.width(8.dp))
+                      Surface(
+                          shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
+                          color = if (geminiApiKey.isNotBlank()) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                      ) {
+                          Text(
+                              text = if (geminiApiKey.isNotBlank()) "Gemini Flash" else "ML Kit Offline",
+                              style = MaterialTheme.typography.labelSmall,
+                              color = if (geminiApiKey.isNotBlank()) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                              modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                          )
+                      }
+                  }
+                  Spacer(modifier = Modifier.height(2.dp))
+                  Text(
+                      text = if (geminiApiKey.isNotBlank())
+                          "Using Gemini 1.5 Flash for natural slang, swear words & idioms"
+                      else
+                          "Using basic on-device dictionary. Add free API key for conversational AI.",
+                      style = MaterialTheme.typography.bodySmall,
+                      color = MaterialTheme.colorScheme.onSurfaceVariant
+                  )
+              }
+              Spacer(modifier = Modifier.width(12.dp))
+              OutlinedButton(
+                  onClick = {
+                      tempApiKey = geminiApiKey
+                      showApiKeyDialog = true
+                  },
+                  contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+              ) {
+                  Text(if (geminiApiKey.isNotBlank()) "Edit Key" else "Set Key", style = MaterialTheme.typography.labelMedium)
               }
           }
       }

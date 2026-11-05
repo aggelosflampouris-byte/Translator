@@ -489,6 +489,119 @@ class OverlayManager(private val context: Context) {
         }
     }
 
+    private var singlePillView: View? = null
+    var currentSinglePillBounds: Rect? = null
+        private set
+
+    /**
+     * Muestra una pastilla flotante compacta para un mensaje específico seleccionado al tocarlo.
+     * Por qué: Evita saturar la pantalla con 20 overlays simultáneos; el usuario traduce exactamente
+     * el mensaje que desea leer con formato claro y acciones rápidas (Copiar / Cerrar).
+     */
+    fun showSingleMessagePill(
+        targetRect: Rect,
+        translatedText: String,
+        targetLangCode: String = "EL",
+        onDismiss: () -> Unit = {}
+    ) {
+        if (translatedText.isBlank()) {
+            removeSingleMessagePill()
+            return
+        }
+
+        val metrics = context.resources.displayMetrics
+        val screenWidth = metrics.widthPixels
+        val density = metrics.density
+
+        val view = singlePillView ?: inflater.inflate(R.layout.single_message_pill_overlay, null)
+
+        val badgeView = view.findViewById<TextView>(R.id.pill_badge)
+        val textView = view.findViewById<TextView>(R.id.pill_translated_text)
+        val copyBtn = view.findViewById<View>(R.id.pill_btn_copy)
+        val closeBtn = view.findViewById<View>(R.id.pill_btn_close)
+
+        badgeView.text = "⇄ $targetLangCode"
+        textView.text = translatedText
+
+        copyBtn.setOnClickListener {
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Translation", translatedText))
+            android.widget.Toast.makeText(context, "Copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
+        }
+
+        closeBtn.setOnClickListener {
+            removeSingleMessagePill()
+            onDismiss()
+        }
+
+        val maxWidth = (screenWidth * 0.88f).toInt()
+        view.measure(
+            View.MeasureSpec.makeMeasureSpec(maxWidth, View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+        )
+        val pillWidth = view.measuredWidth.coerceAtLeast((180 * density).toInt())
+        val pillHeight = view.measuredHeight
+
+        val posX = targetRect.left.coerceIn((12 * density).toInt(), (screenWidth - pillWidth - (12 * density).toInt()).coerceAtLeast((12 * density).toInt()))
+        val posY = if (targetRect.top - pillHeight - (8 * density).toInt() > (48 * density).toInt()) {
+            targetRect.top - pillHeight - (8 * density).toInt()
+        } else {
+            targetRect.bottom + (8 * density).toInt()
+        }
+
+        val pillBounds = Rect(posX, posY, posX + pillWidth, posY + pillHeight)
+        currentSinglePillBounds = pillBounds
+
+        val params = WindowManager.LayoutParams(
+            pillWidth,
+            pillHeight,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = posX
+            y = posY
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            }
+        }
+
+        if (singlePillView == null) {
+            try {
+                windowManager.addView(view, params)
+                singlePillView = view
+            } catch (e: Exception) {
+                try {
+                    params.type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                    windowManager.addView(view, params)
+                    singlePillView = view
+                } catch (e2: Exception) {
+                    android.util.Log.e("Translator", "Failed to add single pill overlay", e2)
+                }
+            }
+        } else {
+            try {
+                windowManager.updateViewLayout(view, params)
+            } catch (e: Exception) {
+                // Ignore
+            }
+        }
+    }
+
+    fun removeSingleMessagePill() {
+        currentSinglePillBounds = null
+        singlePillView?.let {
+            try {
+                windowManager.removeView(it)
+            } catch (e: Exception) {
+                // Ignore
+            }
+            singlePillView = null
+        }
+    }
+
     @Synchronized
     fun removeAllMessageOverlays() {
         for (bubble in activeBubbles.values) {
@@ -499,10 +612,12 @@ class OverlayManager(private val context: Context) {
             }
         }
         activeBubbles.clear()
+        removeSingleMessagePill()
     }
 
     fun removeAllOverlays() {
         removeAllMessageOverlays()
         removeDraftOverlay()
+        removeSingleMessagePill()
     }
 }

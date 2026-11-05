@@ -139,12 +139,10 @@ object TextNormalizer {
 
     // ── Emoji & Token Protection ───────────────────────────────────────────────
 
-    // Matches emoji surrogate pairs, symbols, and variation selectors
+    // Por qué: Usamos rangos hex de puntos de código suplementarios para evitar colisiones con el guión ASCII '-'
     private val EMOJI_PATTERN: Pattern = Pattern.compile(
-        """[\uD83C-\uDBFF\uDC00-\uDFFF]+|[\u2600-\u27BF\uFE00-\uFE0F\u200D]+"""
+        """[\x{1F300}-\x{1F9FF}\x{2600}-\x{26FF}\x{2700}-\x{27BF}\x{1F1E6}-\x{1F1FF}\x{1F600}-\x{1F64F}\x{1F680}-\x{1F6FF}]+"""
     )
-
-    private val TOKEN_RESTORE_PATTERN = Regex("""__\s*(?:EMOJI|emoji)_(\d+)\s*__""")
 
     data class ProtectedResult(
         val text: String,
@@ -152,8 +150,10 @@ object TextNormalizer {
     )
 
     /**
-     * Enmascara emojis con marcadores textuales seguros (`__EMOJI_0__`) antes de la llamada a ML Kit.
-     * Por qué: Evita que el modelo ML Kit altere, elimine o traduzca erróneamente los emojis.
+     * Enmascara emojis con caracteres de la zona de uso privado de Unicode (PUA: \uE000+) antes de traducir.
+     * Por qué: Los marcadores textuales como '__EMOJI_0__' son interpretados como texto en inglés por los modelos
+     * de ML Kit y eliminados o traducidos (dejando residuos como '___0__'). Los caracteres PUA son opacos y
+     * respetados intactos por cualquier motor de traducción sin alterar palabras compuestas con guión.
      */
     fun protectEmojis(text: String): ProtectedResult {
         val tokens = mutableListOf<String>()
@@ -164,7 +164,8 @@ object TextNormalizer {
             val emoji = matcher.group()
             val tokenIndex = tokens.size
             tokens.add(emoji)
-            matcher.appendReplacement(sb, "__EMOJI_${tokenIndex}__")
+            val puaChar = (0xE000 + tokenIndex).toChar()
+            matcher.appendReplacement(sb, java.util.regex.Matcher.quoteReplacement(puaChar.toString()))
         }
         matcher.appendTail(sb)
 
@@ -172,20 +173,20 @@ object TextNormalizer {
     }
 
     /**
-     * Re-inserts the protected emojis back into their original locations
-     * in the translated output.
+     * Restaura los emojis sustituyendo los caracteres PUA por sus secuencias originales.
      */
     fun restoreEmojis(translatedText: String, tokens: List<String>): String {
         if (tokens.isEmpty()) return translatedText
 
-        return TOKEN_RESTORE_PATTERN.replace(translatedText) { match ->
-            val indexStr = match.groupValues.getOrNull(1)
-            val index = indexStr?.toIntOrNull()
-            if (index != null && index in tokens.indices) {
-                tokens[index]
+        val sb = StringBuilder()
+        for (ch in translatedText) {
+            val idx = ch.code - 0xE000
+            if (idx in tokens.indices) {
+                sb.append(tokens[idx])
             } else {
-                match.value
+                sb.append(ch)
             }
         }
+        return sb.toString()
     }
 }
