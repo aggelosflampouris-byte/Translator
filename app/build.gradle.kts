@@ -40,8 +40,8 @@ android {
         applicationId = "com.example.translator"
         minSdk = 24
         targetSdk = 33
-        versionCode = 53
-        versionName = "1.0.53"
+        versionCode = 54
+        versionName = "1.0.54"
 
         buildConfigField("String", "GEMINI_API_KEY", "\"$envGeminiApiKey\"")
     }

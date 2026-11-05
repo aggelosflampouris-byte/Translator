@@ -76,56 +76,16 @@ fun MainScreen(
   var translationMode by remember {
       mutableStateOf(prefs.getString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_TAP) ?: AppDefaults.MODE_TAP)
   }
-  var geminiApiKey by remember {
-      mutableStateOf(prefs.getString(AppDefaults.KEY_GEMINI_API_KEY, "") ?: "")
+  var aiTranslationEnabled by remember {
+      mutableStateOf(prefs.getBoolean(AppDefaults.KEY_AI_ENABLED, true))
   }
-  var showApiKeyDialog by remember { mutableStateOf(false) }
-  var tempApiKey by remember { mutableStateOf("") }
 
-  if (showApiKeyDialog) {
-      AlertDialog(
-          onDismissRequest = { showApiKeyDialog = false },
-          title = { Text("Gemini AI Translation Key") },
-          text = {
-              Column {
-                  Text(
-                      "Enter your free Google AI Studio key to unlock human-grade conversational translation with slang, idioms, and swear words (100% free, 1,500 messages/day). Leave empty to use offline ML Kit.",
-                      style = MaterialTheme.typography.bodySmall,
-                      color = MaterialTheme.colorScheme.onSurfaceVariant
-                  )
-                  Spacer(modifier = Modifier.height(12.dp))
-                  OutlinedTextField(
-                      value = tempApiKey,
-                      onValueChange = { tempApiKey = it },
-                      label = { Text("API Key") },
-                      placeholder = { Text("AIzaSy...") },
-                      singleLine = true,
-                      modifier = Modifier.fillMaxWidth()
-                  )
-                  Spacer(modifier = Modifier.height(8.dp))
-                  TextButton(
-                      onClick = {
-                          val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://aistudio.google.com/app/apikey")).apply {
-                              addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                          }
-                          context.startActivity(intent)
-                      }
-                  ) {
-                      Text("Get Free API Key on Google AI Studio ↗")
-                  }
-              }
-          },
-          confirmButton = {
-              TextButton(onClick = {
-                  geminiApiKey = tempApiKey.trim()
-                  prefs.edit().putString(AppDefaults.KEY_GEMINI_API_KEY, geminiApiKey).apply()
-                  showApiKeyDialog = false
-              }) { Text("Save") }
-          },
-          dismissButton = {
-              TextButton(onClick = { showApiKeyDialog = false }) { Text("Cancel") }
-          }
-      )
+  // Por qué: Limpia cualquier clave de API que pudiera haber sido guardada previamente en SharedPreferences
+  // para evitar que datos sensibles de autenticación queden en el almacenamiento local.
+  LaunchedEffect(Unit) {
+      if (prefs.contains(AppDefaults.KEY_GEMINI_API_KEY)) {
+          prefs.edit().remove(AppDefaults.KEY_GEMINI_API_KEY).apply()
+      }
   }
 
   val supportedLanguages = remember { com.google.mlkit.nl.translate.TranslateLanguage.getAllLanguages() }
@@ -374,7 +334,8 @@ fun MainScreen(
 
       Spacer(modifier = Modifier.height(16.dp))
 
-      // Motor de inteligencia artificial para comprensión conversacional y jerga
+      // Por qué: Proporciona control de activación para la traducción con IA en la nube sin exponer
+      // jamás la clave de API ni permitir que el usuario visualice credenciales sensibles del desarrollador.
       OutlinedCard(
           modifier = Modifier.fillMaxWidth(),
           shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
@@ -390,7 +351,8 @@ fun MainScreen(
               horizontalArrangement = Arrangement.SpaceBetween
           ) {
               Column(modifier = Modifier.weight(1f)) {
-                  val isAiActive = geminiApiKey.isNotBlank() || BuildConfig.GEMINI_API_KEY.isNotBlank()
+                  val isAiConfigured = BuildConfig.GEMINI_API_KEY.isNotBlank()
+                  val isAiActive = isAiConfigured && aiTranslationEnabled
                   Row(verticalAlignment = Alignment.CenterVertically) {
                       Text(
                           text = "AI Slang & Logic",
@@ -403,7 +365,7 @@ fun MainScreen(
                           color = if (isAiActive) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
                       ) {
                           Text(
-                              text = if (isAiActive) "Gemini Flash" else "ML Kit Offline",
+                              text = if (isAiActive) "Gemini 3.5 Active" else "ML Kit Offline",
                               style = MaterialTheme.typography.labelSmall,
                               color = if (isAiActive) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
                               modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -413,24 +375,22 @@ fun MainScreen(
                   Spacer(modifier = Modifier.height(2.dp))
                   Text(
                       text = if (isAiActive)
-                          "Using Gemini for natural conversational slang, swear words & idioms"
+                          "Using cloud AI for conversational slang, swear words, and contextual logic."
                       else
-                          "Using basic on-device dictionary. Add API key for conversational AI.",
+                          "Using standard offline dictionary translation.",
                       style = MaterialTheme.typography.bodySmall,
                       color = MaterialTheme.colorScheme.onSurfaceVariant
                   )
               }
               Spacer(modifier = Modifier.width(12.dp))
-              val isAiActive = geminiApiKey.isNotBlank() || BuildConfig.GEMINI_API_KEY.isNotBlank()
-              OutlinedButton(
-                  onClick = {
-                      tempApiKey = if (geminiApiKey.isNotBlank()) geminiApiKey else BuildConfig.GEMINI_API_KEY
-                      showApiKeyDialog = true
-                  },
-                  contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-              ) {
-                  Text(if (isAiActive) "Configure" else "Set Key", style = MaterialTheme.typography.labelMedium)
-              }
+              Switch(
+                  checked = aiTranslationEnabled && BuildConfig.GEMINI_API_KEY.isNotBlank(),
+                  enabled = BuildConfig.GEMINI_API_KEY.isNotBlank(),
+                  onCheckedChange = { isChecked ->
+                      aiTranslationEnabled = isChecked
+                      prefs.edit().putBoolean(AppDefaults.KEY_AI_ENABLED, isChecked).apply()
+                  }
+              )
           }
       }
 

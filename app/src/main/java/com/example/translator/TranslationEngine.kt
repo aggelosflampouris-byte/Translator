@@ -73,10 +73,13 @@ class GeminiTranslationEngine(private val apiKey: String) : TranslationEngine {
         )
 
         val jsonBody = gson.toJson(payload)
-        val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=$apiKey"
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent"
 
+        // Por qué: Se envía la clave de API a través del encabezado HTTP 'x-goog-api-key' en lugar de la URL,
+        // garantizando que no quede expuesta en registros de red, proxies ni cachés.
         val request = Request.Builder()
             .url(url)
+            .addHeader("x-goog-api-key", apiKey)
             .post(jsonBody.toRequestBody(jsonMediaType))
             .build()
 
@@ -150,12 +153,12 @@ class HybridTranslationEngine(private val context: Context) : TranslationEngine 
         targetLang: String
     ): String? {
         val prefs = context.getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
-        val userKey = prefs.getString(AppDefaults.KEY_GEMINI_API_KEY, "")?.trim() ?: ""
-        // Por qué: Usa la clave de entorno/build si está presente para no exigir configuración al usuario,
-        // o la clave personalizada si el usuario la suministró explícitamente en la configuración.
-        val apiKey = if (userKey.isNotBlank()) userKey else BuildConfig.GEMINI_API_KEY.trim()
+        val isAiEnabled = prefs.getBoolean(AppDefaults.KEY_AI_ENABLED, true)
+        val apiKey = BuildConfig.GEMINI_API_KEY.trim()
 
-        if (apiKey.isNotBlank()) {
+        // Por qué: Emplea la clave inyectada de forma segura desde las variables de compilación/entorno.
+        // Nunca se consulta ni se almacena la clave en las preferencias del usuario para evitar fugas de seguridad.
+        if (isAiEnabled && apiKey.isNotBlank()) {
             val geminiResult = GeminiTranslationEngine(apiKey).translate(text, sourceLang, targetLang)
             if (!geminiResult.isNullOrBlank()) {
                 return geminiResult
