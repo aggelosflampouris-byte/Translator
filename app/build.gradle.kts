@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.translator"
         minSdk = 24
         targetSdk = 33
-        versionCode = 50
-        versionName = "1.0.50"
+        versionCode = 51
+        versionName = "1.0.51"
     }
 
     signingConfigs {
@@ -98,11 +98,9 @@ dependencies {
   // Coroutines
   implementation(libs.kotlinx.coroutines.android)
 
-  // ML Kit & AI
-  implementation(libs.mlkit.text.recognition)
+  // ML Kit
   implementation(libs.mlkit.language.id)
   implementation(libs.mlkit.translate)
-  implementation(libs.mediapipe.tasks.genai)
 
   // Updater
   implementation(libs.okhttp)

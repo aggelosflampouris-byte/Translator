@@ -104,11 +104,17 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         try {
             val info = serviceInfo ?: android.accessibilityservice.AccessibilityServiceInfo()
+            // Por qué: Restringir a WhatsApp y eventos de texto/desplazamiento para proteger la privacidad del usuario
+            info.packageNames = arrayOf("com.whatsapp", "com.whatsapp.w4b")
             info.flags = info.flags or
                 android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
                 android.accessibilityservice.AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
                 android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
-            info.eventTypes = AccessibilityEvent.TYPES_ALL_MASK
+            info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
+                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
+                AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED or
+                AccessibilityEvent.TYPE_VIEW_SCROLLED or
+                AccessibilityEvent.TYPE_VIEW_FOCUSED
             info.feedbackType = android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_GENERIC
             serviceInfo = info
         } catch (e: Exception) {

@@ -21,7 +21,6 @@ import com.example.translator.AppDefaults
 import com.example.translator.AppUpdater
 import com.example.translator.BuildConfig
 import com.example.translator.FloatingBubbleService
-import com.example.translator.ScreenCaptureService
 import com.example.translator.ServiceBridge
 import com.example.translator.TranslatorPool
 import kotlinx.coroutines.delay
@@ -38,7 +37,6 @@ fun MainScreen(
 
   // ── Update check ──────────────────────────────────────────────────────────
   var pendingUpdate by remember { mutableStateOf<AppUpdater.UpdateInfo?>(null) }
-  var updateError by remember { mutableStateOf<String?>(null) }
 
   LaunchedEffect(Unit) {
       val info = AppUpdater(context).checkForUpdates()
@@ -49,30 +47,18 @@ fun MainScreen(
       AlertDialog(
           onDismissRequest = { pendingUpdate = null },
           title = { Text("Update Available") },
-          text = { Text("Version ${info.version} is available. Download and install now?") },
+          text = { Text("Version ${info.version} is available on GitHub. Open download page?") },
           confirmButton = {
               TextButton(onClick = {
+                  val target = pendingUpdate
                   pendingUpdate = null
-                  AppUpdater(context).downloadAndInstall(
-                      activityContext = context,
-                      updateInfo = info,
-                      onError = { msg -> updateError = msg }
-                  )
-              }) { Text("Update") }
+                  if (target != null) {
+                      AppUpdater(context).openUpdatePage(context, target)
+                  }
+              }) { Text("View Update") }
           },
           dismissButton = {
               TextButton(onClick = { pendingUpdate = null }) { Text("Later") }
-          }
-      )
-  }
-
-  updateError?.let { msg ->
-      AlertDialog(
-          onDismissRequest = { updateError = null },
-          title = { Text("Update Failed") },
-          text = { Text(msg) },
-          confirmButton = {
-              TextButton(onClick = { updateError = null }) { Text("OK") }
           }
       )
   }
@@ -430,7 +416,6 @@ fun MainScreen(
         shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
         onClick = {
             context.stopService(Intent(context, FloatingBubbleService::class.java))
-            context.stopService(Intent(context, ScreenCaptureService::class.java))
         }
       ) {
         Text("Stop Translator", style = MaterialTheme.typography.bodyLarge)
