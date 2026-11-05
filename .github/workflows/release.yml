@@ -31,7 +31,9 @@ jobs:
       - name: Build Release APK
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: ./gradlew assembleRelease --no-daemon
+        run: |
+          export GEMINI_API_KEY="$(echo -n "$GEMINI_API_KEY" | tr -d '\r\n[:space:]')"
+          ./gradlew assembleRelease --no-daemon
 
       - name: Prepare Release Artifact
         run: |

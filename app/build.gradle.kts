@@ -7,16 +7,27 @@ plugins {
   alias(libs.plugins.kotlin.serialization)
 }
 
+fun sanitizeSecret(raw: String?): String {
+    if (raw == null) return ""
+    // Por qué: Elimina saltos de línea (\r, \n), comillas residuales y espacios en blanco
+    // para evitar literales de cadena sin cerrar en la generación de BuildConfig.java.
+    return raw.trim()
+        .replace("\r", "")
+        .replace("\n", "")
+        .trim('"', '\'')
+        .trim()
+}
+
 val envGeminiApiKey: String = run {
     // 1. Variable de entorno del sistema (para CI/CD como GitHub Actions)
-    System.getenv("GEMINI_API_KEY")?.takeIf { it.isNotBlank() }?.let { return@run it }
+    sanitizeSecret(System.getenv("GEMINI_API_KEY")).takeIf { it.isNotBlank() }?.let { return@run it }
 
     // 2. local.properties (ignorado por git en entorno de desarrollo local)
     val localProps = Properties()
     val localPropsFile = rootProject.file("local.properties")
     if (localPropsFile.exists()) {
         localProps.load(FileInputStream(localPropsFile))
-        localProps.getProperty("GEMINI_API_KEY")?.takeIf { it.isNotBlank() }?.let { return@run it }
+        sanitizeSecret(localProps.getProperty("GEMINI_API_KEY")).takeIf { it.isNotBlank() }?.let { return@run it }
     }
 
     // 3. Archivo .env en la raíz del proyecto (ignorado por git)
@@ -25,7 +36,7 @@ val envGeminiApiKey: String = run {
         envFile.readLines().forEach { line ->
             val trimmed = line.trim()
             if (trimmed.startsWith("GEMINI_API_KEY=")) {
-                val value = trimmed.substringAfter("GEMINI_API_KEY=").trim().trim('"', '\'')
+                val value = sanitizeSecret(trimmed.substringAfter("GEMINI_API_KEY="))
                 if (value.isNotBlank()) return@run value
             }
         }
@@ -40,10 +51,11 @@ android {
         applicationId = "com.example.translator"
         minSdk = 24
         targetSdk = 33
-        versionCode = 54
-        versionName = "1.0.54"
+        versionCode = 55
+        versionName = "1.0.55"
 
-        buildConfigField("String", "GEMINI_API_KEY", "\"$envGeminiApiKey\"")
+        val safeApiKey = envGeminiApiKey.replace("\\", "\\\\").replace("\"", "\\\"")
+        buildConfigField("String", "GEMINI_API_KEY", "\"$safeApiKey\"")
     }
 
     signingConfigs {
