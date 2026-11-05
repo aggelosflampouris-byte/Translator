@@ -44,9 +44,18 @@ class TranslationFilterTest {
 
     @Test
     fun shouldTranslate_acceptsValidForeignMessages() {
-        assertTrue(TranslationFilter.shouldTranslate("La mulți ani și un An Nou fericit, Angelos.", TranslateLanguage.GREEK))
-        assertTrue(TranslationFilter.shouldTranslate("Ce faci prietene?", TranslateLanguage.GREEK))
-        assertTrue(TranslationFilter.shouldTranslate("How are you doing today?", TranslateLanguage.GREEK))
+        assertTrue(TranslationFilter.shouldTranslate("La mulți ani și un An Nou fericit, Angelos.", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN))
+        assertTrue(TranslationFilter.shouldTranslate("Ce faci prietene?", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN))
+        assertTrue(TranslationFilter.shouldTranslate("se depun la secretariat urmatoarele: Cerere Borderou completat și semnat", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN))
+    }
+
+    // Por qué: Verifica que los textos en inglés (como ofertas de trabajo o mensajes en inglés)
+    // sean estrictamente ignorados cuando el idioma de origen configurado es rumano.
+    @Test
+    fun shouldTranslate_rejectsEnglishMessagesWhenSourceIsRomanian() {
+        assertFalse(TranslationFilter.shouldTranslate("How are you doing today?", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN))
+        assertFalse(TranslationFilter.shouldTranslate("Game Presenters with Greek Language. No experience Needed. Good knowledge.", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN))
+        assertFalse(TranslationFilter.shouldTranslate("900€ Monthly Salary (net) (4500 RON). 300€ relocation bonus.", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN))
     }
 
     @Test

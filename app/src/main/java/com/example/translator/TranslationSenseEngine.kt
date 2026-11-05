@@ -25,7 +25,17 @@ object TranslationSenseEngine {
         "or", "an", "will", "my", "one", "all", "would", "there", "their", "what",
         "driving", "directions", "live", "traffic", "road", "conditions", "updates",
         "realtime", "waze", "fellow", "drivers", "destination", "route", "share",
-        "get", "based", "today", "yesterday", "message", "type", "call", "audio"
+        "get", "based", "today", "yesterday", "message", "type", "call", "audio",
+        "is", "are", "was", "were", "been", "has", "had", "can", "could", "should",
+        "our", "your", "who", "which", "when", "where", "why", "how", "so", "up",
+        "out", "if", "about", "into", "just", "very", "much", "more", "now", "see",
+        "look", "come", "its", "over", "also", "back", "after", "use", "two", "work",
+        "first", "even", "new", "want", "because", "any", "these", "give", "day", "days",
+        "week", "weeks", "month", "months", "year", "years", "time", "no", "yes", "please",
+        "thanks", "thank", "job", "offer", "experience", "needed", "salary", "bonus", "payment",
+        "language", "written", "speaking", "good", "knowledge", "tickets", "contract", "training",
+        "team", "activities", "hours", "nightshift", "overtime", "holidays", "weekends", "subscription",
+        "public", "transportation", "medical", "clinic", "private", "relocation", "period", "paid"
     )
 
     val COMMON_ROMANIAN_WORDS = setOf(
@@ -39,7 +49,14 @@ object TranslationSenseEngine {
         "ingerule", "îngerule", "frumusețe", "hai", "pa", "pup", "te pup", "om", "oameni",
         "totul", "tot", "mesaj", "mesaje", "mesajul", "scuze", "noroc", "sanatate", "sănătate",
         "vorbim", "sigur", "desigur", "bineinteles", "bineînțeles", "perfect", "bravo",
-        "trebuie", "vino", "stai", "asteapta", "așteaptă", "poate", "cred"
+        "trebuie", "vino", "stai", "asteapta", "așteaptă", "poate", "cred",
+        "se", "depun", "secretariat", "urmatoarele", "următoarele", "cerere", "borderou",
+        "completat", "semnat", "titular", "chitantele", "chitanțele", "copie", "xerox",
+        "dupa", "după", "cardul", "termen", "depunere", "ultima", "saptamana", "săptămână",
+        "fiecarui", "semestru", "acasa", "acasă", "bani", "loc", "treaba", "treabă", "drum",
+        "masina", "mașină", "casa", "casă", "facem", "vedem", "cand", "când", "daca", "dacă",
+        "dar", "sau", "adica", "adică", "deja", "inca", "încă", "foarte", "mult", "puțin", "putin",
+        "astazi", "astăzi", "aseara", "aseară", "dimineata", "dimineață", "zi", "zile"
     )
 
     private val GENERIC_ROMANCE_PREPOSITIONS = setOf("de", "in", "e", "a", "la")
@@ -71,12 +88,15 @@ object TranslationSenseEngine {
      * Enforces strict source-language eligibility.
      * Ensures only text genuinely written in [sourceLang] is translated,
      * and strictly rejects English preview cards, Greek text, and web links.
+     * Por qué: Se adhiere estrictamente al idioma de origen configurado (rumano),
+     * rechazando ofertas laborales, mensajes reenviados y textos en inglés para evitar
+     * traducirlos erróneamente o producir superposiciones inglés-inglés.
      */
     fun isEligibleSourceText(
         text: String,
         sourceLang: String,
         targetLang: String,
-        candidates: List<IdentifiedLanguage>
+        identifiedLang: String? = null
     ): Boolean {
         val clean = TranslationFilter.cleanMessageText(text).trim()
         if (clean.length < 2) return false
@@ -97,76 +117,71 @@ object TranslationSenseEngine {
 
         // Tokenize words for vocabulary inspection
         val words = clean.lowercase().split(Regex("""[^a-zăâîșț]+""")).filter { it.isNotBlank() }
-
-        // Reject if English tokens dominate
         val englishTokenCount = words.count { COMMON_ENGLISH_TOKENS.contains(it) }
         val romanianTokenCount = words.count { COMMON_ROMANIAN_WORDS.contains(it) }
 
+        // Reject if identified language from ML Kit is explicitly non-source (e.g. English "en", Spanish "es", etc.)
+        if (identifiedLang != null && identifiedLang != "und") {
+            if (sourceLang == TranslateLanguage.ROMANIAN && identifiedLang != TranslateLanguage.ROMANIAN) {
+                if (!clean.any { it in "ăâîșțĂÂÎȘȚ" }) {
+                    return false
+                }
+            }
+        }
+
+        // Reject if English tokens are dominant and there are no Romanian diacritics
         if (englishTokenCount >= 2 && romanianTokenCount == 0 && !clean.any { it in "ăâîșțĂÂÎȘȚ" }) {
             return false
         }
 
-        // Check ML Kit candidate classifications if present
-        val englishCandidate = candidates.firstOrNull { it.languageTag == "en" }
-        if (englishCandidate != null && englishCandidate.confidence >= 0.30f && romanianTokenCount == 0 && !clean.any { it in "ăâîșțĂÂÎȘȚ" }) {
-            return false
-        }
-
         if (sourceLang == TranslateLanguage.ROMANIAN) {
-            // 1. Definite Romanian diacritics
+            // 1. Definite Romanian diacritics (unmistakably Romanian)
             if (clean.any { it in "ăâîșțĂÂÎȘȚ" }) return true
 
-            // 2. Specific Romanian vocabulary (excluding generic Romance prepositions like "de", "in", "e", "a", "la")
+            // 2. Specific Romanian vocabulary (excluding generic Romance prepositions)
             val specificRomanianTokens = words.count { COMMON_ROMANIAN_WORDS.contains(it) && !GENERIC_ROMANCE_PREPOSITIONS.contains(it) }
             if (specificRomanianTokens > 0) {
-                val strongNonRomanian = candidates.firstOrNull { (it.languageTag == "en" || it.languageTag == "la") && it.confidence >= 0.70f }
-                if (strongNonRomanian == null && englishTokenCount < 2) {
+                if (englishTokenCount < 2) {
                     return true
                 }
             }
 
-            // 3. Reject generic Romance prepositions alone (e.g. "de" in "Clamavi de Profundis")
-            val hasOnlyGenericPrepositions = romanianTokenCount > 0 && specificRomanianTokens == 0
-            if (hasOnlyGenericPrepositions) {
+            // 3. Reject if English tokens outnumber Romanian tokens
+            if (englishTokenCount > 0 && romanianTokenCount == 0) {
                 return false
             }
 
-            // 4. Reject known non-Romanian languages identified by ML Kit (Latin, English, Spanish, Italian, etc.)
-            val nonRomanianCandidate = candidates.firstOrNull {
-                it.languageTag in setOf("la", "en", "es", "it", "fr", "pt", "de") && it.confidence >= 0.35f
-            }
-            if (nonRomanianCandidate != null) {
-                return false
-            }
-
-            // 5. ML Kit explicit Romanian identification
-            val roCandidate = candidates.firstOrNull { it.languageTag == "ro" || it.languageTag == "ron" }
-            if (roCandidate != null && roCandidate.confidence >= 0.25f) {
+            // 4. ML Kit explicit Romanian identification
+            if (identifiedLang == TranslateLanguage.ROMANIAN || identifiedLang == "ron") {
                 return true
             }
 
-            // 6. Multi-word sentences in Latin script without conflicting languages
-            val latinLetters = clean.count { it in 'a'..'z' || it in 'A'..'Z' }
-            if (latinLetters >= 4 && words.size >= 2) {
-                val conflictingLang = candidates.firstOrNull {
-                    it.languageTag != TranslateLanguage.ROMANIAN && it.languageTag != "und" && it.confidence >= 0.50f
-                }
-                if (conflictingLang == null && englishTokenCount < 2 && candidates.none { it.languageTag == "la" && it.confidence >= 0.25f }) {
-                    return true
-                }
+            // 5. If text has at least 1 specific Romanian token (excluding generic prepositions like "de", "in", "e", "a", "la")
+            if (specificRomanianTokens > 0 && englishTokenCount == 0) {
+                return true
             }
 
+            // Por qué: Si es texto en alfabeto latino pero no contiene diacríticos rumanos,
+            // ni vocabulario rumano reconocido, se rechaza estrictamente para apegarse al rumano.
             return false
         }
 
         if (sourceLang == TranslateLanguage.GREEK) {
             val greekLetters = clean.count { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }
-            if (greekLetters > 0) return true
+            return greekLetters > 0
         }
 
-        // Generic fallback for other configured source languages
-        val matchingCandidate = candidates.firstOrNull { it.languageTag == sourceLang }
-        return matchingCandidate != null && matchingCandidate.confidence >= 0.20f
+        return true
+    }
+
+    fun isEligibleSourceText(
+        text: String,
+        sourceLang: String,
+        targetLang: String,
+        candidates: List<IdentifiedLanguage>
+    ): Boolean {
+        val topCandidate = candidates.maxByOrNull { it.confidence }?.languageTag
+        return isEligibleSourceText(text, sourceLang, targetLang, topCandidate)
     }
 
     /**

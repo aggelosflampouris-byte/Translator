@@ -64,7 +64,11 @@ object TranslationFilter {
      * Determines whether a recognized text snippet is a candidate for translation
      * or should be discarded (e.g. URLs, timestamps, UI chrome, battery, target-language script).
      */
-    fun shouldTranslate(text: String, configuredTarget: String): Boolean {
+    fun shouldTranslate(
+        text: String,
+        configuredTarget: String,
+        configuredSource: String = TranslateLanguage.ROMANIAN
+    ): Boolean {
         val cleaned = cleanMessageText(text)
         val trimmed = cleaned.trim()
         if (trimmed.length < 2) return false
@@ -130,6 +134,14 @@ object TranslationFilter {
             val greekCharCount = trimmed.count { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }
             val latinCharCount = trimmed.count { it in 'a'..'z' || it in 'A'..'Z' || it in "ăâîșțĂÂÎȘȚ" }
             if (greekCharCount > 0 && greekCharCount >= latinCharCount) {
+                return false
+            }
+        }
+
+        // Por qué: Valida estrictamente que el texto sea eligible como idioma de origen (ej. rumano),
+        // descartando ofertas de trabajo o mensajes en inglés para no traducirlos erróneamente a inglés.
+        if (configuredSource != "AUTO") {
+            if (!TranslationSenseEngine.isEligibleSourceText(trimmed, configuredSource, configuredTarget)) {
                 return false
             }
         }

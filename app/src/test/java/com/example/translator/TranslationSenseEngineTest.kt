@@ -513,5 +513,59 @@ class TranslationSenseEngineTest {
         )
         assertNull(longGreek)
     }
+
+    // Por qué: Verifica que ofertas laborales o mensajes en inglés sean estrictamente rechazados
+    // cuando el idioma de origen configurado es rumano, evitando traducir inglés a inglés.
+    @Test
+    fun isEligibleSourceText_strictlyRejectsEnglishJobOfferWhenSourceIsRomanian() {
+        val jobOfferEnglish = """
+            Game Presenters with Greek Language
+            No experience Needed
+            Good knowledge (written and speaking) of Greek Language
+            900€ Monthly Salary (net) (4500 RON)
+            90€ performance bonus (450 RON)
+            120€ meal tickets (600 RON)
+            300€ relocation bonus (One time payment)
+            Nightshift bonus (25%), overtime (75%), bank holidays(100%) weekends(5%).
+            Public transportation subscription
+            Unidentified period contract
+            Christmas, Easter bonus
+            Private Clinic Medical Subscription
+            3 weeks paid training
+            Team activities
+        """.trimIndent()
+
+        assertFalse(
+            TranslationSenseEngine.isEligibleSourceText(
+                jobOfferEnglish,
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
+                emptyList()
+            )
+        )
+    }
+
+    // Por qué: Verifica que los mensajes genuinos en rumano sean aceptados para su traducción al griego.
+    @Test
+    fun isEligibleSourceText_acceptsRomanianSubmissionText() {
+        val romanianText = """
+            se depun la secretariat urmatoarele:
+            Cerere
+            Borderou completat și semnat de titular
+            Chitanțele STB
+            Copie xerox după cardul STB
+            Termen de depunere la secretariat:
+            ultima saptamana a fiecarui semestru
+        """.trimIndent()
+
+        assertTrue(
+            TranslationSenseEngine.isEligibleSourceText(
+                romanianText,
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
+                emptyList()
+            )
+        )
+    }
 }
 

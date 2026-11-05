@@ -509,6 +509,17 @@ class TranslationAccessibilityService : AccessibilityService() {
             val msgTarget = configuredTarget
 
             serviceScope.launch {
+                val detectedLang = identifyLanguageAsync(cleanText)
+                val isEligible = TranslationSenseEngine.isEligibleSourceText(
+                    text = cleanText,
+                    sourceLang = msgSource,
+                    targetLang = msgTarget,
+                    identifiedLang = detectedLang
+                )
+                if (!isEligible) {
+                    return@launch
+                }
+
                 val normalizedText = if (msgSource == TranslateLanguage.ROMANIAN) {
                     TextNormalizer.restoreRomanianDiacritics(cleanText)
                 } else {
@@ -525,6 +536,16 @@ class TranslationAccessibilityService : AccessibilityService() {
                         sourceLang = msgSource,
                         targetLang = msgTarget
                     )
+
+                    // Por qué: Si la traducción resultante es idéntica al texto original (ej. inglés a inglés)
+                    // o no contiene caracteres en el idioma de destino (ej. griego), se descarta el globo.
+                    if (senseCorrected.trim().equals(cleanText.trim(), ignoreCase = true)) {
+                        return@launch
+                    }
+                    if (msgTarget == TranslateLanguage.GREEK && senseCorrected.none { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }) {
+                        return@launch
+                    }
+
                     putCachedTranslation(cleanText, senseCorrected)
                     mainHandler.post {
                         if (ServiceBridge.isTranslatingActive) {
@@ -584,7 +605,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
 
         val cleanText = TranslationFilter.cleanMessageText(rawText)
-        if (cleanText.isNotBlank() && TranslationFilter.shouldTranslate(cleanText, configuredTarget)) {
+        if (cleanText.isNotBlank() && TranslationFilter.shouldTranslate(cleanText, configuredTarget, configuredSource)) {
             val rect = Rect()
             node.getBoundsInScreen(rect)
 
@@ -986,6 +1007,18 @@ class TranslationAccessibilityService : AccessibilityService() {
         return hybridEngine.translate(text, sourceLang, targetLang)
     }
 
+    // Por qué: Identifica de forma asíncrona el idioma de un texto mediante ML Kit
+    // para confirmar que el mensaje pertenezca al idioma de origen configurado antes de traducir.
+    private suspend fun identifyLanguageAsync(text: String): String? = suspendCancellableCoroutine { cont ->
+        languageIdentifier.identifyLanguage(text)
+            .addOnSuccessListener { langCode ->
+                if (cont.isActive) cont.resume(if (langCode == "und") null else langCode)
+            }
+            .addOnFailureListener {
+                if (cont.isActive) cont.resume(null)
+            }
+    }
+
     /**
      * Traduce únicamente el mensaje específico sobre el que el usuario ha pulsado.
      * Por qué: Proporciona la experiencia 'Tap to Translate', evitando cubrir toda la pantalla con overlays
@@ -1017,6 +1050,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             if (text.isBlank()) return
             val cleanText = TranslationFilter.cleanMessageText(text).trim()
             if (cleanText.isBlank() || !cleanText.any { it.isLetter() }) return
+            if (!TranslationFilter.shouldTranslate(cleanText, configuredTarget, configuredSource)) return
 
             val rect = Rect()
             nodeWithText.getBoundsInScreen(rect)
@@ -1050,6 +1084,17 @@ class TranslationAccessibilityService : AccessibilityService() {
             val protected = TextNormalizer.protectEmojis(normalizedText)
 
             serviceScope.launch {
+                val detectedLang = identifyLanguageAsync(cleanText)
+                val isEligible = TranslationSenseEngine.isEligibleSourceText(
+                    text = cleanText,
+                    sourceLang = msgSource,
+                    targetLang = msgTarget,
+                    identifiedLang = detectedLang
+                )
+                if (!isEligible) {
+                    return@launch
+                }
+
                 val translated = hybridEngine.translate(protected.text, msgSource, msgTarget)
                 if (!translated.isNullOrBlank()) {
                     val restored = TextNormalizer.restoreEmojis(translated, protected.tokens)
@@ -1059,6 +1104,12 @@ class TranslationAccessibilityService : AccessibilityService() {
                         sourceLang = msgSource,
                         targetLang = msgTarget
                     )
+                    if (corrected.trim().equals(cleanText.trim(), ignoreCase = true)) {
+                        return@launch
+                    }
+                    if (msgTarget == TranslateLanguage.GREEK && corrected.none { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }) {
+                        return@launch
+                    }
                     val targetCode = if (msgTarget == TranslateLanguage.GREEK) "EL" else "RO"
                     mainHandler.post {
                         overlayManager.showSingleMessagePill(rect, corrected, targetCode)
