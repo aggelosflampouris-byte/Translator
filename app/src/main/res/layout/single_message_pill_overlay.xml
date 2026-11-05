@@ -80,3 +80,4 @@
         android:maxLines="6"
         android:ellipsize="end" />
 </LinearLayout>
+

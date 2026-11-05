@@ -1,6 +1,10 @@
 *.iml
 .gradle
-/local.properties
+/.vscode/
+local.properties
+.env
+.env.*
+*.env
 /.idea/caches
 /.idea/libraries
 /.idea/modules.xml
@@ -12,4 +16,8 @@
 /captures
 .externalNativeBuild
 .cxx
+.vscode/
 local.properties
+.env
+.env.*
+*.env

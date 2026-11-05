@@ -390,6 +390,7 @@ fun MainScreen(
               horizontalArrangement = Arrangement.SpaceBetween
           ) {
               Column(modifier = Modifier.weight(1f)) {
+                  val isAiActive = geminiApiKey.isNotBlank() || BuildConfig.GEMINI_API_KEY.isNotBlank()
                   Row(verticalAlignment = Alignment.CenterVertically) {
                       Text(
                           text = "AI Slang & Logic",
@@ -399,35 +400,36 @@ fun MainScreen(
                       Spacer(modifier = Modifier.width(8.dp))
                       Surface(
                           shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
-                          color = if (geminiApiKey.isNotBlank()) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                          color = if (isAiActive) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
                       ) {
                           Text(
-                              text = if (geminiApiKey.isNotBlank()) "Gemini Flash" else "ML Kit Offline",
+                              text = if (isAiActive) "Gemini Flash" else "ML Kit Offline",
                               style = MaterialTheme.typography.labelSmall,
-                              color = if (geminiApiKey.isNotBlank()) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                              color = if (isAiActive) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
                               modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                           )
                       }
                   }
                   Spacer(modifier = Modifier.height(2.dp))
                   Text(
-                      text = if (geminiApiKey.isNotBlank())
-                          "Using Gemini 1.5 Flash for natural slang, swear words & idioms"
+                      text = if (isAiActive)
+                          "Using Gemini for natural conversational slang, swear words & idioms"
                       else
-                          "Using basic on-device dictionary. Add free API key for conversational AI.",
+                          "Using basic on-device dictionary. Add API key for conversational AI.",
                       style = MaterialTheme.typography.bodySmall,
                       color = MaterialTheme.colorScheme.onSurfaceVariant
                   )
               }
               Spacer(modifier = Modifier.width(12.dp))
+              val isAiActive = geminiApiKey.isNotBlank() || BuildConfig.GEMINI_API_KEY.isNotBlank()
               OutlinedButton(
                   onClick = {
-                      tempApiKey = geminiApiKey
+                      tempApiKey = if (geminiApiKey.isNotBlank()) geminiApiKey else BuildConfig.GEMINI_API_KEY
                       showApiKeyDialog = true
                   },
                   contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
               ) {
-                  Text(if (geminiApiKey.isNotBlank()) "Edit Key" else "Set Key", style = MaterialTheme.typography.labelMedium)
+                  Text(if (isAiActive) "Configure" else "Set Key", style = MaterialTheme.typography.labelMedium)
               }
           }
       }

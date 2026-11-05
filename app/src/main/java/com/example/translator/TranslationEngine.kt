@@ -73,7 +73,7 @@ class GeminiTranslationEngine(private val apiKey: String) : TranslationEngine {
         )
 
         val jsonBody = gson.toJson(payload)
-        val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$apiKey"
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=$apiKey"
 
         val request = Request.Builder()
             .url(url)
@@ -150,7 +150,10 @@ class HybridTranslationEngine(private val context: Context) : TranslationEngine 
         targetLang: String
     ): String? {
         val prefs = context.getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
-        val apiKey = prefs.getString(AppDefaults.KEY_GEMINI_API_KEY, "")?.trim() ?: ""
+        val userKey = prefs.getString(AppDefaults.KEY_GEMINI_API_KEY, "")?.trim() ?: ""
+        // Por qué: Usa la clave de entorno/build si está presente para no exigir configuración al usuario,
+        // o la clave personalizada si el usuario la suministró explícitamente en la configuración.
+        val apiKey = if (userKey.isNotBlank()) userKey else BuildConfig.GEMINI_API_KEY.trim()
 
         if (apiKey.isNotBlank()) {
             val geminiResult = GeminiTranslationEngine(apiKey).translate(text, sourceLang, targetLang)
@@ -163,3 +166,4 @@ class HybridTranslationEngine(private val context: Context) : TranslationEngine 
         return mlKitEngine.translate(text, sourceLang, targetLang)
     }
 }
+

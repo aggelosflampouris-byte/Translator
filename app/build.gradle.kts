@@ -1,7 +1,36 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.compose.compiler)
   alias(libs.plugins.kotlin.serialization)
+}
+
+val envGeminiApiKey: String = run {
+    // 1. Variable de entorno del sistema (para CI/CD como GitHub Actions)
+    System.getenv("GEMINI_API_KEY")?.takeIf { it.isNotBlank() }?.let { return@run it }
+
+    // 2. local.properties (ignorado por git en entorno de desarrollo local)
+    val localProps = Properties()
+    val localPropsFile = rootProject.file("local.properties")
+    if (localPropsFile.exists()) {
+        localProps.load(FileInputStream(localPropsFile))
+        localProps.getProperty("GEMINI_API_KEY")?.takeIf { it.isNotBlank() }?.let { return@run it }
+    }
+
+    // 3. Archivo .env en la raíz del proyecto (ignorado por git)
+    val envFile = rootProject.file(".env")
+    if (envFile.exists()) {
+        envFile.readLines().forEach { line ->
+            val trimmed = line.trim()
+            if (trimmed.startsWith("GEMINI_API_KEY=")) {
+                val value = trimmed.substringAfter("GEMINI_API_KEY=").trim().trim('"', '\'')
+                if (value.isNotBlank()) return@run value
+            }
+        }
+    }
+    ""
 }
 
 android {
@@ -11,8 +40,10 @@ android {
         applicationId = "com.example.translator"
         minSdk = 24
         targetSdk = 33
-        versionCode = 52
-        versionName = "1.0.52"
+        versionCode = 53
+        versionName = "1.0.53"
+
+        buildConfigField("String", "GEMINI_API_KEY", "\"$envGeminiApiKey\"")
     }
 
     signingConfigs {
