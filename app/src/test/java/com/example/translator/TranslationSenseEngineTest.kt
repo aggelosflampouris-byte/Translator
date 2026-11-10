@@ -602,5 +602,48 @@ class TranslationSenseEngineTest {
         val multumesc = TranslationSenseEngine.resolveIdiomPreTranslation("Multumesc", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK)
         assertEquals("Ευχαριστώ!", multumesc)
     }
+
+    // Por qué: Valida que la lógica post-traducción corrige los errores sistemáticos
+    // de ML Kit en la dirección Griego → Rumano para vocabulario informal y tecnológico.
+    @Test
+    fun applyPostTranslationSenseLogic_fixesGreekToRomanianMLKitErrors() {
+        // ML Kit: "εφαρμογή" -> "cererea" en lugar de "aplicația"
+        val fixedApp = TranslationSenseEngine.applyPostTranslationSenseLogic(
+            originalText = "Προσπαθώντας να καταλάβω πως θα κάνω την εφαρμογή να δουλέψει για τον ηλίθιο της παρέας",
+            translatedText = "Încercând să dau seama că voi face cererea de a lucra pentru stupidul companiei",
+            sourceLang = TranslateLanguage.GREEK,
+            targetLang = TranslateLanguage.ROMANIAN
+        )
+        // "cererea" -> "aplicația"
+        assertTrue(fixedApp.contains("aplicația"))
+        // "de a lucra" -> "să funcționeze"
+        assertTrue(fixedApp.contains("funcționeze"))
+        // "companiei" -> "gașcii"
+        assertTrue(fixedApp.contains("gașcii"))
+        // "stupidul" -> "prostul"
+        assertTrue(fixedApp.contains("prostul"))
+        // "că voi" -> "cum voi"
+        assertTrue(fixedApp.contains("cum voi"))
+        // "dau seama că" -> "dau seama cum"
+        assertTrue(fixedApp.contains("dau seama cum"))
+
+        // Verificar que "παρέα" se corrige también como sustantivo
+        val fixedParea = TranslationSenseEngine.applyPostTranslationSenseLogic(
+            originalText = "Η παρέα είναι εδώ",
+            translatedText = "Compania este aici",
+            sourceLang = TranslateLanguage.GREEK,
+            targetLang = TranslateLanguage.ROMANIAN
+        )
+        assertTrue(fixedParea.contains("gașcă") || fixedParea.contains("Gașcă") || fixedParea.contains("gașca"))
+
+        // Verificar corrección de "ηλίθιος"
+        val fixedIdiot = TranslationSenseEngine.applyPostTranslationSenseLogic(
+            originalText = "Είσαι ηλίθιος",
+            translatedText = "Ești stupid",
+            sourceLang = TranslateLanguage.GREEK,
+            targetLang = TranslateLanguage.ROMANIAN
+        )
+        assertTrue(fixedIdiot.contains("prost"))
+    }
 }
 

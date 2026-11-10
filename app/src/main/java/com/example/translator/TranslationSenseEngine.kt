@@ -576,6 +576,57 @@ object TranslationSenseEngine {
             }
             result = result.replace(Regex("""\bAnte\b""", RegexOption.IGNORE_CASE), "Hai")
 
+            // Por qué: ML Kit traduce "εφαρμογή" (app) como "cerere" (solicitud/request) o "aplicarea" (enforcement).
+            // En contexto conversacional siempre significa "aplicație" (aplicación de software).
+            if (origNorm.contains("εφαρμογη")) {
+                result = result.replace(Regex("""\bcererea\b""", RegexOption.IGNORE_CASE), "aplicația")
+                result = result.replace(Regex("""\bcerere\b""", RegexOption.IGNORE_CASE), "aplicație")
+                result = result.replace(Regex("""\baplicarea\b""", RegexOption.IGNORE_CASE), "aplicația")
+                result = result.replace(Regex("""\bpunerea în aplicare\b""", RegexOption.IGNORE_CASE), "aplicația")
+            }
+
+            // Por qué: ML Kit traduce "δουλέψει/δουλεύει" (to work/function) como "lucra" (trabajar en un empleo)
+            // o "munca" (labor). En contexto informal y tecnológico se usa "funcționa" (funcionar).
+            if (origNorm.contains("δουλεψ") || origNorm.contains("δουλευ")) {
+                result = result.replace(Regex("""\bde a lucra\b""", RegexOption.IGNORE_CASE), "să funcționeze")
+                result = result.replace(Regex("""\ba lucra\b""", RegexOption.IGNORE_CASE), "funcționa")
+                result = result.replace(Regex("""\blucra\b""", RegexOption.IGNORE_CASE), "funcționa")
+                result = result.replace(Regex("""\bmunca\b""", RegexOption.IGNORE_CASE), "funcționa")
+                result = result.replace(Regex("""\bsă lucreze\b""", RegexOption.IGNORE_CASE), "să funcționeze")
+                result = result.replace(Regex("""\blucreze\b""", RegexOption.IGNORE_CASE), "funcționeze")
+            }
+
+            // Por qué: ML Kit traduce "παρέα" (grupo de amigos) como "companie" (empresa/firma).
+            // En griego coloquial "παρέα" = "gaşcă" / "grup de prieteni" (pandilla de amigos).
+            if (origNorm.contains("παρεα") || origNorm.contains("παρεας")) {
+                result = result.replace(Regex("""\bcompaniei\b""", RegexOption.IGNORE_CASE), "gașcii")
+                result = result.replace(Regex("""\bcompania\b""", RegexOption.IGNORE_CASE), "gașca")
+                result = result.replace(Regex("""\bcompanie\b""", RegexOption.IGNORE_CASE), "gașcă")
+                result = result.replace(Regex("""\bsocietate\b""", RegexOption.IGNORE_CASE), "gașcă")
+                result = result.replace(Regex("""\bsocietății\b""", RegexOption.IGNORE_CASE), "gașcii")
+            }
+
+            // Por qué: ML Kit traduce "πως" (how/cum) como "că" (that) o "de" al inicio interrogativo.
+            // Cuando el original contiene "πως θα" (cómo voy a) la conjunción correcta es "cum".
+            if (origNorm.contains("πως θα") || origNorm.contains("πως να")) {
+                result = result.replace(Regex("""\bcă voi\b""", RegexOption.IGNORE_CASE), "cum voi")
+                result = result.replace(Regex("""\bcă o să\b""", RegexOption.IGNORE_CASE), "cum o să")
+            }
+
+            // Por qué: ML Kit traduce "ηλίθιος/ηλίθιο" (idiot) como "stupid" sin declinación rumana correcta.
+            // En rumano conversacional "prostul" o "idiotul" son más naturales que "stupidul".
+            if (origNorm.contains("ηλιθι")) {
+                result = result.replace(Regex("""\bstupidul\b""", RegexOption.IGNORE_CASE), "prostul")
+                result = result.replace(Regex("""\bstupida\b""", RegexOption.IGNORE_CASE), "proasta")
+                result = result.replace(Regex("""\bstupid\b""", RegexOption.IGNORE_CASE), "prost")
+            }
+
+            // Por qué: ML Kit traduce "καταλάβω" (entender/darse cuenta) como "dau seama că"
+            // en lugar de "dau seama cum" cuando precede una interrogativa indirecta.
+            if (origNorm.contains("καταλαβω πως") || origNorm.contains("καταλαβω τι")) {
+                result = result.replace(Regex("""\bdau seama că\b""", RegexOption.IGNORE_CASE), "dau seama cum")
+            }
+
             // Fix "prietenul meu" to vocative "prietene" in direct address contexts
             result = result.replace(Regex("""\b(esti|ești)\s+prietenul\s+meu\b""", RegexOption.IGNORE_CASE), "ești, prietene")
             result = result.replace(Regex("""\bprietenul\s+meu\s+([A-Z][a-zA-Z]+)""", RegexOption.IGNORE_CASE), "prietene $1")
