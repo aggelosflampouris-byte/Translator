@@ -546,7 +546,27 @@ object TranslationSenseEngine {
                 result = result.replace(Regex("""\bdu-te\s+dracului\b""", RegexOption.IGNORE_CASE), "Άντε στο διάολο!")
             }
 
-            // Correction 8: Greek question mark normalization (';')
+            // Correction 8: Sustitución del falso amigo "συμμορία" (banda criminal) por "παρέα" (grupo de amigos)
+            // Por qué: En chats de mensajería (WhatsApp), el término rumano "gașcă" o "grup" se refiere a la "παρέα"
+            // de amigos y nunca a una "συμμορία" armada. Además restaura la frase "για τον ηλίθιο της παρέας".
+            result = result.replace(Regex("""\bγια\s+τη(?:ν)?\s+ηλίθια\s+(?:συμμορία|παρέα)\b""", RegexOption.IGNORE_CASE), "για τον ηλίθιο της παρέας")
+            result = result.replace(Regex("""\bηλίθια\s+συμμορία\b""", RegexOption.IGNORE_CASE), "τον ηλίθιο της παρέας")
+            result = result.replace(Regex("""\bηλίθια\s+παρέα\b""", RegexOption.IGNORE_CASE), "τον ηλίθιο της παρέας")
+            result = result.replace(Regex("""\bτης\s+συμμορίας\b""", RegexOption.IGNORE_CASE), "της παρέας")
+            result = result.replace(Regex("""\bτη(ν)?\s+συμμορία\b""", RegexOption.IGNORE_CASE), "τη$1 παρέα")
+            result = result.replace(Regex("""\bσυμμορία\b""", RegexOption.IGNORE_CASE), "παρέα")
+            result = result.replace(Regex("""\bσυμμορίας\b""", RegexOption.IGNORE_CASE), "παρέας")
+            result = result.replace(Regex("""\bτου\s+γκρουπ\b""", RegexOption.IGNORE_CASE), "της παρέας")
+
+            // Correction 9: Corrección de verbos de funcionamiento en aplicaciones y software ("να δουλέψει", no "να εργαστεί")
+            // Por qué: Las aplicaciones, programas y sistemas en griego "δουλεύουν" o "λειτουργούν",
+            // nunca "εργάζονται" (que connota exclusivamente el empleo laboral humano).
+            result = result.replace(Regex("""(εφαρμογή|πρόγραμμα|σύστημα|κινητό|τηλέφωνο|bot)\s+να\s+εργαστεί""", RegexOption.IGNORE_CASE), "$1 να δουλέψει")
+            result = result.replace(Regex("""να\s+εργαστεί\s+η\s+(εφαρμογή|πρόγραμμα|σύστημα)""", RegexOption.IGNORE_CASE), "να δουλέψει η $1")
+            result = result.replace(Regex("""να\s+εργαστεί\s+το\s+(πρόγραμμα|σύστημα|bot|κινητό)""", RegexOption.IGNORE_CASE), "να δουλέψει το $1")
+            result = result.replace(Regex("""να\s+κάνω\s+τ(ην|ο)\s+(εφαρμογή|πρόγραμμα|σύστημα)\s+να\s+εργαστεί""", RegexOption.IGNORE_CASE), "να κάνω τ$1 $2 να δουλέψει")
+
+            // Correction 10: Greek question mark normalization (';')
             if (origNorm.endsWith("?") && result.endsWith("?")) {
                 result = result.substring(0, result.length - 1) + ";"
             }
@@ -596,14 +616,18 @@ object TranslationSenseEngine {
                 result = result.replace(Regex("""\blucreze\b""", RegexOption.IGNORE_CASE), "funcționeze")
             }
 
-            // Por qué: ML Kit traduce "παρέα" (grupo de amigos) como "companie" (empresa/firma).
-            // En griego coloquial "παρέα" = "gaşcă" / "grup de prieteni" (pandilla de amigos).
+            // Por qué: ML Kit traduce "παρέα" (grupo de amigos) como "companie" (empresa/firma)
+            // o "gașcă" (que en traducciones estadísticas hacia griego revierte en "συμμορία" / banda criminal).
+            // Se utiliza "grupului" / "grupul" / "grup" para mantener la naturalidad y evitar connotaciones delictivas.
             if (origNorm.contains("παρεα") || origNorm.contains("παρεας")) {
-                result = result.replace(Regex("""\bcompaniei\b""", RegexOption.IGNORE_CASE), "gașcii")
-                result = result.replace(Regex("""\bcompania\b""", RegexOption.IGNORE_CASE), "gașca")
-                result = result.replace(Regex("""\bcompanie\b""", RegexOption.IGNORE_CASE), "gașcă")
-                result = result.replace(Regex("""\bsocietate\b""", RegexOption.IGNORE_CASE), "gașcă")
-                result = result.replace(Regex("""\bsocietății\b""", RegexOption.IGNORE_CASE), "gașcii")
+                result = result.replace(Regex("""\bcompaniei\b""", RegexOption.IGNORE_CASE), "grupului")
+                result = result.replace(Regex("""\bcompania\b""", RegexOption.IGNORE_CASE), "grupul")
+                result = result.replace(Regex("""\bcompanie\b""", RegexOption.IGNORE_CASE), "grup")
+                result = result.replace(Regex("""\bsocietate\b""", RegexOption.IGNORE_CASE), "grup")
+                result = result.replace(Regex("""\bsocietății\b""", RegexOption.IGNORE_CASE), "grupului")
+                result = result.replace(Regex("""\bgașcii\b""", RegexOption.IGNORE_CASE), "grupului")
+                result = result.replace(Regex("""\bgașca\b""", RegexOption.IGNORE_CASE), "grupul")
+                result = result.replace(Regex("""\bgașcă\b""", RegexOption.IGNORE_CASE), "grup")
             }
 
             // Por qué: ML Kit traduce "πως" (how/cum) como "că" (that) o "de" al inicio interrogativo.
@@ -614,11 +638,13 @@ object TranslationSenseEngine {
             }
 
             // Por qué: ML Kit traduce "ηλίθιος/ηλίθιο" (idiot) como "stupid" sin declinación rumana correcta.
-            // En rumano conversacional "prostul" o "idiotul" son más naturales que "stupidul".
+            // En rumano conversacional "idiotul" o "prostul" preservan el sustantivo masculino ("el idiota"),
+            // impidiendo que se transforme erróneamente en un adjetivo femenino ("ηλίθια συμμορία").
             if (origNorm.contains("ηλιθι")) {
-                result = result.replace(Regex("""\bstupidul\b""", RegexOption.IGNORE_CASE), "prostul")
-                result = result.replace(Regex("""\bstupida\b""", RegexOption.IGNORE_CASE), "proasta")
-                result = result.replace(Regex("""\bstupid\b""", RegexOption.IGNORE_CASE), "prost")
+                result = result.replace(Regex("""\bstupidul\b""", RegexOption.IGNORE_CASE), "idiotul")
+                result = result.replace(Regex("""\bstupida\b""", RegexOption.IGNORE_CASE), "idiota")
+                result = result.replace(Regex("""\bstupid\b""", RegexOption.IGNORE_CASE), "idiot")
+                result = result.replace(Regex("""\bprostul\s+(gașcii|companiei)\b""", RegexOption.IGNORE_CASE), "idiotul grupului")
             }
 
             // Por qué: ML Kit traduce "καταλάβω" (entender/darse cuenta) como "dau seama că"

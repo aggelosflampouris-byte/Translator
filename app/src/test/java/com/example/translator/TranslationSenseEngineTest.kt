@@ -618,23 +618,23 @@ class TranslationSenseEngineTest {
         assertTrue(fixedApp.contains("aplicația"))
         // "de a lucra" -> "să funcționeze"
         assertTrue(fixedApp.contains("funcționeze"))
-        // "companiei" -> "gașcii"
-        assertTrue(fixedApp.contains("gașcii"))
-        // "stupidul" -> "prostul"
-        assertTrue(fixedApp.contains("prostul"))
+        // "companiei" -> "grupului" (no "gașcii" que se traduce como συμμορία)
+        assertTrue(fixedApp.contains("grupului"))
+        // "stupidul" -> "idiotul" (preserva el sustantivo masculino sin convertirlo en adjetivo)
+        assertTrue(fixedApp.contains("idiotul"))
         // "că voi" -> "cum voi"
         assertTrue(fixedApp.contains("cum voi"))
         // "dau seama că" -> "dau seama cum"
         assertTrue(fixedApp.contains("dau seama cum"))
 
-        // Verificar que "παρέα" se corrige también como sustantivo
+        // Verificar que "παρέα" se corrige como "grup" / "grupul"
         val fixedParea = TranslationSenseEngine.applyPostTranslationSenseLogic(
             originalText = "Η παρέα είναι εδώ",
             translatedText = "Compania este aici",
             sourceLang = TranslateLanguage.GREEK,
             targetLang = TranslateLanguage.ROMANIAN
         )
-        assertTrue(fixedParea.contains("gașcă") || fixedParea.contains("Gașcă") || fixedParea.contains("gașca"))
+        assertTrue(fixedParea.contains("grupul") || fixedParea.contains("Grupul") || fixedParea.contains("grup"))
 
         // Verificar corrección de "ηλίθιος"
         val fixedIdiot = TranslationSenseEngine.applyPostTranslationSenseLogic(
@@ -643,7 +643,31 @@ class TranslationSenseEngineTest {
             sourceLang = TranslateLanguage.GREEK,
             targetLang = TranslateLanguage.ROMANIAN
         )
-        assertTrue(fixedIdiot.contains("prost"))
+        assertTrue(fixedIdiot.contains("idiot") || fixedIdiot.contains("prost"))
+    }
+
+    // Por qué: Valida que los textos en rumano traducidos a griego no viertan "gașcă/grup"
+    // como "συμμορία" (banda armada/delictiva) ni los verbos de software como "εργαστεί" (empleo humano).
+    @Test
+    fun applyPostTranslationSenseLogic_fixesRomanianToGreekChatErrors() {
+        val fixedOverlay = TranslationSenseEngine.applyPostTranslationSenseLogic(
+            originalText = "Încercând să dau seama cum voi face aplicația să funcționeze pentru prostul gașcii",
+            translatedText = "Προσπαθώντας να καταλάβω πώς θα κάνω την εφαρμογή να εργαστεί για την ηλίθια συμμορία",
+            sourceLang = TranslateLanguage.ROMANIAN,
+            targetLang = TranslateLanguage.GREEK
+        )
+        // "την εφαρμογή να εργαστεί" -> "την εφαρμογή να δουλέψει"
+        assertTrue(fixedOverlay.contains("την εφαρμογή να δουλέψει"))
+        // "για την ηλίθια συμμορία" -> "για τον ηλίθιο της παρέας"
+        assertTrue(fixedOverlay.contains("για τον ηλίθιο της παρέας"))
+
+        val fixedGang = TranslationSenseEngine.applyPostTranslationSenseLogic(
+            originalText = "Sunt cu gașca",
+            translatedText = "Είμαι με τη συμμορία",
+            sourceLang = TranslateLanguage.ROMANIAN,
+            targetLang = TranslateLanguage.GREEK
+        )
+        assertEquals("Είμαι με τη παρέα", fixedGang)
     }
 }
 
