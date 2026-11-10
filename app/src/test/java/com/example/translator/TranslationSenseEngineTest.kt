@@ -309,12 +309,22 @@ class TranslationSenseEngineTest {
         assertTrue(TranslationSenseEngine.isMessageBubble(500, 1036, screenWidth))
         // Outgoing message (short, e.g. "Ce faci?")
         assertTrue(TranslationSenseEngine.isMessageBubble(650, 1036, screenWidth))
+        // Mensaje saliente corto con margen derecho mayor al 72% del ancho
+        assertTrue(TranslationSenseEngine.isMessageBubble(700, 800, screenWidth))
         // Centered date pill (e.g. "Σήμερα")
         assertFalse(TranslationSenseEngine.isMessageBubble(450, 630, screenWidth))
     }
 
     @Test
     fun resolveIdiomPreTranslation_resolvesRomanianSentMessagesToGreek() {
+        val resultMorning = TranslationSenseEngine.resolveIdiomPreTranslation(
+            "Bună dimineața!",
+            TranslateLanguage.ROMANIAN,
+            TranslateLanguage.GREEK
+        )
+        assertNotNull(resultMorning)
+        assertEquals("Καλημέρα!", resultMorning)
+
         val result1 = TranslationSenseEngine.resolveIdiomPreTranslation(
             "Cum ești prietenul meu Giannis",
             TranslateLanguage.ROMANIAN,

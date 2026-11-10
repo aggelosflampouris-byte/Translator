@@ -72,10 +72,11 @@ object TranslationSenseEngine {
         val hasReasonableWidth = width < (screenWidth * 0.95f) && width > 20
         if (!hasReasonableWidth) return false
 
-        // Incoming message: hugs left margin (< 25% of screen width)
-        val isIncoming = rectLeft < (screenWidth * 0.25f)
-        // Outgoing message: hugs right margin (> 78% of screen width)
-        val isOutgoing = rectRight > (screenWidth * 0.78f)
+        // Por qué: Los mensajes entrantes abrazan el margen izquierdo (< 28% del ancho).
+        // Los mensajes salientes abrazan el margen derecho (> 72% del ancho).
+        // Las pastillas centradas de fechas (ej: "Σήμερα", "Πέμπτη", "Κυριακή") se sitúan en el centro (40%-60%) y se descartan.
+        val isIncoming = rectLeft < (screenWidth * 0.28f)
+        val isOutgoing = rectRight > (screenWidth * 0.72f)
 
         return isIncoming || isOutgoing
     }

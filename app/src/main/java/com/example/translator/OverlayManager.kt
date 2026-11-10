@@ -96,7 +96,7 @@ class OverlayManager(private val context: Context) {
                 continue
             }
 
-            val matchedId = findMatchingBubble(rect, translatedText)
+            val matchedId = findMatchingBubble(rect, translatedText, updatedIds)
             if (matchedId != null) {
                 // Actualizar burbuja existente
                 val bubble = activeBubbles[matchedId]
@@ -144,34 +144,49 @@ class OverlayManager(private val context: Context) {
         }
     }
 
-    private fun findMatchingBubble(targetRect: Rect, text: String): String? {
+    private fun findMatchingBubble(
+        targetRect: Rect,
+        text: String,
+        claimedIds: Set<String> = emptySet()
+    ): String? {
         val density = context.resources.displayMetrics.density
 
-        // Por qué: Si una burbuja activa ya contiene exactamente esta traducción,
-        // corresponde al mismo mensaje moviéndose durante el scroll; reutilizamos su vista.
+        // Por qué: Para asociar una pastilla existente al mismo mensaje físico durante pequeños ajustes
+        // de desplazamiento (scroll settling), la distancia vertical debe ser muy reducida (máximo 30dp)
+        // y la alineación horizontal debe conservarse (máximo 20dp). Si la distancia es mayor, se trata
+        // de otro mensaje distinto (por ejemplo, múltiples saludos repetidos "Bună dimineața!" en días diferentes)
+        // y debe recibir su propia pastilla independiente. Además, cualquier ID ya reclamado en la pasada actual
+        // se excluye para impedir que un mensaje le robe el globo a otro mensaje idéntico.
+        val maxVerticalDrift = (30 * density).toInt()
+        val maxHorizontalDrift = (20 * density).toInt()
+
+        // 1. Coincidencia por texto idéntico y proximidad espacial estricta
         var bestId: String? = null
         var minVerticalDist = Int.MAX_VALUE
 
         for ((id, bubble) in activeBubbles) {
+            if (claimedIds.contains(id)) continue
             if (bubble.text == text) {
                 val dTop = abs(bubble.targetRect.top - targetRect.top)
-                if (dTop < minVerticalDist) {
+                val dLeft = abs(bubble.targetRect.left - targetRect.left)
+                if (dTop <= maxVerticalDrift && dLeft <= maxHorizontalDrift && dTop < minVerticalDist) {
                     minVerticalDist = dTop
                     bestId = id
                 }
             }
         }
 
-        if (bestId != null && minVerticalDist < (600 * density).toInt()) {
+        if (bestId != null) {
             return bestId
         }
 
-        // 2. Coincidencia espacial de respaldo si el texto difiere ligeramente
-        val proximityThreshold = (15 * density).toInt()
+        // 2. Coincidencia espacial estricta de respaldo si el texto difiere ligeramente (ej: corrección de puntuación)
+        val proximityThreshold = (18 * density).toInt()
         for ((id, bubble) in activeBubbles) {
+            if (claimedIds.contains(id)) continue
             val dTop = abs(bubble.targetRect.top - targetRect.top)
             val dLeft = abs(bubble.targetRect.left - targetRect.left)
-            if (dTop < proximityThreshold && dLeft < proximityThreshold) {
+            if (dTop <= proximityThreshold && dLeft <= proximityThreshold) {
                 return id
             }
         }
