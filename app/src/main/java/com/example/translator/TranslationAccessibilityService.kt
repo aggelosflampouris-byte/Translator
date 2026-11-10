@@ -49,12 +49,12 @@ class TranslationAccessibilityService : AccessibilityService() {
     // In-memory LRU cache for fast scroll rendering without unbounded SharedPreferences growth
     private val translationCache = LruCache<String, String>(500)
 
-    private fun getCachedTranslation(text: String): String? {
-        return translationCache.get(text)
+    private fun getCachedTranslation(sourceLang: String, targetLang: String, text: String): String? {
+        return translationCache.get("${sourceLang}_${targetLang}_${text.trim()}")
     }
 
-    private fun putCachedTranslation(text: String, translation: String) {
-        translationCache.put(text, translation)
+    private fun putCachedTranslation(sourceLang: String, targetLang: String, text: String, translation: String) {
+        translationCache.put("${sourceLang}_${targetLang}_${text.trim()}", translation)
     }
 
     private var configuredSource: String = AppDefaults.SOURCE_LANGUAGE
@@ -62,7 +62,6 @@ class TranslationAccessibilityService : AccessibilityService() {
     private var isKeyboardTranslatorEnabled: Boolean = true
     private var translationMode: String = AppDefaults.MODE_TAP
     private lateinit var hybridEngine: HybridTranslationEngine
-    private val mlKitDraftEngine = MLKitTranslationEngine()
     private var manualDraftTargetLang: String? = null
 
     private val prefListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { prefs, key ->
@@ -555,7 +554,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             val msgTarget = configuredTarget
 
             // Check cache first (in-memory + persistent) for instantaneous rendering
-            val cachedTranslation = getCachedTranslation(cleanText)
+            val cachedTranslation = getCachedTranslation(msgSource, msgTarget, cleanText)
             if (cachedTranslation != null) {
                 immediateResults.add(Pair(rect, cachedTranslation))
                 continue
@@ -568,7 +567,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                 msgTarget
             )
             if (idiomaticTranslation != null) {
-                putCachedTranslation(cleanText, idiomaticTranslation)
+                putCachedTranslation(msgSource, msgTarget, cleanText, idiomaticTranslation)
                 immediateResults.add(Pair(rect, idiomaticTranslation))
                 continue
             }
@@ -641,7 +640,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                         return@launch
                     }
 
-                    putCachedTranslation(cleanText, senseCorrected)
+                    putCachedTranslation(msgSource, msgTarget, cleanText, senseCorrected)
 
                     // Por qué: Si la pantalla se desplazó durante la traducción asíncrona,
                     // las coordenadas 'rect' capturadas antes del scroll son obsoletas y colocarían
@@ -1002,25 +1001,21 @@ class TranslationAccessibilityService : AccessibilityService() {
                     effectiveTargetLang
                 )
                 if (lineIdiom != null) {
+                    putCachedTranslation(effectiveSourceLang, effectiveTargetLang, normalizedLine, lineIdiom)
                     translatedLines.add(lineIdiom)
                     continue
                 }
 
-                // 2. Caché local instantánea
-                val cached = getCachedTranslation(normalizedLine)
+                // 2. Caché local instantánea con espacio de nombres por par de idiomas
+                val cached = getCachedTranslation(effectiveSourceLang, effectiveTargetLang, normalizedLine)
                 if (cached != null) {
                     translatedLines.add(cached)
                     continue
                 }
 
-                // 3. Traducción local rápida con ML Kit (on-device, sin latencia ni cuotas de API)
+                // 3. Traducción unificada utilizando hybridEngine (el mismo motor que traduce los mensajes en pantalla)
                 val protected = TextNormalizer.protectEmojis(normalizedLine)
-                var rawTranslated = mlKitDraftEngine.translate(protected.text, effectiveSourceLang, effectiveTargetLang)
-
-                // Respaldo transparente en el motor híbrido si ML Kit no tiene descargado el par aún
-                if (rawTranslated.isNullOrBlank()) {
-                    rawTranslated = translateTextAsync(effectiveSourceLang, effectiveTargetLang, protected.text)
-                }
+                val rawTranslated = hybridEngine.translate(protected.text, effectiveSourceLang, effectiveTargetLang)
 
                 if (rawTranslated != null && rawTranslated.isNotBlank() && rawTranslated != protected.text) {
                     val restoredEmojis = TextNormalizer.restoreEmojis(rawTranslated, protected.tokens)
@@ -1030,6 +1025,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                         sourceLang = effectiveSourceLang,
                         targetLang = effectiveTargetLang
                     )
+                    putCachedTranslation(effectiveSourceLang, effectiveTargetLang, normalizedLine, senseCorrected)
                     translatedLines.add(senseCorrected)
                 } else {
                     translatedLines.add(trimmedLine)
@@ -1133,14 +1129,6 @@ class TranslationAccessibilityService : AccessibilityService() {
             val result = hybridEngine.translate(text, sourceLang, targetLang)
             onResult(result)
         }
-    }
-
-    private suspend fun translateTextAsync(
-        sourceLang: String,
-        targetLang: String,
-        text: String
-    ): String? {
-        return hybridEngine.translate(text, sourceLang, targetLang)
     }
 
     // Por qué: Identifica de forma asíncrona el idioma de un texto mediante ML Kit

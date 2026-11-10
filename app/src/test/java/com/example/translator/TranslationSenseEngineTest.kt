@@ -618,9 +618,8 @@ class TranslationSenseEngineTest {
         assertTrue(fixedApp.contains("aplicația"))
         // "de a lucra" -> "să funcționeze"
         assertTrue(fixedApp.contains("funcționeze"))
-        // "companiei" -> "grupului" (no "gașcii" que se traduce como συμμορία)
-        assertTrue(fixedApp.contains("grupului"))
-        // "stupidul" -> "idiotul" (preserva el sustantivo masculino sin convertirlo en adjetivo)
+        // "companiei" y "stupidul" -> "idiotul din grup"
+        assertTrue(fixedApp.contains("din grup") || fixedApp.contains("grupului"))
         assertTrue(fixedApp.contains("idiotul"))
         // "că voi" -> "cum voi"
         assertTrue(fixedApp.contains("cum voi"))
@@ -660,6 +659,19 @@ class TranslationSenseEngineTest {
         assertTrue(fixedOverlay.contains("την εφαρμογή να δουλέψει"))
         // "για την ηλίθια συμμορία" -> "για τον ηλίθιο της παρέας"
         assertTrue(fixedOverlay.contains("για τον ηλίθιο της παρέας"))
+
+        // Por qué: Valida la reparación de la distorsión estadística de ML Kit donde "să funcționeze aplicația"
+        // se vertió como "εργασία της εφαρμογής" y "pentru idiotul grupului" como "για την ομαδική ηλίθια"
+        val fixedMessage4 = TranslationSenseEngine.applyPostTranslationSenseLogic(
+            originalText = "Încercând să dau seama cum voi face aplicația să funcționeze pentru idiotul grupului",
+            translatedText = "Προσπαθώντας να καταλάβω πώς θα κάνω την εργασία της εφαρμογής για την ομαδική ηλίθια",
+            sourceLang = TranslateLanguage.ROMANIAN,
+            targetLang = TranslateLanguage.GREEK
+        )
+        assertEquals(
+            "Προσπαθώντας να καταλάβω πώς θα κάνω την εφαρμογή να δουλέψει για τον ηλίθιο της παρέας",
+            fixedMessage4
+        )
 
         val fixedGang = TranslationSenseEngine.applyPostTranslationSenseLogic(
             originalText = "Sunt cu gașca",

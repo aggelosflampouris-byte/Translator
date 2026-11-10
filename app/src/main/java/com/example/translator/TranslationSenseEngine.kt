@@ -558,9 +558,14 @@ object TranslationSenseEngine {
             result = result.replace(Regex("""\bσυμμορίας\b""", RegexOption.IGNORE_CASE), "παρέας")
             result = result.replace(Regex("""\bτου\s+γκρουπ\b""", RegexOption.IGNORE_CASE), "της παρέας")
 
-            // Correction 9: Corrección de verbos de funcionamiento en aplicaciones y software ("να δουλέψει", no "να εργαστεί")
-            // Por qué: Las aplicaciones, programas y sistemas en griego "δουλεύουν" o "λειτουργούν",
-            // nunca "εργάζονται" (que connota exclusivamente el empleo laboral humano).
+            // Correction 9: Corrección de distorsiones en frases de aplicaciones y software
+            // Por qué: ML Kit traduce a veces "să funcționeze aplicația" como "την εργασία της εφαρμογής" o "να εργαστεί",
+            // y "pentru idiotul grupului" como "για την ομαδική ηλίθια". Se restauran las formas conversacionales naturales.
+            result = result.replace(Regex("""\b(κάνω\s+)?τ(?:ην)?\s+εργασία\s+της\s+εφαρμογής\b""", RegexOption.IGNORE_CASE), "κάνω την εφαρμογή να δουλέψει")
+            result = result.replace(Regex("""\bεργασία\s+της\s+εφαρμογής\b""", RegexOption.IGNORE_CASE), "την εφαρμογή να δουλέψει")
+            result = result.replace(Regex("""\bγια\s+τη(?:ν)?\s+ομαδική\s+ηλίθια\b""", RegexOption.IGNORE_CASE), "για τον ηλίθιο της παρέας")
+            result = result.replace(Regex("""\bομαδική\s+ηλίθια\b""", RegexOption.IGNORE_CASE), "τον ηλίθιο της παρέας")
+
             result = result.replace(Regex("""(εφαρμογή|πρόγραμμα|σύστημα|κινητό|τηλέφωνο|bot)\s+να\s+εργαστεί""", RegexOption.IGNORE_CASE), "$1 να δουλέψει")
             result = result.replace(Regex("""να\s+εργαστεί\s+η\s+(εφαρμογή|πρόγραμμα|σύστημα)""", RegexOption.IGNORE_CASE), "να δουλέψει η $1")
             result = result.replace(Regex("""να\s+εργαστεί\s+το\s+(πρόγραμμα|σύστημα|bot|κινητό)""", RegexOption.IGNORE_CASE), "να δουλέψει το $1")
@@ -638,13 +643,13 @@ object TranslationSenseEngine {
             }
 
             // Por qué: ML Kit traduce "ηλίθιος/ηλίθιο" (idiot) como "stupid" sin declinación rumana correcta.
-            // En rumano conversacional "idiotul" o "prostul" preservan el sustantivo masculino ("el idiota"),
-            // impidiendo que se transforme erróneamente en un adjetivo femenino ("ηλίθια συμμορία").
+            // En rumano conversacional "idiotul din grup" o "prostul din grup" preservan el sustantivo masculino ("el idiota del grupo"),
+            // impidiendo que se transforme erróneamente en un adjetivo femenino ("ηλίθια συμμορία" u "ομαδική ηλίθια").
             if (origNorm.contains("ηλιθι")) {
                 result = result.replace(Regex("""\bstupidul\b""", RegexOption.IGNORE_CASE), "idiotul")
                 result = result.replace(Regex("""\bstupida\b""", RegexOption.IGNORE_CASE), "idiota")
                 result = result.replace(Regex("""\bstupid\b""", RegexOption.IGNORE_CASE), "idiot")
-                result = result.replace(Regex("""\bprostul\s+(gașcii|companiei)\b""", RegexOption.IGNORE_CASE), "idiotul grupului")
+                result = result.replace(Regex("""\b(prostul|idiotul)\s+(gașcii|companiei|grupului)\b""", RegexOption.IGNORE_CASE), "idiotul din grup")
             }
 
             // Por qué: ML Kit traduce "καταλάβω" (entender/darse cuenta) como "dau seama că"
