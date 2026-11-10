@@ -2,19 +2,11 @@ package com.example.translator
 
 import android.content.Context
 import android.util.Log
-import com.google.gson.Gson
-import com.google.gson.JsonObject
+import com.google.mlkit.nl.translate.TranslateLanguage
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import java.util.concurrent.TimeUnit
+import java.io.File
 import kotlin.coroutines.resume
 
 /**
@@ -29,115 +21,80 @@ interface TranslationEngine {
 }
 
 /**
- * Motor de traducción basado en Gemini 1.5 Flash (Google AI Studio - Gratuito).
+ * Motor de traducción basado en el modelo especializado local Index-Translate-2B (GGUF).
  *
- * Por qué: Los modelos estadísticos locales de 30MB de ML Kit traducen mediante un pivote
- * en inglés y carecen de comprensión conversacional, arruinando jerga, groserías e idiotismos
- * (ej: 'du-te fuck', 'Κέικ φίλης girnis'). Gemini 1.5 Flash comprende de forma nativa el contexto
- * informal de WhatsApp entre griego y rumano sin costo (tier gratuito de 15 RPM / 1500 peticiones/día).
+ * Por qué: Index-Translate-2B está entrenado específicamente para traducción automática en 150 idiomas,
+ * preservando jerga, emoticonos, puntuación y nombres sin generar respuestas conversacionales redundantes
+ * ("Here is the translation...", "Sure", etc.). Funciona de forma 100% offline y privada en el teléfono.
  */
-class GeminiTranslationEngine(private val apiKey: String) : TranslationEngine {
+class IndexTranslationEngine(private val context: Context) : TranslationEngine {
 
     companion object {
-        // Por qué: Limita las peticiones simultáneas a 4 para balancear rendimiento rápido con el límite de tasa de Google AI Studio (HTTP 503/429).
-        private val requestSemaphore = Semaphore(4)
-        private val candidateModels = listOf("gemini-3.5-flash-lite", "gemini-3.5-flash")
+        private const val TAG = "IndexTranslationEngine"
     }
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(3, TimeUnit.SECONDS)
-        .readTimeout(5, TimeUnit.SECONDS)
-        .build()
+    private var modelHandle: Long = 0L
 
-    private val gson = Gson()
-    private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
+    fun isReady(): Boolean {
+        return ModelAssetManager.isModelReady(context)
+    }
 
     override suspend fun translate(
         text: String,
         sourceLang: String,
         targetLang: String
-    ): String? = withContext(Dispatchers.IO) {
-        if (apiKey.isBlank()) return@withContext null
+    ): String? = withContext(Dispatchers.Default) {
         val cleanInput = text.trim()
-        // Por qué: Si el texto está vacío o no contiene ninguna letra, no se envía a la API para evitar respuestas de error del modelo
         if (cleanInput.isBlank() || !cleanInput.any { it.isLetter() }) return@withContext null
 
-        requestSemaphore.withPermit {
-            val sourceName = if (sourceLang == "ro") "Romanian" else "Greek"
-            val targetName = if (targetLang == "el") "Greek" else "Romanian"
+        val customPath = ModelAssetManager.getCustomModelPath(context)
+        val modelFile = if (!customPath.isNullOrBlank()) File(customPath) else ModelAssetManager.getModelFile(context)
 
-            val prompt = "You are an expert chat translator between Greek and Romanian. " +
-                "Translate this informal WhatsApp chat message from $sourceName to $targetName. " +
-                "Preserve colloquial slang, natural idioms, swear words, and emotional tone accurately. " +
-                "Preserve emojis, names, and punctuation. Output ONLY the raw translated text with no explanations or quotes:\n\n$cleanInput"
+        if (!modelFile.exists() || modelFile.length() < 50_000_000L) {
+            return@withContext null
+        }
 
-            val payload = mapOf(
-                "contents" to listOf(
-                    mapOf(
-                        "parts" to listOf(
-                            mapOf("text" to prompt)
-                        )
+        val targetName = when (targetLang) {
+            "el", TranslateLanguage.GREEK -> "Greek"
+            "ro", TranslateLanguage.ROMANIAN -> "Romanian"
+            "en", TranslateLanguage.ENGLISH -> "English"
+            else -> targetLang
+        }
+
+        // Por qué: Plantilla de traducción formal directa recomendada por IndexTeam para evitar relleno conversacional
+        val prompt = "Translate the following text into $targetName, output only the translated result without any explanation:\n$cleanInput"
+
+        if (LlamaNativeBridge.isAvailable()) {
+            try {
+                if (modelHandle == 0L) {
+                    modelHandle = LlamaNativeBridge.nativeInitModel(
+                        modelPath = modelFile.absolutePath,
+                        threads = 4,
+                        contextSize = 1024
                     )
-                ),
-                "generationConfig" to mapOf(
-                    "temperature" to 0.2,
-                    "maxOutputTokens" to 256
-                )
-            )
-
-            val jsonBody = gson.toJson(payload)
-
-            // Por qué: Itera sobre modelos candidatos y realiza reintentos con retraso ante respuestas 503 o 429
-            // para garantizar alta disponibilidad sin degradar prematuramente a ML Kit.
-            for (model in candidateModels) {
-                for (attempt in 1..2) {
-                    val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
-
-                    // Por qué: Se envía la clave de API a través del encabezado HTTP 'x-goog-api-key' en lugar de la URL,
-                    // garantizando que no quede expuesta en registros de red, proxies ni cachés.
-                    val request = Request.Builder()
-                        .url(url)
-                        .addHeader("x-goog-api-key", apiKey)
-                        .post(jsonBody.toRequestBody(jsonMediaType))
-                        .build()
-
-                    try {
-                        val response = client.newCall(request).execute()
-                        if (response.isSuccessful) {
-                            val responseBody = response.body?.string() ?: break
-                            val jsonObject = gson.fromJson(responseBody, JsonObject::class.java)
-                            val candidates = jsonObject.getAsJsonArray("candidates") ?: break
-                            if (candidates.size() == 0) break
-
-                            val content = candidates[0].asJsonObject.getAsJsonObject("content") ?: break
-                            val parts = content.getAsJsonArray("parts") ?: break
-                            if (parts.size() == 0) break
-
-                            val translated = parts[0].asJsonObject.get("text")?.asString?.trim()
-                            if (!translated.isNullOrBlank() && isValidTranslation(translated)) {
-                                return@withContext translated
-                            }
-                            break
-                        } else if (response.code == 503 || response.code == 429) {
-                            Log.w("GeminiEngine", "Model $model returned HTTP ${response.code}, attempt $attempt. Retrying...")
-                            delay(200L * attempt)
-                            continue
-                        } else {
-                            Log.w("GeminiEngine", "Gemini API failed with HTTP ${response.code} for $model")
-                            break
-                        }
-                    } catch (e: Exception) {
-                        Log.e("GeminiEngine", "Network error with $model on attempt $attempt", e)
-                        delay(200L * attempt)
+                }
+                if (modelHandle != 0L) {
+                    val rawOutput = LlamaNativeBridge.nativeGenerate(modelHandle, prompt, maxTokens = 256)
+                    val cleaned = cleanOutput(rawOutput)
+                    if (cleaned.isNotBlank() && isValidTranslation(cleaned)) {
+                        return@withContext cleaned
                     }
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "Native inference execution failed, delegating to fallback", e)
             }
-            null
         }
+
+        null
     }
 
-    // Por qué: Valida que la respuesta generada por Gemini sea realmente una traducción de texto
-    // y no un mensaje conversacional de error, advertencia o negativa ("Error: No message was provided", etc.).
+    private fun cleanOutput(output: String): String {
+        return output.trim()
+            .removePrefix("\"").removeSuffix("\"")
+            .removePrefix("«").removeSuffix("»")
+            .trim()
+    }
+
     private fun isValidTranslation(output: String): Boolean {
         val trimmed = output.trim()
         if (trimmed.isBlank()) return false
@@ -163,7 +120,8 @@ class GeminiTranslationEngine(private val apiKey: String) : TranslationEngine {
  * Motor de traducción local basado en Google ML Kit.
  *
  * Por qué: Proporciona traducción 100% offline, gratuita y sin latencia de red,
- * sirviendo como respaldo seguro cuando no hay conexión o no se ha configurado clave API.
+ * sirviendo como respaldo seguro e inmediato en cualquier dispositivo o mientras
+ * el modelo neuronal especializado se descarga en segundo plano.
  */
 class MLKitTranslationEngine : TranslationEngine {
 
@@ -185,14 +143,16 @@ class MLKitTranslationEngine : TranslationEngine {
 }
 
 /**
- * Motor híbrido inteligente.
+ * Motor híbrido inteligente y 100% offline.
  *
- * Por qué: Combina la calidad conversacional superior de Gemini cuando hay clave API disponible
- * con la resiliencia inmediata y sin conexión de ML Kit como respaldo transparente.
+ * Por qué: Da prioridad al modelo especializado de traducción neuronal en el dispositivo (Index-Translate-2B)
+ * para capturar expresiones idiomáticas y jerga informal cuando los pesos están instalados,
+ * recurriendo instantáneamente a ML Kit local cuando el modelo pesado no está presente.
  */
 class HybridTranslationEngine(private val context: Context) : TranslationEngine {
 
     private val mlKitEngine = MLKitTranslationEngine()
+    private val indexEngine = IndexTranslationEngine(context)
 
     override suspend fun translate(
         text: String,
@@ -201,19 +161,16 @@ class HybridTranslationEngine(private val context: Context) : TranslationEngine 
     ): String? {
         val prefs = context.getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
         val isAiEnabled = prefs.getBoolean(AppDefaults.KEY_AI_ENABLED, true)
-        val apiKey = BuildConfig.GEMINI_API_KEY.trim()
 
-        // Por qué: Emplea la clave inyectada de forma segura desde las variables de compilación/entorno.
-        // Nunca se consulta ni se almacena la clave en las preferencias del usuario para evitar fugas de seguridad.
-        if (isAiEnabled && apiKey.isNotBlank()) {
-            val geminiResult = GeminiTranslationEngine(apiKey).translate(text, sourceLang, targetLang)
-            if (!geminiResult.isNullOrBlank()) {
-                return geminiResult
+        // Por qué: Utiliza el modelo neuronal local si el usuario lo tiene activo y descargado en el almacenamiento
+        if (isAiEnabled && indexEngine.isReady()) {
+            val result = indexEngine.translate(text, sourceLang, targetLang)
+            if (!result.isNullOrBlank()) {
+                return result
             }
         }
 
-        // Respaldo offline con ML Kit
+        // Respaldo inmediato con ML Kit local
         return mlKitEngine.translate(text, sourceLang, targetLang)
     }
 }
-

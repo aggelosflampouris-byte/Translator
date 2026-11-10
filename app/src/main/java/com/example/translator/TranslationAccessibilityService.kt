@@ -1128,7 +1128,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         text: String,
         onResult: (String?) -> Unit
     ) {
-        // Por qué: Usa el motor híbrido (Gemini si hay clave, o ML Kit local) de manera asíncrona
+        // Por qué: Usa el motor híbrido (Index-Translate-2B local o ML Kit de respaldo) de manera asíncrona
         serviceScope.launch {
             val result = hybridEngine.translate(text, sourceLang, targetLang)
             onResult(result)

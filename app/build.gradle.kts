@@ -18,32 +18,6 @@ fun sanitizeSecret(raw: String?): String {
         .trim()
 }
 
-val envGeminiApiKey: String = run {
-    // 1. Variable de entorno del sistema (para CI/CD como GitHub Actions)
-    sanitizeSecret(System.getenv("GEMINI_API_KEY")).takeIf { it.isNotBlank() }?.let { return@run it }
-
-    // 2. local.properties (ignorado por git en entorno de desarrollo local)
-    val localProps = Properties()
-    val localPropsFile = rootProject.file("local.properties")
-    if (localPropsFile.exists()) {
-        localProps.load(FileInputStream(localPropsFile))
-        sanitizeSecret(localProps.getProperty("GEMINI_API_KEY")).takeIf { it.isNotBlank() }?.let { return@run it }
-    }
-
-    // 3. Archivo .env en la raíz del proyecto (ignorado por git)
-    val envFile = rootProject.file(".env")
-    if (envFile.exists()) {
-        envFile.readLines().forEach { line ->
-            val trimmed = line.trim()
-            if (trimmed.startsWith("GEMINI_API_KEY=")) {
-                val value = sanitizeSecret(trimmed.substringAfter("GEMINI_API_KEY="))
-                if (value.isNotBlank()) return@run value
-            }
-        }
-    }
-    ""
-}
-
 android {
     namespace = "com.example.translator"
     compileSdk = 36
@@ -51,11 +25,8 @@ android {
         applicationId = "com.example.translator"
         minSdk = 24
         targetSdk = 33
-        versionCode = 65
-        versionName = "1.0.65"
-
-        val safeApiKey = envGeminiApiKey.replace("\\", "\\\\").replace("\"", "\\\"")
-        buildConfigField("String", "GEMINI_API_KEY", "\"$safeApiKey\"")
+        versionCode = 66
+        versionName = "1.0.66"
     }
 
     signingConfigs {

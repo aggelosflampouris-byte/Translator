@@ -28,6 +28,7 @@ import com.example.translator.AppDefaults
 import com.example.translator.AppUpdater
 import com.example.translator.BuildConfig
 import com.example.translator.FloatingBubbleService
+import com.example.translator.ModelAssetManager
 import com.example.translator.ServiceBridge
 import com.example.translator.TranslationNotificationManager
 import com.example.translator.TranslatorPool
@@ -57,6 +58,38 @@ fun MainScreen(
   var downloadedApkFile by remember { mutableStateOf<File?>(null) }
   var downloadErrorMessage by remember { mutableStateOf<String?>(null) }
   var downloadJob by remember { mutableStateOf<Job?>(null) }
+
+  // ── Gestor del modelo neuronal local (Index-Translate-2B GGUF) ──────────────
+  var isModelReady by remember { mutableStateOf(ModelAssetManager.isModelReady(context)) }
+  var modelDownloadState by remember { mutableStateOf<ModelAssetManager.DownloadState>(ModelAssetManager.DownloadState.Idle) }
+
+  DisposableEffect(Unit) {
+      ModelAssetManager.currentListener = { state ->
+          modelDownloadState = state
+          if (state is ModelAssetManager.DownloadState.Completed) {
+              isModelReady = true
+          }
+      }
+      onDispose {
+          ModelAssetManager.currentListener = null
+      }
+  }
+
+  val modelPickerLauncher = rememberLauncherForActivityResult(
+      contract = ActivityResultContracts.GetContent()
+  ) { uri ->
+      if (uri != null) {
+          coroutineScope.launch {
+              val success = ModelAssetManager.importModelFromUri(context, uri)
+              isModelReady = ModelAssetManager.isModelReady(context)
+              if (success) {
+                  android.widget.Toast.makeText(context, "Neural model imported successfully", android.widget.Toast.LENGTH_SHORT).show()
+              } else {
+                  android.widget.Toast.makeText(context, "Failed to import model", android.widget.Toast.LENGTH_SHORT).show()
+              }
+          }
+      }
+  }
 
   // Por qué: Verifica silenciosamente al iniciar si existe una versión más reciente en GitHub
   LaunchedEffect(Unit) {
@@ -308,14 +341,6 @@ fun MainScreen(
       ActivityResultContracts.RequestPermission()
   ) { granted ->
       isNotificationPermissionGranted = granted
-  }
-
-  // Por qué: Limpia cualquier clave de API que pudiera haber sido guardada previamente en SharedPreferences
-  // para evitar que datos sensibles de autenticación queden en el almacenamiento local.
-  LaunchedEffect(Unit) {
-      if (prefs.contains(AppDefaults.KEY_GEMINI_API_KEY)) {
-          prefs.edit().remove(AppDefaults.KEY_GEMINI_API_KEY).apply()
-      }
   }
 
   val supportedLanguages = remember { com.google.mlkit.nl.translate.TranslateLanguage.getAllLanguages() }
@@ -634,9 +659,9 @@ fun MainScreen(
                   color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
               )
 
-              // Traducción contextual con IA (jerga, idiotismos y expresiones informales)
-              val isAiConfigured = BuildConfig.GEMINI_API_KEY.isNotBlank()
-              val isAiActive = isAiConfigured && aiTranslationEnabled
+              // Por qué: Traducción neuronal especializada en el dispositivo (Index-Translate-2B)
+              // para capturar jerga, modismos e informalidad en 150 idiomas 100% offline y sin claves de API.
+              val isAiActive = isModelReady && aiTranslationEnabled
               Row(
                   modifier = Modifier.fillMaxWidth(),
                   verticalAlignment = Alignment.CenterVertically,
@@ -645,7 +670,7 @@ fun MainScreen(
                   Column(modifier = Modifier.weight(1f)) {
                       Row(verticalAlignment = Alignment.CenterVertically) {
                           Text(
-                              text = "AI Contextual Engine",
+                              text = "Neural MT Engine",
                               style = MaterialTheme.typography.bodyMedium,
                               color = MaterialTheme.colorScheme.onSurface
                           )
@@ -655,7 +680,7 @@ fun MainScreen(
                               color = if (isAiActive) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
                           ) {
                               Text(
-                                  text = if (isAiActive) "Gemini" else "Offline",
+                                  text = if (isAiActive) "Index-Translate 2B" else "ML Kit Local",
                                   style = MaterialTheme.typography.labelSmall,
                                   color = if (isAiActive) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
                                   modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -664,7 +689,7 @@ fun MainScreen(
                       }
                       Spacer(modifier = Modifier.height(2.dp))
                       Text(
-                          text = "Understands informal idioms, colloquial slang, and swearing accurately.",
+                          text = "Dedicated 150-language machine translation model. Understands informal chat, slang, and idioms 100% offline.",
                           style = MaterialTheme.typography.bodySmall,
                           color = MaterialTheme.colorScheme.onSurfaceVariant
                       )
@@ -672,12 +697,124 @@ fun MainScreen(
                   Spacer(modifier = Modifier.width(12.dp))
                   Switch(
                       checked = isAiActive,
-                      enabled = isAiConfigured,
+                      enabled = isModelReady,
                       onCheckedChange = { isChecked ->
                           aiTranslationEnabled = isChecked
                           prefs.edit().putBoolean(AppDefaults.KEY_AI_ENABLED, isChecked).apply()
                       }
                   )
+              }
+
+              Spacer(modifier = Modifier.height(10.dp))
+
+              when (val state = modelDownloadState) {
+                  is ModelAssetManager.DownloadState.Downloading -> {
+                      Column(modifier = Modifier.fillMaxWidth()) {
+                          LinearProgressIndicator(
+                              progress = { state.progressPercent / 100f },
+                              modifier = Modifier.fillMaxWidth().height(6.dp),
+                              color = MaterialTheme.colorScheme.primary,
+                          )
+                          Spacer(modifier = Modifier.height(4.dp))
+                          Row(
+                              modifier = Modifier.fillMaxWidth(),
+                              horizontalArrangement = Arrangement.SpaceBetween,
+                              verticalAlignment = Alignment.CenterVertically
+                          ) {
+                              Text(
+                                  text = "Downloading: ${state.progressPercent}% (${state.downloadedMB} MB / ${state.totalMB} MB)",
+                                  style = MaterialTheme.typography.labelSmall,
+                                  color = MaterialTheme.colorScheme.primary
+                              )
+                              TextButton(
+                                  onClick = { ModelAssetManager.cancelDownload() },
+                                  contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                              ) {
+                                  Text("Cancel", style = MaterialTheme.typography.labelSmall)
+                              }
+                          }
+                      }
+                  }
+                  is ModelAssetManager.DownloadState.Error -> {
+                      Column(modifier = Modifier.fillMaxWidth()) {
+                          Text(
+                              text = "Download error: ${state.message}",
+                              style = MaterialTheme.typography.labelSmall,
+                              color = MaterialTheme.colorScheme.error
+                          )
+                          Spacer(modifier = Modifier.height(4.dp))
+                          Row {
+                              Button(
+                                  onClick = {
+                                      coroutineScope.launch {
+                                          ModelAssetManager.startDownload(context)
+                                      }
+                                  },
+                                  contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                              ) {
+                                  Text("Retry Download", style = MaterialTheme.typography.labelSmall)
+                              }
+                          }
+                      }
+                  }
+                  else -> {
+                      if (isModelReady) {
+                          Row(
+                              modifier = Modifier.fillMaxWidth(),
+                              horizontalArrangement = Arrangement.SpaceBetween,
+                              verticalAlignment = Alignment.CenterVertically
+                          ) {
+                              Text(
+                                  text = "✓ Model file installed (~1.3 GB)",
+                                  style = MaterialTheme.typography.labelSmall,
+                                  color = MaterialTheme.colorScheme.primary
+                              )
+                              TextButton(
+                                  onClick = {
+                                      ModelAssetManager.deleteModel(context)
+                                      isModelReady = false
+                                  },
+                                  contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                              ) {
+                                  Text("Delete Model", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                              }
+                          }
+                      } else {
+                          Column(modifier = Modifier.fillMaxWidth()) {
+                              Text(
+                                  text = "Neural model not downloaded. Tap below to download or import your .gguf file.",
+                                  style = MaterialTheme.typography.bodySmall,
+                                  color = MaterialTheme.colorScheme.onSurfaceVariant
+                              )
+                              Spacer(modifier = Modifier.height(6.dp))
+                              Row(
+                                  modifier = Modifier.fillMaxWidth(),
+                                  horizontalArrangement = Arrangement.spacedBy(8.dp)
+                              ) {
+                                  Button(
+                                      onClick = {
+                                          coroutineScope.launch {
+                                              ModelAssetManager.startDownload(context)
+                                          }
+                                      },
+                                      modifier = Modifier.weight(1f),
+                                      contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                                  ) {
+                                      Text("Download (1.3 GB)", style = MaterialTheme.typography.labelSmall)
+                                  }
+                                  OutlinedButton(
+                                      onClick = {
+                                          modelPickerLauncher.launch("*/*")
+                                      },
+                                      modifier = Modifier.weight(1f),
+                                      contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                                  ) {
+                                      Text("Select .gguf File", style = MaterialTheme.typography.labelSmall)
+                                  }
+                              }
+                          }
+                      }
+                  }
               }
           }
       }

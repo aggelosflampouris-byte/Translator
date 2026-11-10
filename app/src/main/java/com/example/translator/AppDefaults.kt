@@ -10,11 +10,9 @@ object AppDefaults {
     const val KEY_TARGET_LANGUAGE = "target_language"
     const val KEY_KEYBOARD_ENABLED = "keyboard_translator_enabled"
     
-    // Por qué: Clave para la eliminación y migración de claves heredadas que nunca deben persistir en almacenamiento no seguro
-    const val KEY_GEMINI_API_KEY = "gemini_api_key"
-    
-    // Por qué: Bandera para activar o desactivar la traducción inteligente con IA conversacional
+    // Por qué: Bandera para activar o desactivar la traducción neuronal avanzada en el dispositivo
     const val KEY_AI_ENABLED = "ai_translation_enabled"
+    const val KEY_CUSTOM_MODEL_PATH = "custom_model_path"
     
     // Por qué: Modos de interacción: TAP para traducir mensajes específicos al tocarlos, ALL para overlay general
     const val KEY_TRANSLATE_MODE = "translate_mode"
