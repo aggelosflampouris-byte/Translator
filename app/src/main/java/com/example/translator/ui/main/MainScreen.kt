@@ -683,6 +683,7 @@ fun MainScreen(
               appendLine("EnabledPkgs: ${enabledPackages.size} (Messenger=$messengerOn)")
               appendLine("Runtime: ${ServiceBridge.lastRuntimeTrace}")
               appendLine("LastScan: ${ServiceBridge.lastScanDebug}")
+              appendLine("LastTree: ${ServiceBridge.lastTreeScanDebug}")
           }.trim()
 
           AlertDialog(

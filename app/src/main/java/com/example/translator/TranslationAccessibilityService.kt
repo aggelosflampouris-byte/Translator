@@ -157,6 +157,8 @@ class TranslationAccessibilityService : AccessibilityService() {
     @Volatile private var targetSrcNonNullCount: Int = 0
     @Volatile private var targetSrcNullCount: Int = 0
     @Volatile private var lastDiagTargetPkg: String? = null
+    @Volatile private var lastRootFetchMode: String = "-"
+    @Volatile private var lastWinFetchMode: String = "-"
     @Volatile private var lastRootOrigin: String = "none"
     @Volatile private var pendingScanWindowStartMs: Long = 0L
     @Volatile private var acceptedScrollCount: Int = 0
@@ -487,14 +489,23 @@ class TranslationAccessibilityService : AccessibilityService() {
     private fun safeRootInActiveWindow(): AccessibilityNodeInfo? {
         try {
             val direct = rootInActiveWindow
-            if (direct != null) return direct
+            if (direct != null) {
+                lastRootFetchMode = "d"
+                return direct
+            }
             // Por qué: En árboles Litho muy profundos (Messenger), el prefetch híbrido por defecto puede fallar
             // o agotar el límite Binder; pedir el nodo raíz sin prefetch (0) o ininterrumpible evita el bloqueo.
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
                 val noPrefetch = getRootInActiveWindow(0)
-                if (noPrefetch != null) return noPrefetch
+                if (noPrefetch != null) {
+                    lastRootFetchMode = "0"
+                    return noPrefetch
+                }
                 val uninterruptible = getRootInActiveWindow(AccessibilityNodeInfo.FLAG_PREFETCH_UNINTERRUPTIBLE)
-                if (uninterruptible != null) return uninterruptible
+                if (uninterruptible != null) {
+                    lastRootFetchMode = "u"
+                    return uninterruptible
+                }
             }
         } catch (_: Exception) {
             // Ignore
@@ -507,14 +518,40 @@ class TranslationAccessibilityService : AccessibilityService() {
         if (window == null) return null
         try {
             val direct = window.root
-            if (direct != null) return direct
+            if (direct != null) {
+                lastWinFetchMode = "d"
+                return direct
+            }
             // Por qué: Algunas ventanas complejas devuelven null en window.root con prefetch híbrido;
             // reintentar con estrategia 0 (solo nodo raíz) e ininterrumpible recupera la jerarquía sin exceder 1MB IPC.
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
                 val noPrefetch = window.getRoot(0)
-                if (noPrefetch != null) return noPrefetch
+                if (noPrefetch != null) {
+                    lastWinFetchMode = "0"
+                    return noPrefetch
+                }
                 val uninterruptible = window.getRoot(AccessibilityNodeInfo.FLAG_PREFETCH_UNINTERRUPTIBLE)
-                if (uninterruptible != null) return uninterruptible
+                if (uninterruptible != null) {
+                    lastWinFetchMode = "u"
+                    return uninterruptible
+                }
+            }
+        } catch (_: Exception) {
+            // Ignore
+        }
+        return null
+    }
+
+    @android.annotation.SuppressLint("WrongConstant")
+    private fun safeChild(node: AccessibilityNodeInfo, index: Int): AccessibilityNodeInfo? {
+        try {
+            val direct = node.getChild(index)
+            if (direct != null) return direct
+            // Por qué: Si la raíz se obtuvo sin prefetch para evitar fallos en Litho, recorrer hijos también
+            // debe poder pedir nodos individuales sin prefetch (0) si getChild(i) por defecto devuelve null.
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                val noPrefetch = node.getChild(index, 0)
+                if (noPrefetch != null) return noPrefetch
             }
         } catch (_: Exception) {
             // Ignore
@@ -1047,16 +1084,26 @@ class TranslationAccessibilityService : AccessibilityService() {
         val activePkg = resolveForegroundTargetPackage() ?: return null
         handleForegroundTargetTransition(activePkg)
 
+        var hollowFallback: AccessibilityNodeInfo? = null
+        var hollowDiag = ""
+
         // Por qué: Prioriza siempre la raíz real de la ventana (rootInActiveWindow / windows) sobre eventSource,
         // ya que en frameworks como Litho (Messenger) eventSource.parent puede detenerse en un subnodo parcial.
+        // Además verifica childCount > 0 para no aceptar una raíz vacía transicional antes de probar windows o eventSource.
         try {
             val active = safeRootInActiveWindow()
             if (active != null && active.packageName?.toString() == activePkg) {
-                cachedTargetRootPkg = activePkg
-                cachedTargetRootNode = active
-                lastRootOrigin = "actWin"
-                lastRootExtractDiag = "actWin"
-                return active
+                val ch = active.childCount
+                val diag = "actWin($lastRootFetchMode,ch=$ch)"
+                lastRootExtractDiag = diag
+                if (ch > 0) {
+                    cachedTargetRootPkg = activePkg
+                    cachedTargetRootNode = active
+                    lastRootOrigin = diag
+                    return active
+                }
+                hollowFallback = active
+                hollowDiag = diag
             }
         } catch (e: Exception) {
             Log.w("Translator", "Error querying rootInActiveWindow", e)
@@ -1075,11 +1122,19 @@ class TranslationAccessibilityService : AccessibilityService() {
                 for (window in sortedWindows) {
                     val root = safeWindowRoot(window) ?: continue
                     if (root.packageName?.toString() == activePkg) {
-                        cachedTargetRootPkg = activePkg
-                        cachedTargetRootNode = root
-                        lastRootOrigin = "win@${window.layer}"
-                        lastRootExtractDiag = "win@${window.layer}"
-                        return root
+                        val ch = root.childCount
+                        val diag = "win@${window.layer}($lastWinFetchMode,ch=$ch)"
+                        lastRootExtractDiag = diag
+                        if (ch > 0) {
+                            cachedTargetRootPkg = activePkg
+                            cachedTargetRootNode = root
+                            lastRootOrigin = diag
+                            return root
+                        }
+                        if (hollowFallback == null) {
+                            hollowFallback = root
+                            hollowDiag = diag
+                        }
                     }
                 }
             }
@@ -1157,9 +1212,29 @@ class TranslationAccessibilityService : AccessibilityService() {
             extractTargetRootFromEventSource(focusA11y, activePkg, allowPartial = true)?.let { return it }
         }
 
+        if (hollowFallback != null) {
+            // Por qué: Si ninguna otra fuente produjo hijos o contenido, devuelve la raíz con 0 hijos
+            // para registrar exactamente qué modo la obtuvo y qué reportó el árbol en LastTree.
+            lastRootOrigin = hollowDiag
+            lastRootExtractDiag = hollowDiag
+            return hollowFallback
+        }
+
         val focusDiag = "fI=${focusInput != null}(${focusInputPkg ?: "-"}),fA=${focusA11y != null}(${focusA11yPkg ?: "-"})"
         lastRootOrigin = "null(evt=${eventSource != null},cache=$cacheStateDiag,part=${cachedPartial != null},src=$targetSrcNonNullCount/$targetSrcNullCount,$focusDiag,d=$lastRootExtractDiag)"
         return null
+    }
+
+    // Por qué: Conserva el último diagnóstico con raíz no nula separado de abort=no_fg_target/null_root
+    // que ocurren al salir hacia Recientes o Launcher, evitando perder la traza real dentro de Messenger.
+    private fun setTreeScanDiag(diag: String) {
+        ServiceBridge.lastScanDebug = diag
+        ServiceBridge.lastTreeScanDebug = diag
+    }
+
+    private fun appendTreeScanDiag(suffix: String) {
+        ServiceBridge.lastScanDebug = "${ServiceBridge.lastScanDebug} | $suffix"
+        ServiceBridge.lastTreeScanDebug = "${ServiceBridge.lastTreeScanDebug} | $suffix"
     }
 
     // Called on serviceScope background coroutine
@@ -1202,7 +1277,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         if (isKeyboardVisible(preferredRoot = rootNode)) {
             val edit = findCurrentEditableNode(preferredRoot = rootNode)
             val editRect = Rect().also { edit?.getBoundsInScreen(it) }
-            ServiceBridge.lastScanDebug = "abort=kb_visible | fg=$fgPkg (${activeProfile.id}) | scr=${screenWidth}x$screenHeight | editRect=${editRect.flattenToString()}"
+            setTreeScanDiag("abort=kb_visible | fg=$fgPkg (${activeProfile.id}) | root=$lastRootOrigin | scr=${screenWidth}x$screenHeight | editRect=${editRect.flattenToString()}")
             overlayManager.removeAllMessageOverlays()
             if (isKeyboardTranslatorEnabled) {
                 handleOutgoingTyping()
@@ -1251,13 +1326,13 @@ class TranslationAccessibilityService : AccessibilityService() {
             "cands=${candidates.size}/${dedupedCandidates.size} smp=${stats.samples.joinToString(";")}"
 
         if (dedupedCandidates.isEmpty()) {
-            ServiceBridge.lastScanDebug = "$baseDiag | out=empty"
+            setTreeScanDiag("$baseDiag | out=empty")
             mainHandler.post {
                 overlayManager.removeAllMessageOverlays()
             }
             return 0
         }
-        ServiceBridge.lastScanDebug = "$baseDiag | out=translating(${dedupedCandidates.size})"
+        setTreeScanDiag("$baseDiag | out=translating(${dedupedCandidates.size})")
 
         // Por qué: Purgar inmediatamente cualquier burbuja previa que ya no coincida con los candidatos visibles actuales
         val currentValidBounds = dedupedCandidates.map { it.bounds }
@@ -1289,8 +1364,13 @@ class TranslationAccessibilityService : AccessibilityService() {
         // para que aparezcan en pantalla en menos de 2ms sin esperar a las peticiones de red.
         if (immediateResults.isNotEmpty()) {
             mainHandler.post {
-                if (ServiceBridge.isTranslatingActive && isTargetAppInForeground() && currentGeneration == scanGeneration.get() && !isScreenScrolling) {
+                val fgOk = isTargetAppInForeground()
+                val genOk = currentGeneration == scanGeneration.get()
+                if (ServiceBridge.isTranslatingActive && fgOk && genOk && !isScreenScrolling) {
                     overlayManager.updateOverlays(immediateResults, isFullSync = pendingCandidates.isEmpty(), profile = activeProfile)
+                    appendTreeScanDiag("imm=${immediateResults.size}")
+                } else {
+                    appendTreeScanDiag("immAbort(act=${ServiceBridge.isTranslatingActive},fg=$fgOk,gen=$genOk,scr=$isScreenScrolling)")
                 }
             }
         }
@@ -1320,7 +1400,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                         identifiedLang = detectedLang
                     )
                     if (!isEligible) {
-                        ServiceBridge.lastScanDebug = "${ServiceBridge.lastScanDebug} | mlkit=ineligible(det=$detectedLang,len=${cleanText.length})"
+                        appendTreeScanDiag("mlkit=ineligible(det=$detectedLang,len=${cleanText.length})")
                         return@launch
                     }
 
@@ -1332,29 +1412,36 @@ class TranslationAccessibilityService : AccessibilityService() {
                         // un escaneo rápido para pintar la traducción recién cacheada en su nueva posición.
                         val timeSinceScroll = android.os.SystemClock.uptimeMillis() - lastScrollTimestamp
                         if (currentGeneration != scanGeneration.get()) {
+                            appendTreeScanDiag("pendGen")
                             scheduleScan(80L)
                             return@launch
                         }
+                        val fgOk = isTargetAppInForeground()
                         if (isScreenScrolling ||
                             timeSinceScroll < 350L ||
-                            !isTargetAppInForeground() ||
+                            !fgOk ||
                             !ServiceBridge.isTranslatingActive
                         ) {
+                            appendTreeScanDiag("pendAbort(scr=$isScreenScrolling,t=$timeSinceScroll,fg=$fgOk,act=${ServiceBridge.isTranslatingActive})")
                             return@launch
                         }
 
                         mainHandler.post {
-                            if (currentGeneration == scanGeneration.get() &&
+                            val genOk = currentGeneration == scanGeneration.get()
+                            val fgOkPost = isTargetAppInForeground()
+                            if (genOk &&
                                 ServiceBridge.isTranslatingActive &&
-                                isTargetAppInForeground() &&
+                                fgOkPost &&
                                 !isScreenScrolling
                             ) {
                                 overlayManager.addOrUpdateOverlay(rect, senseCorrected, profile = activeProfile)
-                                ServiceBridge.lastScanDebug = "${ServiceBridge.lastScanDebug} | overlay=ok(rect=${rect.left},${rect.top}-${rect.right},${rect.bottom})"
+                                appendTreeScanDiag("overlay=ok(rect=${rect.left},${rect.top}-${rect.right},${rect.bottom})")
+                            } else {
+                                appendTreeScanDiag("postAbort(gen=$genOk,act=${ServiceBridge.isTranslatingActive},fg=$fgOkPost,scr=$isScreenScrolling)")
                             }
                         }
                     } else {
-                        ServiceBridge.lastScanDebug = "${ServiceBridge.lastScanDebug} | mlkit=null_output"
+                        appendTreeScanDiag("mlkit=null_output")
                     }
                 } finally {
                     inFlightKeys.remove(flightKey)
@@ -1391,7 +1478,7 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         var maxChildTextLen = 0
         for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
+            val child = safeChild(node, i) ?: continue
             val childLen = collectMessageCandidates(
                 child,
                 outList,
@@ -1661,7 +1748,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
 
         try {
-            val activeRoot = rootInActiveWindow
+            val activeRoot = safeRootInActiveWindow()
             val focused = activeRoot?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
             val focusedPkg = focused?.packageName?.toString()
             if (focused != null && isEnabledTargetPackage(focusedPkg) && isEditableNodeOnScreen(focused, screenWidth, screenHeight)) {
@@ -1698,7 +1785,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                 return
             }
             for (i in 0 until current.childCount) {
-                val child = current.getChild(i) ?: continue
+                val child = safeChild(current, i) ?: continue
                 walk(child)
             }
         }

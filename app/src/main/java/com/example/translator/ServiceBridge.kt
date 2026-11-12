@@ -57,6 +57,13 @@ object ServiceBridge {
     @Volatile var lastScanDebug: String = "No scan executed yet."
 
     /**
+     * Última traza de escaneo que sí obtuvo una raíz de nodos no nula de la app objetivo.
+     * Por qué: Evita que abortos transitorios al salir hacia SystemUI/Recents sobrescriban
+     * el diagnóstico real del árbol de mensajes de Messenger.
+     */
+    @Volatile var lastTreeScanDebug: String = "No non-null root scan yet."
+
+    /**
      * Traza continua del ciclo de vida, eventos y ventanas externas sin contenido de mensajes.
      * Por qué: Permite distinguir si un fallo ocurre por falta de eventos, ventanas bloqueantes o bucle detenido.
      */
