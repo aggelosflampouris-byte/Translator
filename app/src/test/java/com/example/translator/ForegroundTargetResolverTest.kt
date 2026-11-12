@@ -178,5 +178,49 @@ class ForegroundTargetResolverTest {
         )
         assertNull(result.targetPackage)
     }
+
+    @Test
+    fun resolve_detectsMessengerWhenOneUiLeavesLauncherFocusedBelowNullRootWindow() {
+        val launcherWin = AppWindowSnapshot(
+            packageName = "com.sec.android.app.launcher",
+            isActive = true,
+            isFocused = true,
+            layer = 0,
+            bounds = WindowRect(0, 0, 1080, 2316)
+        )
+        val messengerUnattributedWin = AppWindowSnapshot(
+            packageName = null,
+            isActive = false,
+            isFocused = false,
+            layer = 1,
+            bounds = WindowRect(0, 0, 1080, 2316)
+        )
+        val inMessenger = ForegroundTargetResolver.resolve(
+            activeWindowPkg = "com.sec.android.app.launcher",
+            activeWindowBounds = WindowRect(0, 0, 1080, 2316),
+            appWindows = listOf(messengerUnattributedWin, launcherWin),
+            screenWidthPx = 1080,
+            screenHeightPx = 2340,
+            recentEventPkg = "com.facebook.orca",
+            recentEventAgeMs = 20L,
+            enabledTargetPackages = enabledPkgs,
+            selfPackage = selfPkg
+        )
+        assertEquals("com.facebook.orca", inMessenger.targetPackage)
+
+        // Cuando el usuario regresa al lanzador real, la ventana superior desaparece y debe bloquearse
+        val backHome = ForegroundTargetResolver.resolve(
+            activeWindowPkg = "com.sec.android.app.launcher",
+            activeWindowBounds = WindowRect(0, 0, 1080, 2316),
+            appWindows = listOf(launcherWin),
+            screenWidthPx = 1080,
+            screenHeightPx = 2340,
+            recentEventPkg = "com.facebook.orca",
+            recentEventAgeMs = 200L,
+            enabledTargetPackages = enabledPkgs,
+            selfPackage = selfPkg
+        )
+        assertNull(backHome.targetPackage)
+    }
 }
 

@@ -19,7 +19,7 @@ data class WindowRect(
  * Instantánea ligera de una ventana `TYPE_APPLICATION` observada por el servicio de accesibilidad.
  */
 data class AppWindowSnapshot(
-    val packageName: String,
+    val packageName: String?,
     val isActive: Boolean,
     val isFocused: Boolean,
     val layer: Int,
@@ -79,6 +79,23 @@ object ForegroundTargetResolver {
                 !TargetAppCatalog.isBlockedSensitivePackage(pkg, selfPackage)
         }
 
+        val substantialWindows = appWindows
+            .asSequence()
+            .filter { win ->
+                val pkg = win.packageName
+                (pkg.isNullOrBlank() || !isSystemTransientPackage(pkg)) &&
+                    isSubstantialWindow(win.bounds, screenWidthPx, screenHeightPx)
+            }
+            .sortedWith(
+                // Por qué: Ordena primero por capa visual descendente (lo que realmente cubre la pantalla)
+                // para evitar que una ventana lanzadora en capa 0 marcada AF bloquee apps visibles encima.
+                compareByDescending<AppWindowSnapshot> { it.layer }
+                    .thenByDescending { it.isActive || it.isFocused }
+            )
+            .toList()
+
+        val topSubstantialWin = substantialWindows.firstOrNull()
+
         // 1. Comprobar primero rootInActiveWindow si apunta a una superficie clara
         if (!activeWindowPkg.isNullOrBlank()) {
             if (isEnabledTarget(activeWindowPkg)) {
@@ -93,6 +110,23 @@ object ForegroundTargetResolver {
                 }
             } else if (!isSystemTransientPackage(activeWindowPkg)) {
                 if (TargetAppCatalog.isBlockedSensitivePackage(activeWindowPkg, selfPackage)) {
+                    val activeLayer = appWindows
+                        .filter { it.packageName == activeWindowPkg }
+                        .maxOfOrNull { it.layer }
+                    if (topSubstantialWin != null && (activeLayer == null || topSubstantialWin.layer > activeLayer)) {
+                        val topPkg = topSubstantialWin.packageName
+                        if (isEnabledTarget(topPkg)) {
+                            return ForegroundResolutionResult(topPkg, "win_above_blocked=$topPkg")
+                        }
+                        // Por qué: En One UI, Messenger puede aparecer como ventana TYPE_APPLICATION en capa superior
+                        // sin root atribuido (window.root == null) sobre el lanzador en capa 0.
+                        if (topPkg.isNullOrBlank() &&
+                            recentEventAgeMs in 0..RECENT_EVENT_GRACE_MS &&
+                            isEnabledTarget(recentEventPkg)
+                        ) {
+                            return ForegroundResolutionResult(recentEventPkg, "null_win_above_blocked=$recentEventPkg")
+                        }
+                    }
                     if (activeWindowBounds == null || substantial) {
                         return ForegroundResolutionResult(null, "blocked_active=$activeWindowPkg")
                     }
@@ -102,32 +136,19 @@ object ForegroundTargetResolver {
             }
         }
 
-        // 2. Inspeccionar las ventanas TYPE_APPLICATION ordenadas por relevancia y capa
-        if (appWindows.isNotEmpty()) {
-            val substantialWindows = appWindows
-                .asSequence()
-                .filter { win ->
-                    win.packageName.isNotBlank() && !isSystemTransientPackage(win.packageName)
+        // 2. Inspeccionar las ventanas TYPE_APPLICATION sustanciales ordenadas por capa
+        if (topSubstantialWin != null) {
+            val topPkg = topSubstantialWin.packageName
+            if (topPkg.isNullOrBlank()) {
+                if (recentEventAgeMs in 0..RECENT_EVENT_GRACE_MS && isEnabledTarget(recentEventPkg)) {
+                    return ForegroundResolutionResult(recentEventPkg, "null_top_win=$recentEventPkg")
                 }
-                .filter { win ->
-                    val substantial = isSubstantialWindow(win.bounds, screenWidthPx, screenHeightPx)
-                    // Por qué: Permite ignorar tiras Edge, popups diminutos o burbujas flotantes propias
-                    // para leer el paquete real de la ventana principal detrás.
-                    substantial
-                }
-                .sortedWith(
-                    compareByDescending<AppWindowSnapshot> { it.isActive || it.isFocused }
-                        .thenByDescending { it.layer }
-                )
-                .toList()
-
-            val topWin = substantialWindows.firstOrNull()
-            if (topWin != null) {
-                if (isEnabledTarget(topWin.packageName)) {
-                    return ForegroundResolutionResult(topWin.packageName, "win=${topWin.packageName}")
-                }
-                return ForegroundResolutionResult(null, "other_win=${topWin.packageName}")
+                return ForegroundResolutionResult(null, "null_win_no_recent")
             }
+            if (isEnabledTarget(topPkg)) {
+                return ForegroundResolutionResult(topPkg, "win=$topPkg")
+            }
+            return ForegroundResolutionResult(null, "other_win=$topPkg")
         }
 
         // 3. Respaldo por evento reciente solo si las APIs de ventana devolvieron vacío o transitorio
