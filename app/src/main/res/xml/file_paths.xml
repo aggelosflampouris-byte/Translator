@@ -1,8 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Por qué: Define las rutas seguras accesibles mediante FileProvider para que el instalador de paquetes del sistema operativo Android pueda leer e instalar la actualización del APK descargada -->
+<!-- Por qué: Expone al instalador del sistema únicamente el directorio de actualizaciones descargadas, nunca el resto de la caché ni del almacenamiento externo -->
 <paths>
-    <cache-path name="cache" path="." />
-    <external-cache-path name="external_cache" path="." />
-    <external-files-path name="external_files" path="." />
+    <cache-path name="updates" path="updates/" />
 </paths>
-

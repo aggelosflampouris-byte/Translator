@@ -33,6 +33,7 @@ import com.example.translator.LearningStore
 import com.example.translator.ModelAssetManager
 import com.example.translator.ServiceBridge
 import com.example.translator.TranslationNotificationManager
+import com.example.translator.TranslatorApplication
 import com.example.translator.TranslatorPool
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -101,6 +102,49 @@ fun MainScreen(
           val dest = appUpdater.getUpdateFile(info.version)
           if (dest.exists() && dest.length() > 0L && (info.apkSize == 0L || dest.length() == info.apkSize)) {
               downloadedApkFile = dest
+          }
+      }
+  }
+
+  // Por qué: Traduce el resultado del instalador a estados visibles del diálogo; si la verificación falla se descarta el APK
+  fun handleInstallResult(result: AppUpdater.InstallResult) {
+      when (result) {
+          is AppUpdater.InstallResult.Success -> pendingUpdate = null
+          is AppUpdater.InstallResult.PermissionRequired -> coroutineScope.launch {
+              snackbarHostState.showSnackbar("Enable 'Allow from this source' to install update")
+          }
+          is AppUpdater.InstallResult.Error -> {
+              downloadedApkFile = null
+              downloadErrorMessage = result.message
+          }
+          is AppUpdater.InstallResult.FileNotFound -> {
+              downloadedApkFile = null
+              downloadErrorMessage = "The downloaded update file is missing."
+          }
+      }
+  }
+
+  // Por qué: Rutina única de descarga verificada compartida por los botones "Download & Install" y "Retry"
+  fun startUpdateDownload(info: AppUpdater.UpdateInfo) {
+      downloadErrorMessage = null
+      isDownloadingUpdate = true
+      downloadProgress = 0f
+      downloadStatusText = "Connecting..."
+      val destination = appUpdater.getUpdateFile(info.version)
+      downloadJob = coroutineScope.launch {
+          val success = appUpdater.downloadApk(info.apkUrl, destination, info.apkSize) { bytesDownloaded, totalBytes ->
+              downloadProgress = if (totalBytes > 0) bytesDownloaded.toFloat() / totalBytes.toFloat() else 0f
+              val mbDownloaded = bytesDownloaded / (1024f * 1024f)
+              val mbTotal = totalBytes / (1024f * 1024f)
+              val percent = if (totalBytes > 0) (bytesDownloaded * 100 / totalBytes).toInt() else 0
+              downloadStatusText = String.format(Locale.US, "%.1f MB / %.1f MB (%d%%)", mbDownloaded, mbTotal, percent)
+          }
+          isDownloadingUpdate = false
+          if (success) {
+              downloadedApkFile = destination
+              handleInstallResult(appUpdater.installApk(context, destination))
+          } else {
+              downloadErrorMessage = "Download failed. Check your internet connection."
           }
       }
   }
@@ -196,16 +240,8 @@ fun MainScreen(
                   downloadedApkFile != null -> {
                       Button(
                           onClick = {
-                              val file = downloadedApkFile
-                              if (file != null) {
-                                  val result = appUpdater.installApk(context, file)
-                                  if (result is AppUpdater.InstallResult.PermissionRequired) {
-                                      coroutineScope.launch {
-                                          snackbarHostState.showSnackbar("Enable 'Allow from this source' to install update")
-                                      }
-                                  } else if (result is AppUpdater.InstallResult.Success) {
-                                      pendingUpdate = null
-                                  }
+                              downloadedApkFile?.let { file ->
+                                  handleInstallResult(appUpdater.installApk(context, file))
                               }
                           }
                       ) {
@@ -213,60 +249,12 @@ fun MainScreen(
                       }
                   }
                   downloadErrorMessage != null -> {
-                      Button(
-                          onClick = {
-                              downloadErrorMessage = null
-                              isDownloadingUpdate = true
-                              downloadProgress = 0f
-                              downloadStatusText = "Connecting..."
-                              val destination = appUpdater.getUpdateFile(info.version)
-                              downloadJob = coroutineScope.launch {
-                                  val success = appUpdater.downloadApk(info.apkUrl, destination) { bytesDownloaded, totalBytes ->
-                                      downloadProgress = if (totalBytes > 0) bytesDownloaded.toFloat() / totalBytes.toFloat() else 0f
-                                      val mbDownloaded = bytesDownloaded / (1024f * 1024f)
-                                      val mbTotal = totalBytes / (1024f * 1024f)
-                                      val percent = if (totalBytes > 0) (bytesDownloaded * 100 / totalBytes).toInt() else 0
-                                      downloadStatusText = String.format(Locale.US, "%.1f MB / %.1f MB (%d%%)", mbDownloaded, mbTotal, percent)
-                                  }
-                                  isDownloadingUpdate = false
-                                  if (success) {
-                                      downloadedApkFile = destination
-                                      appUpdater.installApk(context, destination)
-                                  } else {
-                                      downloadErrorMessage = "Download failed. Check your internet connection."
-                                  }
-                              }
-                          }
-                      ) {
+                      Button(onClick = { startUpdateDownload(info) }) {
                           Text("Retry")
                       }
                   }
                   else -> {
-                      Button(
-                          onClick = {
-                              downloadErrorMessage = null
-                              isDownloadingUpdate = true
-                              downloadProgress = 0f
-                              downloadStatusText = "Connecting..."
-                              val destination = appUpdater.getUpdateFile(info.version)
-                              downloadJob = coroutineScope.launch {
-                                  val success = appUpdater.downloadApk(info.apkUrl, destination) { bytesDownloaded, totalBytes ->
-                                      downloadProgress = if (totalBytes > 0) bytesDownloaded.toFloat() / totalBytes.toFloat() else 0f
-                                      val mbDownloaded = bytesDownloaded / (1024f * 1024f)
-                                      val mbTotal = totalBytes / (1024f * 1024f)
-                                      val percent = if (totalBytes > 0) (bytesDownloaded * 100 / totalBytes).toInt() else 0
-                                      downloadStatusText = String.format(Locale.US, "%.1f MB / %.1f MB (%d%%)", mbDownloaded, mbTotal, percent)
-                                  }
-                                  isDownloadingUpdate = false
-                                  if (success) {
-                                      downloadedApkFile = destination
-                                      appUpdater.installApk(context, destination)
-                                  } else {
-                                      downloadErrorMessage = "Download failed. Check your internet connection."
-                                  }
-                              }
-                          }
-                      ) {
+                      Button(onClick = { startUpdateDownload(info) }) {
                           Text("Download & Install")
                       }
                   }
@@ -395,13 +383,13 @@ fun MainScreen(
   var isAccessibilityEnabled by remember { mutableStateOf(checkAccessibilityEnabled(context)) }
 
   // Crash Reporting
-  val crashPrefs = context.getSharedPreferences("crash_prefs", Context.MODE_PRIVATE)
-  var crashLog by remember { mutableStateOf(crashPrefs.getString("last_crash", null)) }
+  val crashPrefs = context.getSharedPreferences(TranslatorApplication.CRASH_PREFS, Context.MODE_PRIVATE)
+  var crashLog by remember { mutableStateOf(crashPrefs.getString(TranslatorApplication.KEY_LAST_CRASH, null)) }
 
   if (crashLog != null) {
       AlertDialog(
           onDismissRequest = {
-              crashPrefs.edit().remove("last_crash").apply()
+              crashPrefs.edit().remove(TranslatorApplication.KEY_LAST_CRASH).apply()
               crashLog = null
           },
           title = { Text("App Crashed") },
@@ -427,7 +415,7 @@ fun MainScreen(
           },
           dismissButton = {
               TextButton(onClick = {
-                  crashPrefs.edit().remove("last_crash").apply()
+                  crashPrefs.edit().remove(TranslatorApplication.KEY_LAST_CRASH).apply()
                   crashLog = null
               }) {
                   Text("Dismiss")

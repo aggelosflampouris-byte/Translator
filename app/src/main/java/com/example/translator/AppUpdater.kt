@@ -2,6 +2,9 @@ package com.example.translator
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInfo
+import android.content.pm.PackageManager
+import android.content.pm.Signature
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -14,6 +17,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 /**
@@ -29,7 +33,7 @@ class AppUpdater(private val appContext: Context) {
 
     private val gson = Gson()
     private val repoUrl =
-        "https://api.github.com/repos/aggelosflampouris-byte/Translator/releases/latest"
+        "https://api.github.com/repos/$REPO_PATH/releases/latest"
 
     /**
      * Consulta la API de GitHub en busca de una nueva versión disponible.
@@ -62,10 +66,12 @@ class AppUpdater(private val appContext: Context) {
             val apkAsset = release.assets?.firstOrNull {
                 it.name?.endsWith(".apk", ignoreCase = true) == true
             }
-            val apkUrl = apkAsset?.browser_download_url
-                ?: "https://github.com/aggelosflampouris-byte/Translator/releases/download/$latestVersion/app-release-signed.apk"
+            val fallbackApkUrl = "https://github.com/$REPO_PATH/releases/download/$latestVersion/app-release-signed.apk"
+            // Por qué: Nunca se confía en una URL de descarga fuera del repositorio oficial, aunque provenga de la API
+            val apkUrl = apkAsset?.browser_download_url?.takeIf { isTrustedDownloadUrl(it) } ?: fallbackApkUrl
             val apkSize = apkAsset?.size ?: 0L
-            val htmlUrl = release.html_url ?: "https://github.com/aggelosflampouris-byte/Translator/releases/tag/$latestVersion"
+            val htmlUrl = release.html_url?.takeIf { isTrustedDownloadUrl(it) }
+                ?: "https://github.com/$REPO_PATH/releases/tag/$latestVersion"
 
             UpdateInfo(
                 version = latestVersion,
@@ -99,8 +105,13 @@ class AppUpdater(private val appContext: Context) {
     suspend fun downloadApk(
         apkUrl: String,
         destinationFile: File,
+        expectedSize: Long = 0L,
         onProgress: (bytesDownloaded: Long, totalBytes: Long) -> Unit
     ): Boolean = withContext(Dispatchers.IO) {
+        if (!isTrustedDownloadUrl(apkUrl)) {
+            Log.w("AppUpdater", "Rejected untrusted APK URL")
+            return@withContext false
+        }
         try {
             if (destinationFile.exists()) {
                 destinationFile.delete()
@@ -115,6 +126,11 @@ class AppUpdater(private val appContext: Context) {
             val response = client.newCall(request).execute()
             if (!response.isSuccessful) {
                 Log.w("AppUpdater", "Failed to download APK: HTTP ${response.code}")
+                return@withContext false
+            }
+            // Por qué: GitHub redirige a su CDN; se valida también el destino final de la redirección
+            if (!isTrustedDownloadUrl(response.request.url.toString())) {
+                Log.w("AppUpdater", "Rejected APK download redirected to an untrusted host")
                 return@withContext false
             }
 
@@ -147,9 +163,16 @@ class AppUpdater(private val appContext: Context) {
                     }
                 }
             }
+            // Por qué: Un tamaño distinto al publicado indica una descarga truncada o manipulada
+            if (expectedSize > 0L && destinationFile.length() != expectedSize) {
+                Log.w("AppUpdater", "Downloaded APK size mismatch")
+                destinationFile.delete()
+                return@withContext false
+            }
             true
         } catch (e: Exception) {
             Log.e("AppUpdater", "Error downloading APK", e)
+            destinationFile.delete()
             false
         }
     }
@@ -169,6 +192,14 @@ class AppUpdater(private val appContext: Context) {
         if (!file.exists() || file.length() == 0L) {
             Log.e("AppUpdater", "APK file does not exist or is empty")
             return InstallResult.FileNotFound
+        }
+
+        // Por qué: Verifica paquete, versión y certificado de firma antes de entregar el APK al instalador del sistema
+        val verificationError = verifyApk(context, file)
+        if (verificationError != null) {
+            Log.e("AppUpdater", "APK verification failed: $verificationError")
+            file.delete()
+            return InstallResult.Error(verificationError)
         }
 
         // Por qué: En Android 8.0+ (Oreo y superior) se debe verificar si la aplicación tiene permiso para instalar paquetes desconocidos
@@ -207,9 +238,110 @@ class AppUpdater(private val appContext: Context) {
     }
 
     /**
+     * Confirms that a downloaded APK is a newer build of this same app, signed with the same certificate.
+     * Returns `null` when the APK is safe to install, or a user-facing error message otherwise.
+     */
+    fun verifyApk(context: Context, file: File): String? {
+        return try {
+            val pm = context.packageManager
+            val archive = readArchiveInfo(pm, file) ?: return "The downloaded file is not a valid APK."
+            if (archive.packageName != context.packageName) {
+                return "The downloaded APK belongs to a different app."
+            }
+            val installed = readInstalledInfo(pm, context.packageName)
+            if (versionCodeOf(archive) <= versionCodeOf(installed)) {
+                return "The downloaded APK is not newer than the installed version."
+            }
+            val installedCurrent = currentSignerDigests(installed)
+            val archiveAuthorized = authorizedSignerDigests(archive)
+            // Por qué: Admite la rotación de claves (historial de firmas) pero exige el certificado actual instalado
+            if (installedCurrent.isEmpty() || !archiveAuthorized.containsAll(installedCurrent)) {
+                return "The downloaded APK is not signed by the original developer."
+            }
+            null
+        } catch (e: Exception) {
+            Log.e("AppUpdater", "Failed to verify APK", e)
+            "Could not verify the downloaded APK."
+        }
+    }
+
+    private fun signingFlags(): Int {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            PackageManager.GET_SIGNING_CERTIFICATES
+        } else {
+            @Suppress("DEPRECATION")
+            PackageManager.GET_SIGNATURES
+        }
+    }
+
+    private fun readArchiveInfo(pm: PackageManager, file: File): PackageInfo? {
+        val info = pm.getPackageArchiveInfo(file.absolutePath, signingFlags()) ?: return null
+        // Por qué: getPackageArchiveInfo no rellena sourceDir, necesario para leer las firmas en algunas versiones
+        info.applicationInfo?.sourceDir = file.absolutePath
+        info.applicationInfo?.publicSourceDir = file.absolutePath
+        return info
+    }
+
+    private fun readInstalledInfo(pm: PackageManager, packageName: String): PackageInfo {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            pm.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(signingFlags().toLong()))
+        } else {
+            @Suppress("DEPRECATION")
+            pm.getPackageInfo(packageName, signingFlags())
+        }
+    }
+
+    private fun versionCodeOf(info: PackageInfo): Long {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.longVersionCode
+        } else {
+            @Suppress("DEPRECATION")
+            info.versionCode.toLong()
+        }
+    }
+
+    private fun currentSignerDigests(info: PackageInfo): Set<String> {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val signingInfo = info.signingInfo ?: return legacySignerDigests(info)
+            val signers = if (signingInfo.hasMultipleSigners()) {
+                signingInfo.apkContentsSigners
+            } else {
+                signingInfo.signingCertificateHistory?.takeLast(1)?.toTypedArray()
+            }
+            return digestsOf(signers)
+        }
+        return legacySignerDigests(info)
+    }
+
+    private fun authorizedSignerDigests(info: PackageInfo): Set<String> {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val signingInfo = info.signingInfo ?: return legacySignerDigests(info)
+            val signers = if (signingInfo.hasMultipleSigners()) {
+                signingInfo.apkContentsSigners
+            } else {
+                signingInfo.signingCertificateHistory
+            }
+            return digestsOf(signers)
+        }
+        return legacySignerDigests(info)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun legacySignerDigests(info: PackageInfo): Set<String> = digestsOf(info.signatures)
+
+    private fun digestsOf(signatures: Array<Signature>?): Set<String> {
+        if (signatures.isNullOrEmpty()) return emptySet()
+        val sha256 = MessageDigest.getInstance("SHA-256")
+        return signatures.map { signature ->
+            sha256.digest(signature.toByteArray()).joinToString("") { "%02x".format(it) }
+        }.toSet()
+    }
+
+    /**
      * Abre la página de la versión en el navegador como respaldo en caso de fallo en la descarga interna.
      */
     fun openUpdatePage(context: Context, htmlUrl: String) {
+        if (!isTrustedDownloadUrl(htmlUrl)) return
         try {
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(htmlUrl)).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -221,6 +353,31 @@ class AppUpdater(private val appContext: Context) {
     }
 
     companion object {
+        const val REPO_PATH = "aggelosflampouris-byte/Translator"
+
+        // Por qué: GitHub sirve los binarios de las versiones desde estos dominios de CDN tras la redirección
+        private val TRUSTED_CDN_HOSTS = setOf(
+            "objects.githubusercontent.com",
+            "release-assets.githubusercontent.com"
+        )
+
+        /**
+         * Accepts only HTTPS URLs that point at this repository on github.com or GitHub's release CDN.
+         */
+        fun isTrustedDownloadUrl(url: String): Boolean {
+            val uri = try {
+                java.net.URI(url)
+            } catch (e: Exception) {
+                return false
+            }
+            if (!uri.scheme.equals("https", ignoreCase = true)) return false
+            if (uri.userInfo != null) return false
+            val host = uri.host?.lowercase() ?: return false
+            if (host in TRUSTED_CDN_HOSTS) return true
+            val path = uri.path ?: return false
+            return host == "github.com" && path.startsWith("/$REPO_PATH/")
+        }
+
         fun normalizeVersion(v: String): String = v.trim().removePrefix("v").removePrefix("V")
 
         /**

@@ -38,5 +38,25 @@ class AppUpdaterTest {
         assertTrue(AppUpdater.isNewerVersion("v1.0.100", "1.0.99"))
         assertFalse(AppUpdater.isNewerVersion("v1.0.9", "1.0.10"))
     }
+
+    // Por qué: Solo se aceptan descargas HTTPS del repositorio oficial o de la CDN de versiones de GitHub
+    @Test
+    fun isTrustedDownloadUrl_acceptsOfficialRepositoryAndCdn() {
+        assertTrue(AppUpdater.isTrustedDownloadUrl("https://github.com/aggelosflampouris-byte/Translator/releases/download/v1.0.82/app-release-signed.apk"))
+        assertTrue(AppUpdater.isTrustedDownloadUrl("https://github.com/aggelosflampouris-byte/Translator/releases/tag/v1.0.82"))
+        assertTrue(AppUpdater.isTrustedDownloadUrl("https://objects.githubusercontent.com/github-production-release-asset/123/abc?X-Amz=1"))
+        assertTrue(AppUpdater.isTrustedDownloadUrl("https://release-assets.githubusercontent.com/github-production-release-asset/123"))
+    }
+
+    @Test
+    fun isTrustedDownloadUrl_rejectsForeignOrInsecureUrls() {
+        assertFalse(AppUpdater.isTrustedDownloadUrl("http://github.com/aggelosflampouris-byte/Translator/releases/download/v1/app.apk"))
+        assertFalse(AppUpdater.isTrustedDownloadUrl("https://github.com/attacker/Translator/releases/download/v1/app.apk"))
+        assertFalse(AppUpdater.isTrustedDownloadUrl("https://github.com/aggelosflampouris-byte/TranslatorEvil/releases/download/v1/app.apk"))
+        assertFalse(AppUpdater.isTrustedDownloadUrl("https://github.com.evil.com/aggelosflampouris-byte/Translator/app.apk"))
+        assertFalse(AppUpdater.isTrustedDownloadUrl("https://user@github.com/aggelosflampouris-byte/Translator/app.apk"))
+        assertFalse(AppUpdater.isTrustedDownloadUrl("not a url"))
+        assertFalse(AppUpdater.isTrustedDownloadUrl("file:///sdcard/app.apk"))
+    }
 }
 

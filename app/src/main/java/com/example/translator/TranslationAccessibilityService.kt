@@ -1272,6 +1272,24 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
     }
 
+    // Por qué: Marca el contenido como sensible (Android 13+) para que el sistema no muestre el texto privado
+    // en la vista previa del portapapeles ni lo ofrezca a teclados con historial de portapapeles.
+    private fun copyTranslationToClipboard(text: String) {
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = ClipData.newPlainText("Translated Text", text).apply {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                description.extras = android.os.PersistableBundle().apply {
+                    putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE, true)
+                }
+            }
+        }
+        clipboard.setPrimaryClip(clip)
+        mainHandler.post {
+            overlayManager.removeDraftOverlay()
+            Toast.makeText(this, "Copied to clipboard (Tap Paste in chat)", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun insertTranslatedTextIntoInput(text: String, fallbackNode: AccessibilityNodeInfo? = null) {
         try {
             val node = findCurrentEditableNode() ?: fallbackNode
@@ -1294,20 +1312,10 @@ class TranslationAccessibilityService : AccessibilityService() {
                     }
                 } else {
                     // Fallback to clipboard if direct action is restricted
-                    val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    clipboard.setPrimaryClip(ClipData.newPlainText("Translated Text", text))
-                    mainHandler.post {
-                        overlayManager.removeDraftOverlay()
-                        Toast.makeText(this, "Copied to clipboard (Tap Paste in chat)", Toast.LENGTH_SHORT).show()
-                    }
+                    copyTranslationToClipboard(text)
                 }
             } else {
-                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                clipboard.setPrimaryClip(ClipData.newPlainText("Translated Text", text))
-                mainHandler.post {
-                    overlayManager.removeDraftOverlay()
-                    Toast.makeText(this, "Copied to clipboard (Tap Paste in chat)", Toast.LENGTH_SHORT).show()
-                }
+                copyTranslationToClipboard(text)
             }
             mainHandler.post {
                 overlayManager.removeDraftOverlay()
