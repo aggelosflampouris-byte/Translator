@@ -28,6 +28,7 @@ import com.example.translator.AppDefaults
 import com.example.translator.AppUpdater
 import com.example.translator.BuildConfig
 import com.example.translator.FloatingBubbleService
+import com.example.translator.LearningStore
 import com.example.translator.ModelAssetManager
 import com.example.translator.ServiceBridge
 import com.example.translator.TranslationNotificationManager
@@ -322,6 +323,13 @@ fun MainScreen(
   var aiTranslationEnabled by remember {
       mutableStateOf(prefs.getBoolean(AppDefaults.KEY_AI_ENABLED, true))
   }
+  // ── Aprendizaje adaptativo local (glosario personal y memoria de frases) ───
+  val learningStore = remember { LearningStore.get(context) }
+  var learningEnabled by remember {
+      mutableStateOf(prefs.getBoolean(AppDefaults.KEY_LEARNING_ENABLED, true))
+  }
+  var learningStats by remember { mutableStateOf(learningStore.stats()) }
+  var showResetLearningDialog by remember { mutableStateOf(false) }
   var controlInterface by remember {
       mutableStateOf(prefs.getString(AppDefaults.KEY_CONTROL_INTERFACE, AppDefaults.INTERFACE_NOTIFICATION) ?: AppDefaults.INTERFACE_NOTIFICATION)
   }
@@ -817,6 +825,91 @@ fun MainScreen(
                   }
               }
           }
+      }
+
+      Spacer(modifier = Modifier.height(14.dp))
+
+      // ── Sección 1b: Aprendizaje adaptativo ─────────────────────────────────
+      LaunchedEffect(Unit) {
+          // Por qué: Refresca periódicamente las estadísticas mientras la pantalla está visible
+          while (true) {
+              learningStats = learningStore.stats()
+              delay(3000L)
+          }
+      }
+      OutlinedCard(
+          modifier = Modifier.fillMaxWidth(),
+          shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+          colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+      ) {
+          Column(modifier = Modifier.padding(16.dp)) {
+              Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.SpaceBetween
+              ) {
+                  Column(modifier = Modifier.weight(1f)) {
+                      Text(
+                          text = "Learn From My Edits",
+                          style = MaterialTheme.typography.titleMedium,
+                          color = MaterialTheme.colorScheme.onSurface
+                      )
+                      Spacer(modifier = Modifier.height(2.dp))
+                      Text(
+                          text = "When you insert a draft, fix a word and send it, the translator remembers your wording. Everything stays on this phone.",
+                          style = MaterialTheme.typography.bodySmall,
+                          color = MaterialTheme.colorScheme.onSurfaceVariant
+                      )
+                  }
+                  Spacer(modifier = Modifier.width(12.dp))
+                  Switch(
+                      checked = learningEnabled,
+                      onCheckedChange = { isChecked ->
+                          learningEnabled = isChecked
+                          prefs.edit().putBoolean(AppDefaults.KEY_LEARNING_ENABLED, isChecked).apply()
+                      }
+                  )
+              }
+              Spacer(modifier = Modifier.height(10.dp))
+              Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.SpaceBetween,
+                  verticalAlignment = Alignment.CenterVertically
+              ) {
+                  Text(
+                      text = "${learningStats.first} learned words · ${learningStats.second} remembered phrases",
+                      style = MaterialTheme.typography.labelSmall,
+                      color = MaterialTheme.colorScheme.primary
+                  )
+                  TextButton(
+                      onClick = { showResetLearningDialog = true },
+                      enabled = learningStats.first + learningStats.second > 0,
+                      contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                  ) {
+                      Text("Reset", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                  }
+              }
+          }
+      }
+
+      if (showResetLearningDialog) {
+          AlertDialog(
+              onDismissRequest = { showResetLearningDialog = false },
+              title = { Text("Reset learned data?") },
+              text = { Text("All learned words and remembered phrases will be deleted from this phone.") },
+              confirmButton = {
+                  TextButton(onClick = {
+                      learningStore.clearAll()
+                      learningStats = learningStore.stats()
+                      showResetLearningDialog = false
+                  }) {
+                      Text("Reset", color = MaterialTheme.colorScheme.error)
+                  }
+              },
+              dismissButton = {
+                  TextButton(onClick = { showResetLearningDialog = false }) { Text("Cancel") }
+              }
+          )
       }
 
       Spacer(modifier = Modifier.height(14.dp))

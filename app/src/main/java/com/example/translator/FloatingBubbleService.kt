@@ -167,7 +167,9 @@ class FloatingBubbleService : Service() {
             }
             ServiceBridge.isTranslatingActive = true
             root?.setBackgroundResource(R.drawable.bg_floating_sphere_active)
-            Toast.makeText(this, "Translation Active (Scanning WhatsApp)", Toast.LENGTH_SHORT).show()
+            // Por qué: Notifica de forma visible al usuario qué motor está activo (el modelo neuronal Index-Translate 2B o el respaldo ML Kit)
+            val engineName = if (ModelAssetManager.isModelReady(this)) "Index-Translate 2B Neural" else "ML Kit Local"
+            Toast.makeText(this, "Translation Active ($engineName)", Toast.LENGTH_SHORT).show()
             ServiceBridge.onTranslationStateChanged?.invoke(true)
         } else {
             ServiceBridge.isTranslatingActive = false

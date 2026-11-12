@@ -25,8 +25,12 @@ android {
         applicationId = "com.example.translator"
         minSdk = 24
         targetSdk = 33
-        versionCode = 70
-        versionName = "1.0.70"
+        versionCode = 71
+        versionName = "1.0.71"
+        ndk {
+            // Por qué: La biblioteca nativa llama.cpp de inferencia neuronal está compilada para arquitecturas ARM de 64 bits (arm64-v8a)
+            abiFilters += listOf("arm64-v8a")
+        }
     }
 
     signingConfigs {
@@ -119,4 +123,7 @@ dependencies {
   // Updater
   implementation(libs.okhttp)
   implementation(libs.gson)
+
+  // Local Neural Engine (llama.cpp ARM64 runtime)
+  implementation("dev.ffmpegkit-maintained:llama-android:0.1.1")
 }

@@ -13,6 +13,9 @@ object AppDefaults {
     // Por qué: Bandera para activar o desactivar la traducción neuronal avanzada en el dispositivo
     const val KEY_AI_ENABLED = "ai_translation_enabled"
     const val KEY_CUSTOM_MODEL_PATH = "custom_model_path"
+
+    // Por qué: Permite al usuario activar o desactivar el aprendizaje local a partir de sus correcciones
+    const val KEY_LEARNING_ENABLED = "adaptive_learning_enabled"
     
     // Por qué: Modos de interacción: TAP para traducir mensajes específicos al tocarlos, ALL para overlay general
     const val KEY_TRANSLATE_MODE = "translate_mode"

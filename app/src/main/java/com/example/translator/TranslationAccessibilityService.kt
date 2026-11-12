@@ -64,6 +64,12 @@ class TranslationAccessibilityService : AccessibilityService() {
     private lateinit var hybridEngine: HybridTranslationEngine
     private var manualDraftTargetLang: String? = null
 
+    // Por qué: Memoria local de aprendizaje (frases enviadas y correcciones del usuario) y estado del bucle de retroalimentación
+    private lateinit var learningStore: LearningStore
+    private var isLearningEnabled: Boolean = true
+    private val sentMessageDetector = SentMessageDetector()
+    @Volatile private var pendingDraftSession: DraftSession? = null
+
     private val prefListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { prefs, key ->
         when (key) {
             AppDefaults.KEY_SOURCE_LANGUAGE -> {
@@ -74,6 +80,9 @@ class TranslationAccessibilityService : AccessibilityService() {
             }
             AppDefaults.KEY_KEYBOARD_ENABLED -> {
                 isKeyboardTranslatorEnabled = prefs.getBoolean(key, true)
+            }
+            AppDefaults.KEY_LEARNING_ENABLED -> {
+                isLearningEnabled = prefs.getBoolean(key, true)
             }
             AppDefaults.KEY_TRANSLATE_MODE -> {
                 translationMode = prefs.getString(key, AppDefaults.MODE_TAP) ?: AppDefaults.MODE_TAP
@@ -97,11 +106,13 @@ class TranslationAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         overlayManager = OverlayManager(this)
         hybridEngine = HybridTranslationEngine(this)
+        learningStore = LearningStore.get(this)
 
         val prefs = getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
         configuredSource = prefs.getString(AppDefaults.KEY_SOURCE_LANGUAGE, AppDefaults.SOURCE_LANGUAGE) ?: AppDefaults.SOURCE_LANGUAGE
         configuredTarget = prefs.getString(AppDefaults.KEY_TARGET_LANGUAGE, AppDefaults.TARGET_LANGUAGE) ?: AppDefaults.TARGET_LANGUAGE
         isKeyboardTranslatorEnabled = prefs.getBoolean(AppDefaults.KEY_KEYBOARD_ENABLED, true)
+        isLearningEnabled = prefs.getBoolean(AppDefaults.KEY_LEARNING_ENABLED, true)
         translationMode = prefs.getString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_TAP) ?: AppDefaults.MODE_TAP
         prefs.registerOnSharedPreferenceChangeListener(prefListener)
 
@@ -553,6 +564,13 @@ class TranslationAccessibilityService : AccessibilityService() {
             val msgSource = if (configuredSource != "AUTO") configuredSource else AppDefaults.SOURCE_LANGUAGE
             val msgTarget = configuredTarget
 
+            // Por qué: Las frases verificadas por el usuario tienen prioridad absoluta sobre cualquier motor
+            val rememberedTranslation = lookupLearnedMemory(msgSource, msgTarget, cleanText)
+            if (rememberedTranslation != null) {
+                immediateResults.add(Pair(rect, rememberedTranslation))
+                continue
+            }
+
             // Check cache first (in-memory + persistent) for instantaneous rendering
             val cachedTranslation = getCachedTranslation(msgSource, msgTarget, cleanText)
             if (cachedTranslation != null) {
@@ -585,6 +603,9 @@ class TranslationAccessibilityService : AccessibilityService() {
             }
         }
 
+        // Por qué: Instantánea de la conversación visible (ambos idiomas) para dar contexto al modelo neuronal
+        val conversation = if (pendingCandidates.isNotEmpty()) collectVisibleConversation(rootNode, effectiveBottom) else emptyList()
+
         // Por qué: Traducir de forma asíncrona cada mensaje pendiente sin bloquearse mutuamente,
         // actualizando su pastilla de forma individual tan pronto como el motor responda.
         for (candidate in pendingCandidates) {
@@ -612,14 +633,19 @@ class TranslationAccessibilityService : AccessibilityService() {
                 }
                 val protected = TextNormalizer.protectEmojis(normalizedText)
 
-                val rawTranslated = hybridEngine.translate(protected.text, msgSource, msgTarget)
+                val hints = buildHints(msgSource, msgTarget, contextAbove(conversation, rect))
+                val rawTranslated = hybridEngine.translate(protected.text, msgSource, msgTarget, hints)
                 if (rawTranslated != null && rawTranslated.isNotBlank()) {
                     val restoredEmojis = TextNormalizer.restoreEmojis(rawTranslated, protected.tokens)
-                    val senseCorrected = TranslationSenseEngine.applyPostTranslationSenseLogic(
-                        originalText = normalizedText,
-                        translatedText = restoredEmojis,
-                        sourceLang = msgSource,
-                        targetLang = msgTarget
+                    val senseCorrected = applyLearnedCorrections(
+                        msgSource,
+                        msgTarget,
+                        TranslationSenseEngine.applyPostTranslationSenseLogic(
+                            originalText = normalizedText,
+                            translatedText = restoredEmojis,
+                            sourceLang = msgSource,
+                            targetLang = msgTarget
+                        )
                     )
 
                     // Por qué: Descartar respuestas de error o negativas generadas por la IA
@@ -678,7 +704,8 @@ class TranslationAccessibilityService : AccessibilityService() {
         minY: Int,
         maxY: Int,
         configuredSource: String,
-        configuredTarget: String
+        configuredTarget: String,
+        requireTranslatable: Boolean = true
     ): Boolean {
         // Por qué: Ignora inmediatamente nodos que no pertenezcan a WhatsApp para evitar procesar la pantalla del lanzador o ajustes del sistema
         val nodePkg = node.packageName?.toString() ?: ""
@@ -694,7 +721,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         var childFound = false
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            val found = collectMessageCandidates(child, outList, minY, maxY, configuredSource, configuredTarget)
+            val found = collectMessageCandidates(child, outList, minY, maxY, configuredSource, configuredTarget, requireTranslatable)
             if (found) {
                 childFound = true
             }
@@ -718,7 +745,8 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
 
         val cleanText = TranslationFilter.cleanMessageText(rawText)
-        if (cleanText.isNotBlank() && TranslationFilter.shouldTranslate(cleanText, configuredTarget, configuredSource)) {
+        val passesLanguageFilter = !requireTranslatable || TranslationFilter.shouldTranslate(cleanText, configuredTarget, configuredSource)
+        if (cleanText.isNotBlank() && passesLanguageFilter) {
             val rect = Rect()
             node.getBoundsInScreen(rect)
 
@@ -898,6 +926,10 @@ class TranslationAccessibilityService : AccessibilityService() {
     private fun handleOutgoingTyping(event: AccessibilityEvent? = null) {
         val node = (if (event?.source?.isEditable == true) event.source else null) ?: findCurrentEditableNode()
 
+        if (node != null) {
+            observeInputForLearning(node)
+        }
+
         if (!isKeyboardTranslatorEnabled || node == null || !isKeyboardVisible(node)) {
             overlayManager.removeDraftOverlay()
             return
@@ -977,6 +1009,13 @@ class TranslationAccessibilityService : AccessibilityService() {
             }
             val effectiveBadge = effectiveTargetLang.uppercase()
 
+            // Por qué: Los mensajes visibles sobre el campo de texto dan contexto conversacional al borrador
+            val draftContext = findWhatsAppRootNode()
+                ?.let { root -> collectVisibleConversation(root, freshRect.top) }
+                ?.map { it.text }
+                ?.takeLast(TranslationPromptBuilder.MAX_CONTEXT_MESSAGES)
+                ?: emptyList()
+
             // Process message line-by-line to preserve paragraphs, line breaks, and mixed lines
             val lines = liveText.split("\n")
             val translatedLines = mutableListOf<String>()
@@ -1006,24 +1045,36 @@ class TranslationAccessibilityService : AccessibilityService() {
                     continue
                 }
 
-                // 2. Caché local instantánea con espacio de nombres por par de idiomas
+                // 2. Memoria de frases verificadas por el usuario (aprendizaje local)
+                val remembered = lookupLearnedMemory(effectiveSourceLang, effectiveTargetLang, normalizedLine)
+                if (remembered != null) {
+                    translatedLines.add(remembered)
+                    continue
+                }
+
+                // 3. Caché local instantánea con espacio de nombres por par de idiomas
                 val cached = getCachedTranslation(effectiveSourceLang, effectiveTargetLang, normalizedLine)
                 if (cached != null) {
                     translatedLines.add(cached)
                     continue
                 }
 
-                // 3. Traducción unificada utilizando hybridEngine (el mismo motor que traduce los mensajes en pantalla)
+                // 4. Traducción unificada utilizando hybridEngine (el mismo motor que traduce los mensajes en pantalla)
                 val protected = TextNormalizer.protectEmojis(normalizedLine)
-                val rawTranslated = hybridEngine.translate(protected.text, effectiveSourceLang, effectiveTargetLang)
+                val hints = buildHints(effectiveSourceLang, effectiveTargetLang, draftContext)
+                val rawTranslated = hybridEngine.translate(protected.text, effectiveSourceLang, effectiveTargetLang, hints)
 
                 if (rawTranslated != null && rawTranslated.isNotBlank() && rawTranslated != protected.text) {
                     val restoredEmojis = TextNormalizer.restoreEmojis(rawTranslated, protected.tokens)
-                    val senseCorrected = TranslationSenseEngine.applyPostTranslationSenseLogic(
-                        originalText = normalizedLine,
-                        translatedText = restoredEmojis,
-                        sourceLang = effectiveSourceLang,
-                        targetLang = effectiveTargetLang
+                    val senseCorrected = applyLearnedCorrections(
+                        effectiveSourceLang,
+                        effectiveTargetLang,
+                        TranslationSenseEngine.applyPostTranslationSenseLogic(
+                            originalText = normalizedLine,
+                            translatedText = restoredEmojis,
+                            sourceLang = effectiveSourceLang,
+                            targetLang = effectiveTargetLang
+                        )
                     )
                     putCachedTranslation(effectiveSourceLang, effectiveTargetLang, normalizedLine, senseCorrected)
                     translatedLines.add(senseCorrected)
@@ -1042,6 +1093,14 @@ class TranslationAccessibilityService : AccessibilityService() {
                             targetLangCode = effectiveBadge,
                             showReplace = true,
                             onInsertClicked = {
+                                // Por qué: Se recuerda el borrador insertado para comparar después con lo que realmente se envía
+                                pendingDraftSession = DraftSession(
+                                    sourceText = liveText,
+                                    machineTranslation = finalTranslatedDraft,
+                                    sourceLang = effectiveSourceLang,
+                                    targetLang = effectiveTargetLang,
+                                    createdAtMillis = android.os.SystemClock.uptimeMillis()
+                                )
                                 insertTranslatedTextIntoInput(finalTranslatedDraft, liveNode)
                             },
                             onDismissClicked = {
@@ -1067,6 +1126,82 @@ class TranslationAccessibilityService : AccessibilityService() {
                     overlayManager.removeDraftOverlay()
                 }
             }
+        }
+    }
+
+    // ── Aprendizaje adaptativo local ─────────────────────────────────────────
+
+    private fun lookupLearnedMemory(sourceLang: String, targetLang: String, text: String): String? {
+        if (!isLearningEnabled) return null
+        return learningStore.lookupMemory(sourceLang, targetLang, text)
+    }
+
+    private fun applyLearnedCorrections(sourceLang: String, targetLang: String, text: String): String {
+        if (!isLearningEnabled) return text
+        return learningStore.applyConfirmedCorrections(sourceLang, targetLang, text)
+    }
+
+    // Por qué: El contexto conversacional siempre ayuda a desambiguar; el glosario solo si el aprendizaje está activo
+    private fun buildHints(sourceLang: String, targetLang: String, context: List<String>): TranslationHints {
+        val terms = if (isLearningEnabled) learningStore.promptTerms(sourceLang, targetLang) else emptyList()
+        return TranslationHints(contextMessages = context, preferredTerms = terms)
+    }
+
+    // Por qué: Recoge todos los mensajes visibles (en ambos idiomas) ordenados de arriba abajo como historial del chat
+    private fun collectVisibleConversation(rootNode: AccessibilityNodeInfo, maxY: Int): List<MessageCandidate> {
+        val density = resources.displayMetrics.density
+        val topInset = (48 * density).toInt()
+        val messages = mutableListOf<MessageCandidate>()
+        collectMessageCandidates(rootNode, messages, topInset, maxY, configuredSource, configuredTarget, requireTranslatable = false)
+        return filterOverlappingCandidates(messages).sortedBy { it.bounds.top }
+    }
+
+    private fun contextAbove(conversation: List<MessageCandidate>, messageBounds: Rect): List<String> {
+        return conversation
+            .filter { it.bounds.bottom <= messageBounds.top + (4 * resources.displayMetrics.density).toInt() && it.bounds != messageBounds }
+            .map { it.text }
+            .takeLast(TranslationPromptBuilder.MAX_CONTEXT_MESSAGES)
+    }
+
+    // Por qué: Observa el campo de texto para detectar el envío de un borrador insertado y aprender de las ediciones
+    private fun observeInputForLearning(inputNode: AccessibilityNodeInfo) {
+        val rawText = inputNode.text?.toString()?.trim() ?: ""
+        val hintText = inputNode.hintText?.toString()?.trim() ?: ""
+        val isEmptyField = rawText.isEmpty() ||
+            rawText.equals(hintText, ignoreCase = true) ||
+            PLACEHOLDER_TOKENS.contains(rawText.lowercase())
+
+        val sentText = sentMessageDetector.observe(if (isEmptyField) "" else rawText) ?: return
+        val session = pendingDraftSession ?: return
+        pendingDraftSession = null
+
+        val sessionAge = android.os.SystemClock.uptimeMillis() - session.createdAtMillis
+        if (!isLearningEnabled || sessionAge > LearningStore.DRAFT_SESSION_TTL_MS) return
+
+        serviceScope.launch {
+            // Por qué: Confirma que el texto aparece como burbuja enviada (y no que el usuario borró todo de golpe)
+            delay(700L)
+            if (!isSentBubbleVisible(sentText)) {
+                Log.d("Translator", "Learning skipped: sent bubble not confirmed")
+                return@launch
+            }
+            val learned = kotlinx.coroutines.withContext(Dispatchers.Default) {
+                learningStore.learnFromSentDraft(session, sentText)
+            }
+            if (learned) {
+                // Por qué: Invalida traducciones en caché que podrían contradecir lo recién aprendido
+                translationCache.evictAll()
+            }
+        }
+    }
+
+    private fun isSentBubbleVisible(sentText: String): Boolean {
+        return try {
+            val root = findWhatsAppRootNode() ?: return false
+            val probe = sentText.lines().first().take(60)
+            root.findAccessibilityNodeInfosByText(probe).any { !it.isEditable }
+        } catch (e: Exception) {
+            false
         }
     }
 
@@ -1219,14 +1354,29 @@ class TranslationAccessibilityService : AccessibilityService() {
                     return@launch
                 }
 
-                val translated = hybridEngine.translate(protected.text, msgSource, msgTarget)
+                val targetCode = if (msgTarget == TranslateLanguage.GREEK) "EL" else "RO"
+                val remembered = lookupLearnedMemory(msgSource, msgTarget, cleanText)
+                if (remembered != null) {
+                    mainHandler.post { overlayManager.showSingleMessagePill(rect, remembered, targetCode) }
+                    return@launch
+                }
+
+                val context = findWhatsAppRootNode()
+                    ?.let { root -> contextAbove(collectVisibleConversation(root, rect.top), rect) }
+                    ?: emptyList()
+                val hints = buildHints(msgSource, msgTarget, context)
+                val translated = hybridEngine.translate(protected.text, msgSource, msgTarget, hints)
                 if (!translated.isNullOrBlank()) {
                     val restored = TextNormalizer.restoreEmojis(translated, protected.tokens)
-                    val corrected = TranslationSenseEngine.applyPostTranslationSenseLogic(
-                        originalText = normalizedText,
-                        translatedText = restored,
-                        sourceLang = msgSource,
-                        targetLang = msgTarget
+                    val corrected = applyLearnedCorrections(
+                        msgSource,
+                        msgTarget,
+                        TranslationSenseEngine.applyPostTranslationSenseLogic(
+                            originalText = normalizedText,
+                            translatedText = restored,
+                            sourceLang = msgSource,
+                            targetLang = msgTarget
+                        )
                     )
                     if (corrected.trim().equals(cleanText.trim(), ignoreCase = true)) {
                         return@launch
@@ -1234,7 +1384,6 @@ class TranslationAccessibilityService : AccessibilityService() {
                     if (msgTarget == TranslateLanguage.GREEK && corrected.none { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }) {
                         return@launch
                     }
-                    val targetCode = if (msgTarget == TranslateLanguage.GREEK) "EL" else "RO"
                     mainHandler.post {
                         overlayManager.showSingleMessagePill(rect, corrected, targetCode)
                     }
@@ -1262,6 +1411,8 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
         TranslatorPool.releaseAll()
         translationCache.evictAll()
+        // Por qué: Libera la memoria nativa y el descriptor de archivo del modelo neuronal al desvincular el servicio
+        hybridEngine.release()
         return super.onUnbind(intent)
     }
 
@@ -1281,6 +1432,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         } catch (e: Exception) {
             Log.w("Translator", "Error unregistering prefListener in onDestroy", e)
         }
+        hybridEngine.release()
     }
 
     override fun onInterrupt() {
