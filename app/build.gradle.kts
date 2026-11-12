@@ -25,8 +25,8 @@ android {
         applicationId = "com.example.translator"
         minSdk = 24
         targetSdk = 33
-        versionCode = 71
-        versionName = "1.0.71"
+        versionCode = 72
+        versionName = "1.0.72"
         ndk {
             // Por qué: La biblioteca nativa llama.cpp de inferencia neuronal está compilada para arquitecturas ARM de 64 bits (arm64-v8a)
             abiFilters += listOf("arm64-v8a")
@@ -66,6 +66,10 @@ android {
     packaging {
       resources {
         excludes += "/META-INF/{AL2.0,LGPL2.1}"
+      }
+      jniLibs {
+        // Por qué: Prioriza el puente JNI local que permite inyectar la plantilla exacta sin razonamiento de Qwen3.5
+        pickFirsts += "**/libllama_jni.so"
       }
     }
 }

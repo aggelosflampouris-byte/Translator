@@ -11,6 +11,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import kotlin.coroutines.resume
 
@@ -38,6 +39,43 @@ class IndexTranslationEngine(private val context: Context) : TranslationEngine {
 
     companion object {
         private const val TAG = "IndexTranslationEngine"
+        private const val INFERENCE_TIMEOUT_MS = 15_000L
+        private const val MAX_GENERATION_TOKENS = 128
+
+        // Por qué: Valida que la salida del modelo sea una traducción genuina en el alfabeto de destino
+        // y no un bloque de razonamiento sin cerrar ni una repetición literal del texto original.
+        internal fun isValidTranslation(output: String, cleanInput: String, targetLang: String): Boolean {
+            val trimmed = output.trim()
+            if (trimmed.isBlank()) return false
+            if (trimmed.equals(cleanInput.trim(), ignoreCase = true)) return false
+
+            val lower = trimmed.lowercase()
+            if (trimmed.startsWith("[Error", ignoreCase = true) ||
+                trimmed.startsWith("Error:", ignoreCase = true) ||
+                lower.contains("<think") ||
+                lower.contains("</think") ||
+                lower.contains("no message was provided") ||
+                lower.contains("please provide the") ||
+                lower.contains("i cannot translate") ||
+                lower.contains("as an ai") ||
+                lower.contains("i am unable to") ||
+                lower.contains("i'm sorry, but") ||
+                lower.startsWith("sure, here is") ||
+                lower.startsWith("here is the translation")
+            ) {
+                return false
+            }
+
+            if (targetLang == "el" || targetLang == TranslateLanguage.GREEK) {
+                val hasGreek = trimmed.any { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }
+                if (!hasGreek) return false
+            } else if (targetLang == "ro" || targetLang == TranslateLanguage.ROMANIAN) {
+                val hasLatin = trimmed.any { it in 'a'..'z' || it in 'A'..'Z' || it in "ăâîșțĂÂÎȘȚ" }
+                if (!hasLatin) return false
+            }
+
+            return true
+        }
     }
 
     private var activeModel: LlamaModel? = null
@@ -47,6 +85,14 @@ class IndexTranslationEngine(private val context: Context) : TranslationEngine {
 
     fun isReady(): Boolean {
         return ModelAssetManager.isModelReady(context)
+    }
+
+    // Por qué: Permite cargar los 1.3 GB del modelo en memoria antes de que el usuario abra una conversación
+    suspend fun preload() = withContext(Dispatchers.Default) {
+        if (!isReady()) return@withContext
+        modelMutex.withLock {
+            ensureModelLoaded()
+        }
     }
 
     private suspend fun ensureModelLoaded(): LlamaModel? {
@@ -66,7 +112,7 @@ class IndexTranslationEngine(private val context: Context) : TranslationEngine {
             current?.let {
                 try {
                     Llama.releaseModel(it)
-                } catch (e: Exception) {
+                } catch (e: Throwable) {
                     Log.w(TAG, "Error releasing old model instance", e)
                 }
             }
@@ -115,32 +161,41 @@ class IndexTranslationEngine(private val context: Context) : TranslationEngine {
             val model = ensureModelLoaded() ?: return@withContext null
 
             try {
-                val result = Llama.complete(
-                    model = model,
-                    prompt = prompt,
-                    systemPrompt = "",
-                    maxTokens = 256
-                )
+                val result = withTimeoutOrNull(INFERENCE_TIMEOUT_MS) {
+                    Llama.complete(
+                        model = model,
+                        prompt = prompt,
+                        systemPrompt = "",
+                        maxTokens = MAX_GENERATION_TOKENS
+                    )
+                } ?: return@withContext null
+
                 var cleaned = cleanOutput(result.text)
 
                 // Por qué: Si el modelo tradujo también el contexto, se repite la inferencia con el prompt simple
                 if (!hints.isEmpty && TranslationPromptBuilder.hasContextLeak(cleaned, cleanInput, hints)) {
                     Log.w(TAG, "Context leak detected, retrying without hints")
                     val plainPrompt = TranslationPromptBuilder.build(cleanInput, targetName, TranslationHints.NONE)
-                    val retryResult = Llama.complete(
-                        model = model,
-                        prompt = plainPrompt,
-                        systemPrompt = "",
-                        maxTokens = 256
-                    )
-                    cleaned = cleanOutput(retryResult.text)
+                    val retryResult = withTimeoutOrNull(INFERENCE_TIMEOUT_MS) {
+                        Llama.complete(
+                            model = model,
+                            prompt = plainPrompt,
+                            systemPrompt = "",
+                            maxTokens = MAX_GENERATION_TOKENS
+                        )
+                    }
+                    if (retryResult != null) {
+                        cleaned = cleanOutput(retryResult.text)
+                    }
                 }
 
-                if (cleaned.isNotBlank() && isValidTranslation(cleaned)) {
+                if (isValidTranslation(cleaned, cleanInput, targetLang)) {
                     Log.d(TAG, "Neural model output (${result.tokensPerSecond} tok/s): '$cleaned'")
                     return@withContext cleaned
+                } else {
+                    Log.w(TAG, "Neural model output rejected by validation: '$cleaned'")
                 }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 Log.e(TAG, "Native llama.cpp inference execution failed", e)
             }
         }
@@ -153,7 +208,7 @@ class IndexTranslationEngine(private val context: Context) : TranslationEngine {
         activeModel?.let {
             try {
                 Llama.releaseModel(it)
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 Log.w(TAG, "Failed to release model", e)
             }
         }
@@ -162,30 +217,7 @@ class IndexTranslationEngine(private val context: Context) : TranslationEngine {
     }
 
     private fun cleanOutput(output: String): String {
-        return output.trim()
-            .removePrefix("\"").removeSuffix("\"")
-            .removePrefix("«").removeSuffix("»")
-            .trim()
-    }
-
-    private fun isValidTranslation(output: String): Boolean {
-        val trimmed = output.trim()
-        if (trimmed.isBlank()) return false
-        val lower = trimmed.lowercase()
-
-        if (trimmed.startsWith("[Error", ignoreCase = true) ||
-            trimmed.startsWith("Error:", ignoreCase = true) ||
-            lower.contains("no message was provided") ||
-            lower.contains("please provide the") ||
-            lower.contains("i cannot translate") ||
-            lower.contains("as an ai") ||
-            lower.contains("i am unable to") ||
-            lower.contains("i'm sorry, but") ||
-            lower.startsWith("sure, here is") ||
-            lower.startsWith("here is the translation")) {
-            return false
-        }
-        return true
+        return TranslationPromptBuilder.stripThink(output)
     }
 }
 
@@ -227,6 +259,14 @@ class HybridTranslationEngine(private val context: Context) : TranslationEngine 
 
     private val mlKitEngine = MLKitTranslationEngine()
     val indexEngine = IndexTranslationEngine(context)
+
+    suspend fun preload() {
+        val prefs = context.getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
+        val isAiEnabled = prefs.getBoolean(AppDefaults.KEY_AI_ENABLED, true)
+        if (isAiEnabled && indexEngine.isReady()) {
+            indexEngine.preload()
+        }
+    }
 
     override suspend fun translate(
         text: String,

@@ -48,13 +48,19 @@ class TranslationAccessibilityService : AccessibilityService() {
 
     // In-memory LRU cache for fast scroll rendering without unbounded SharedPreferences growth
     private val translationCache = LruCache<String, String>(500)
+    // Por qué: Evita encolar múltiples inferencias duplicadas sobre el mismo mensaje durante el escaneo periódico
+    private val inFlightKeys = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    private fun cacheKey(sourceLang: String, targetLang: String, text: String): String {
+        return "${sourceLang}_${targetLang}_${text.trim()}"
+    }
 
     private fun getCachedTranslation(sourceLang: String, targetLang: String, text: String): String? {
-        return translationCache.get("${sourceLang}_${targetLang}_${text.trim()}")
+        return translationCache.get(cacheKey(sourceLang, targetLang, text))
     }
 
     private fun putCachedTranslation(sourceLang: String, targetLang: String, text: String, translation: String) {
-        translationCache.put("${sourceLang}_${targetLang}_${text.trim()}", translation)
+        translationCache.put(cacheKey(sourceLang, targetLang, text), translation)
     }
 
     private var configuredSource: String = AppDefaults.SOURCE_LANGUAGE
@@ -139,6 +145,11 @@ class TranslationAccessibilityService : AccessibilityService() {
         // Por qué: El vigilante se inicia de inmediato y permanece activo para garantizar que ninguna
         // pastilla huérfana sobreviva fuera de WhatsApp, incluso si el servicio cambia de estado.
         startOverlayWatchdog()
+
+        // Por qué: Precarga el modelo neuronal en memoria en segundo plano para eliminar la latencia inicial al abrir un chat
+        serviceScope.launch(Dispatchers.Default) {
+            hybridEngine.preload()
+        }
 
         // Por qué: Callback ejecutado cuando el usuario pulsa "Translate Screen" en la notificación o mosaico
         ServiceBridge.onScanRequested = {
@@ -613,84 +624,94 @@ class TranslationAccessibilityService : AccessibilityService() {
             val rect = candidate.bounds
             val msgSource = if (configuredSource != "AUTO") configuredSource else AppDefaults.SOURCE_LANGUAGE
             val msgTarget = configuredTarget
+            val flightKey = cacheKey(msgSource, msgTarget, cleanText)
+            if (!inFlightKeys.add(flightKey)) {
+                continue
+            }
 
             serviceScope.launch {
-                val detectedLang = identifyLanguageAsync(cleanText)
-                val isEligible = TranslationSenseEngine.isEligibleSourceText(
-                    text = cleanText,
-                    sourceLang = msgSource,
-                    targetLang = msgTarget,
-                    identifiedLang = detectedLang
-                )
-                if (!isEligible) {
-                    return@launch
-                }
-
-                val normalizedText = if (msgSource == TranslateLanguage.ROMANIAN) {
-                    TextNormalizer.restoreRomanianDiacritics(cleanText)
-                } else {
-                    cleanText
-                }
-                val protected = TextNormalizer.protectEmojis(normalizedText)
-
-                val hints = buildHints(msgSource, msgTarget, contextAbove(conversation, rect))
-                val rawTranslated = hybridEngine.translate(protected.text, msgSource, msgTarget, hints)
-                if (rawTranslated != null && rawTranslated.isNotBlank()) {
-                    val restoredEmojis = TextNormalizer.restoreEmojis(rawTranslated, protected.tokens)
-                    val senseCorrected = applyLearnedCorrections(
-                        msgSource,
-                        msgTarget,
-                        TranslationSenseEngine.applyPostTranslationSenseLogic(
-                            originalText = normalizedText,
-                            translatedText = restoredEmojis,
-                            sourceLang = msgSource,
-                            targetLang = msgTarget
-                        )
+                try {
+                    val detectedLang = identifyLanguageAsync(cleanText)
+                    val isEligible = TranslationSenseEngine.isEligibleSourceText(
+                        text = cleanText,
+                        sourceLang = msgSource,
+                        targetLang = msgTarget,
+                        identifiedLang = detectedLang
                     )
-
-                    // Por qué: Descartar respuestas de error o negativas generadas por la IA
-                    if (senseCorrected.startsWith("[Error", ignoreCase = true) ||
-                        senseCorrected.startsWith("Error:", ignoreCase = true) ||
-                        senseCorrected.contains("no message was provided", ignoreCase = true) ||
-                        senseCorrected.contains("please provide the", ignoreCase = true)
-                    ) {
+                    if (!isEligible) {
                         return@launch
                     }
 
-                    // Por qué: Si la traducción resultante es idéntica al texto original (ej. inglés a inglés)
-                    // o no contiene caracteres en el idioma de destino (ej. griego), se descarta el globo.
-                    if (senseCorrected.trim().equals(cleanText.trim(), ignoreCase = true)) {
-                        return@launch
+                    val normalizedText = if (msgSource == TranslateLanguage.ROMANIAN) {
+                        TextNormalizer.restoreRomanianDiacritics(cleanText)
+                    } else {
+                        cleanText
                     }
-                    if (msgTarget == TranslateLanguage.GREEK && senseCorrected.none { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }) {
-                        return@launch
-                    }
+                    val protected = TextNormalizer.protectEmojis(normalizedText)
 
-                    putCachedTranslation(msgSource, msgTarget, cleanText, senseCorrected)
+                    val hints = buildHints(msgSource, msgTarget, contextAbove(conversation, rect))
+                    val rawTranslated = hybridEngine.translate(protected.text, msgSource, msgTarget, hints)
+                    if (rawTranslated != null && rawTranslated.isNotBlank()) {
+                        val restoredEmojis = TextNormalizer.restoreEmojis(rawTranslated, protected.tokens)
+                        val senseCorrected = applyLearnedCorrections(
+                            msgSource,
+                            msgTarget,
+                            TranslationSenseEngine.applyPostTranslationSenseLogic(
+                                originalText = normalizedText,
+                                translatedText = restoredEmojis,
+                                sourceLang = msgSource,
+                                targetLang = msgTarget
+                            )
+                        )
 
-                    // Por qué: Si la pantalla se desplazó durante la traducción asíncrona,
-                    // las coordenadas 'rect' capturadas antes del scroll son obsoletas y colocarían
-                    // la pastilla sobre un mensaje equivocado. Se aborta el dibujo viejo; el nuevo escaneo
-                    // de reposo la pintará al instante desde caché en su posición correcta.
-                    val timeSinceScroll = android.os.SystemClock.uptimeMillis() - lastScrollTimestamp
-                    if (currentGeneration != scanGeneration.get() ||
-                        isScreenScrolling ||
-                        timeSinceScroll < 350L ||
-                        !isWhatsAppInForeground() ||
-                        !ServiceBridge.isTranslatingActive
-                    ) {
-                        return@launch
-                    }
-
-                    mainHandler.post {
-                        if (currentGeneration == scanGeneration.get() &&
-                            ServiceBridge.isTranslatingActive &&
-                            isWhatsAppInForeground() &&
-                            !isScreenScrolling
+                        // Por qué: Descartar respuestas de error o negativas generadas por la IA
+                        if (senseCorrected.startsWith("[Error", ignoreCase = true) ||
+                            senseCorrected.startsWith("Error:", ignoreCase = true) ||
+                            senseCorrected.contains("no message was provided", ignoreCase = true) ||
+                            senseCorrected.contains("please provide the", ignoreCase = true)
                         ) {
-                            overlayManager.addOrUpdateOverlay(rect, senseCorrected)
+                            return@launch
+                        }
+
+                        // Por qué: Si la traducción resultante es idéntica al texto original (ej. inglés a inglés)
+                        // o no contiene caracteres en el idioma de destino (ej. griego), se descarta el globo.
+                        if (senseCorrected.trim().equals(cleanText.trim(), ignoreCase = true)) {
+                            return@launch
+                        }
+                        if (msgTarget == TranslateLanguage.GREEK && senseCorrected.none { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }) {
+                            return@launch
+                        }
+
+                        putCachedTranslation(msgSource, msgTarget, cleanText, senseCorrected)
+
+                        // Por qué: Si la pantalla se desplazó durante la traducción asíncrona,
+                        // las coordenadas 'rect' capturadas antes del scroll son obsoletas; se programa
+                        // un escaneo rápido para pintar la traducción recién cacheada en su nueva posición.
+                        val timeSinceScroll = android.os.SystemClock.uptimeMillis() - lastScrollTimestamp
+                        if (currentGeneration != scanGeneration.get()) {
+                            scheduleScan(80L)
+                            return@launch
+                        }
+                        if (isScreenScrolling ||
+                            timeSinceScroll < 350L ||
+                            !isWhatsAppInForeground() ||
+                            !ServiceBridge.isTranslatingActive
+                        ) {
+                            return@launch
+                        }
+
+                        mainHandler.post {
+                            if (currentGeneration == scanGeneration.get() &&
+                                ServiceBridge.isTranslatingActive &&
+                                isWhatsAppInForeground() &&
+                                !isScreenScrolling
+                            ) {
+                                overlayManager.addOrUpdateOverlay(rect, senseCorrected)
+                            }
                         }
                     }
+                } finally {
+                    inFlightKeys.remove(flightKey)
                 }
             }
         }

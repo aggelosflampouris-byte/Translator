@@ -100,33 +100,77 @@ class AdaptiveLearningTest {
     // ── TranslationPromptBuilder ─────────────────────────────────────────────
 
     @Test
-    fun build_withoutHints_matchesOriginalTemplate() {
+    fun build_withoutHints_matchesOfficialIndexTranslateTemplateWithNoThinkPrefill() {
         val prompt = TranslationPromptBuilder.build("Γεια σου", "Romanian", TranslationHints.NONE)
         assertEquals(
-            "Translate the following text into Romanian, output only the translated result without any explanation:\nΓεια σου",
+            "<|im_start|>user\n" +
+                "Translate the following text into Romanian. Output the translation directly, without any explanation:\n\n" +
+                "Γεια σου<|im_end|>\n" +
+                "<|im_start|>assistant\n" +
+                "<think>\n\n</think>\n\n",
             prompt
         )
     }
 
     @Test
-    fun build_withHints_includesContextAndGlossary() {
+    fun build_withHints_includesContextAndGlossaryInInstTransFormat() {
         val hints = TranslationHints(
             contextMessages = listOf("m1", "m2", "m3", "m4"),
             preferredTerms = listOf(TermCorrection("companiei", "găștii"))
         )
         val prompt = TranslationPromptBuilder.build("Γεια", "Romanian", hints)
 
-        assertFalse("Oldest context message must be dropped", prompt.contains("- m1"))
-        assertTrue(prompt.contains("- m4"))
-        assertTrue(prompt.contains("\"companiei\" -> \"găștii\""))
-        assertTrue(prompt.endsWith("Γεια"))
+        assertFalse("Oldest context message must be dropped", prompt.contains("m1"))
+        assertTrue(prompt.contains("m2 | m3 | m4"))
+        assertTrue(prompt.contains("[Hard Constraint] Terminology mapping: companiei -> găștii"))
+        assertTrue(prompt.contains("[Source]\nΓεια"))
+        assertTrue(prompt.endsWith("<|im_start|>assistant\n<think>\n\n</think>\n\n"))
     }
 
     @Test
-    fun hasContextLeak_detectsEchoedContext() {
+    fun stripThink_removesClosedThinkBlockAndEndTokens() {
+        val raw = "<think>\n\n</think>\n\nΠροσπαθώντας να καταλάβω<|im_end|>"
+        assertEquals("Προσπαθώντας να καταλάβω", TranslationPromptBuilder.stripThink(raw))
+    }
+
+    @Test
+    fun stripThink_rejectsUnclosedThinkBlock() {
+        val raw = "<think>\nThinking Process:\n1. Analyze the input sentence in Romanian..."
+        assertEquals("", TranslationPromptBuilder.stripThink(raw))
+    }
+
+    @Test
+    fun isValidTranslation_enforcesTargetScriptAndRejectsThinkLeaks() {
+        assertTrue(
+            IndexTranslationEngine.isValidTranslation(
+                output = "Προσπαθώντας να καταλάβω πώς θα κάνω την εφαρμογή να δουλέψει",
+                cleanInput = "Încercând să dau seama cum voi face aplicația să funcționeze",
+                targetLang = "el"
+            )
+        )
+        assertFalse(
+            "English thinking text must be rejected when target is Greek",
+            IndexTranslationEngine.isValidTranslation(
+                output = "Thinking Process: Translate Romanian to Greek",
+                cleanInput = "Încercând să dau seama",
+                targetLang = "el"
+            )
+        )
+        assertFalse(
+            "Unchanged source text must be rejected",
+            IndexTranslationEngine.isValidTranslation(
+                output = "Încercând să dau seama",
+                cleanInput = "Încercând să dau seama",
+                targetLang = "ro"
+            )
+        )
+    }
+
+    @Test
+    fun hasContextLeak_detectsEchoedContextAndIgnoresClosedThinkBlock() {
         val hints = TranslationHints(contextMessages = listOf("Acesta este un mesaj de test"))
         assertTrue(TranslationPromptBuilder.hasContextLeak("Acesta este un mesaj de test Bună", "Γεια", hints))
-        assertFalse(TranslationPromptBuilder.hasContextLeak("Bună", "Γεια", hints))
+        assertFalse(TranslationPromptBuilder.hasContextLeak("<think>\n\n</think>\n\nBună", "Γεια", hints))
     }
 }
 
