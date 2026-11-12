@@ -247,9 +247,21 @@ class TranslationFilterTest {
             )
         )
 
+        assertEquals(
+            "Bună ziua mâine am o lecție",
+            TranslationFilter.cleanMessageText("Εσείς στείλατε Bună ziua mâine am o lecție, Εστάλη")
+        )
+        // Por qué: "Ai trimis" sin dos puntos en rumano es una frase normal del chat ("¿Enviaste?") y no debe recortarse.
+        assertEquals(
+            "Ai trimis pozele?",
+            TranslationFilter.cleanMessageText("Ai trimis pozele?")
+        )
+
         assertFalse(TranslationFilter.shouldTranslate("Today at 2:30 PM", TranslateLanguage.GREEK))
         assertFalse(TranslationFilter.shouldTranslate("ΤΕΤ ΣΤΙΣ 6:02 Μ.Μ.", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK))
         assertFalse(TranslationFilter.shouldTranslate("Ενεργός/ή τώρα", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.shouldTranslate("Φωνητική κλήση", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.shouldTranslate("Conversation information", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN))
         assertFalse(TranslationFilter.shouldTranslate("Απαντήσατε στο χρήστη Λευτέρης", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK))
         assertFalse(TranslationFilter.shouldTranslate("Εστάλη", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK))
         assertFalse(TranslationFilter.shouldTranslate("Seen", TranslateLanguage.GREEK))

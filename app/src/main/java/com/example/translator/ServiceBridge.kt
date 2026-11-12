@@ -49,6 +49,13 @@ object ServiceBridge {
      */
     @Volatile var onUiStateChanged: (() -> Unit)? = null
 
+    /**
+     * Resumen diagnóstico sin texto privado del último escaneo de accesibilidad y superposición.
+     * Por qué: Permite diagnosticar en dispositivos físicos por qué una app objetivo no genera burbujas
+     * sin registrar ni exponer el contenido de los mensajes del usuario.
+     */
+    @Volatile var lastScanDebug: String = "No scan executed yet."
+
     fun isAnyServiceActive(): Boolean {
         return isTranslatingActive || isBubbleRunning || isNotificationActive
     }

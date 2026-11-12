@@ -16,7 +16,7 @@ object TranslationFilter {
         RegexOption.IGNORE_CASE
     )
     private val LEADING_SENDER_PREFIX_REGEX = Regex(
-        """^(you sent|you replied|εσείς στείλατε|εσεις στειλατε|στείλατε|στειλατε|απαντήσατε|απαντησατε|ai trimis|ai răspuns|ai raspuns)\s*:\s*""",
+        """^(?:(?:you sent|you replied|εσείς στείλατε|εσεις στειλατε|στείλατε|στειλατε|απαντήσατε|απαντησατε|ai trimis|ai răspuns|ai raspuns)\s*:\s*|(?:εσείς στείλατε|εσεις στειλατε)\s+)""",
         RegexOption.IGNORE_CASE
     )
     private val CHAT_STATUS_REGEX = Regex(
@@ -35,7 +35,12 @@ object TranslationFilter {
         "search", "αναζήτηση", "χθες", "σήμερα", "yesterday", "today", "online", "συνδέθηκε",
         "active now", "ενεργός τώρα", "ενεργή τώρα", "ενεργός/ή τώρα", "ενεργος/η τωρα",
         "typing...", "συνομιλίες", "ενημερώσεις", "κλήσεις",
-        "chats", "updates", "calls", "channels", "stories", "reels", "bot", "app"
+        "chats", "updates", "calls", "channels", "stories", "reels", "bot", "app",
+        "πίσω", "back", "κλήση", "call", "φωνητική κλήση", "voice call",
+        "βιντεοκλήση", "video call", "πληροφορίες", "info", "conversation information",
+        "κάμερα", "camera", "συλλογή", "gallery", "μικρόφωνο", "voice clip",
+        "μου αρέσει", "like", "thumbs up", "αυτοκόλλητα", "stickers", "gif", "emoji",
+        "περισσότερα", "more", "μενού", "menu"
     )
 
     private val SYSTEM_NOTICE_PHRASES = listOf(

@@ -274,6 +274,7 @@ class OverlayManager(private val context: Context) {
                 activeBubbles[id] = ActiveBubble(view, text, targetRect, overlayBounds)
             } catch (e2: Exception) {
                 android.util.Log.e("Translator", "OverlayManager failed to addView for bubble $id", e2)
+                ServiceBridge.lastScanDebug = "${ServiceBridge.lastScanDebug} | wmErr=${e2.javaClass.simpleName}:${e2.message}"
             }
         }
     }

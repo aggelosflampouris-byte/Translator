@@ -123,7 +123,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                 isLearningEnabled = prefs.getBoolean(key, true)
             }
             AppDefaults.KEY_TRANSLATE_MODE -> {
-                translationMode = prefs.getString(key, AppDefaults.MODE_TAP) ?: AppDefaults.MODE_TAP
+                translationMode = prefs.getString(key, AppDefaults.MODE_ALL) ?: AppDefaults.MODE_ALL
                 if (translationMode == AppDefaults.MODE_TAP) {
                     overlayManager.removeAllMessageOverlays()
                 }
@@ -143,6 +143,75 @@ class TranslationAccessibilityService : AccessibilityService() {
         val text: String,
         val bounds: Rect
     )
+
+    // Por qué: Acumula métricas no sensibles (sin texto privado) del recorrido del árbol de accesibilidad
+    // para diagnosticar fallos de detección en aplicaciones específicas.
+    private class ScanStats {
+        var visitedNodes: Int = 0
+        var editableNodes: Int = 0
+        var nodesWithText: Int = 0
+        var nodesWithDesc: Int = 0
+        var skippedWidget: Int = 0
+        var skippedFilter: Int = 0
+        var skippedTinyDesc: Int = 0
+        var skippedBubbleBounds: Int = 0
+        var passedCandidates: Int = 0
+        val samples = ArrayList<String>(6)
+
+        fun addSample(entry: String) {
+            if (samples.size < 6) samples.add(entry)
+        }
+    }
+
+    private fun getScreenWidthPx(): Int {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            try {
+                val wm = getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
+                val bounds = wm.currentWindowMetrics.bounds
+                if (bounds.width() > 0) return bounds.width()
+            } catch (_: Exception) {
+                // Ignorar y usar displayMetrics
+            }
+        }
+        return resources.displayMetrics.widthPixels
+    }
+
+    private fun getScreenHeightPx(): Int {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            try {
+                val wm = getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
+                val bounds = wm.currentWindowMetrics.bounds
+                if (bounds.height() > 0) return bounds.height()
+            } catch (_: Exception) {
+                // Ignorar y usar displayMetrics
+            }
+        }
+        return resources.displayMetrics.heightPixels
+    }
+
+    private fun isIgnoredWidgetClass(className: String): Boolean {
+        return className.contains("Image", ignoreCase = true) ||
+            className.contains("CheckBox", ignoreCase = true) ||
+            className.contains("Switch", ignoreCase = true) ||
+            className.contains("SeekBar", ignoreCase = true) ||
+            className.contains("ProgressBar", ignoreCase = true) ||
+            className.contains("EditText", ignoreCase = true)
+    }
+
+    // Por qué: Cuando Litho (Messenger) o ChatMessageCell (Telegram) aplana la fila del mensaje a todo el ancho
+    // de la pantalla, aplica al menos 4% de margen por lado para quedar siempre por debajo del umbral de 95%.
+    private fun normalizeFullWidthMessageBounds(
+        rect: Rect,
+        screenWidth: Int,
+        screenHeight: Int,
+        density: Float
+    ) {
+        if (rect.width() >= (screenWidth * 0.94f).toInt() && rect.height() <= (screenHeight * 0.45f).toInt()) {
+            val horizontalMargin = maxOf((16 * density).toInt(), (screenWidth * 0.04f).toInt())
+            rect.left = (rect.left + horizontalMargin).coerceAtMost(rect.right - 24)
+            rect.right = (rect.right - horizontalMargin).coerceAtLeast(rect.left + 24)
+        }
+    }
 
     private var activeScanLoopJob: Job? = null
 
@@ -229,6 +298,12 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
 
         syncAccessibilityPackageScope()
+
+        // Por qué: Si la traducción ya se activó desde la interfaz o notificación antes de conectar el servicio,
+        // reanuda el bucle de escaneo inmediatamente sin exigir reiniciar al usuario.
+        if (ServiceBridge.isTranslatingActive) {
+            startActiveScanning()
+        }
 
         Log.d("Translator", "TranslationAccessibilityService connected")
     }
@@ -336,14 +411,22 @@ class TranslationAccessibilityService : AccessibilityService() {
                     }
                 }
 
-                // Por qué: Si el teclado IME o barra del sistema tiene el foco activo, inspecciona la ventana de app subyacente
-                val appWindows = windowList.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
-                if (appWindows.isNotEmpty()) {
-                    val activeApp = appWindows.firstOrNull { it.isActive } ?: appWindows.firstOrNull()
-                    val pkg = activeApp?.root?.packageName?.toString() ?: ""
-                    if (isEnabledTargetPackage(pkg)) {
-                        return pkg
+                // Por qué: Si el teclado IME, la cortina del sistema o nuestro overlay tienen el foco activo,
+                // inspecciona la ventana TYPE_APPLICATION más alta por orden de capa (layer descendente).
+                val topAppWindow = windowList
+                    .asSequence()
+                    .filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+                    .sortedByDescending { it.layer }
+                    .firstOrNull { win ->
+                        val pkg = win.root?.packageName?.toString() ?: ""
+                        !isTransientOverlayOrInputPackage(pkg)
                     }
+                val topPkg = topAppWindow?.root?.packageName?.toString() ?: ""
+                if (isEnabledTargetPackage(topPkg)) {
+                    return topPkg
+                }
+                if (topPkg.isNotBlank()) {
+                    return null
                 }
             }
         } catch (e: Exception) {
@@ -575,7 +658,10 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
 
         // Por qué: Verifica estrictamente que una app habilitada esté en primer plano antes de iniciar cualquier escaneo
-        if (!isTargetAppInForeground()) {
+        val fgPkg = resolveForegroundTargetPackage()
+        if (fgPkg == null) {
+            val activePkg = try { rootInActiveWindow?.packageName?.toString() } catch (_: Exception) { null }
+            ServiceBridge.lastScanDebug = "abort=no_fg_target | activeWin=${activePkg ?: "null"} | enabled=${enabledTargetPackages.size}"
             mainHandler.post {
                 overlayManager.removeAllOverlays()
             }
@@ -584,16 +670,23 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         val rootNode = findActiveTargetRootNode(eventSource)
         if (rootNode == null) {
+            ServiceBridge.lastScanDebug = "abort=null_root | fg=$fgPkg"
             mainHandler.post {
                 overlayManager.removeAllOverlays()
             }
             return 0
         }
         val activeProfile = TargetAppCatalog.profileForPackage(rootNode.packageName?.toString())
+        val density = resources.displayMetrics.density
+        val screenWidth = getScreenWidthPx()
+        val screenHeight = getScreenHeightPx()
 
         // When the soft keyboard is open, hide chat message bubbles so the screen is not overflooded.
         // When the soft keyboard is closed, still evaluate the input bar in case a draft is present.
         if (isKeyboardVisible()) {
+            val edit = findCurrentEditableNode()
+            val editRect = Rect().also { edit?.getBoundsInScreen(it) }
+            ServiceBridge.lastScanDebug = "abort=kb_visible | fg=$fgPkg (${activeProfile.id}) | scr=${screenWidth}x$screenHeight | editRect=${editRect.flattenToString()}"
             overlayManager.removeAllMessageOverlays()
             if (isKeyboardTranslatorEnabled) {
                 handleOutgoingTyping()
@@ -606,10 +699,8 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
 
         val candidates = mutableListOf<MessageCandidate>()
-        val density = resources.displayMetrics.density
         val topInset = (activeProfile.topInsetDp * density).toInt()
         val bottomInset = (activeProfile.bottomInsetDp * density).toInt()
-        val screenHeight = resources.displayMetrics.heightPixels
 
         // When keyboard is closed, scan all messages up to the top of the input bar (with 5dp tolerance)
         val inputNode = findCurrentEditableNode()
@@ -625,6 +716,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             screenHeight - bottomInset
         }
 
+        val stats = ScanStats()
         collectMessageCandidates(
             node = rootNode,
             outList = candidates,
@@ -632,17 +724,24 @@ class TranslationAccessibilityService : AccessibilityService() {
             maxY = effectiveBottom,
             configuredSource = configuredSource,
             configuredTarget = configuredTarget,
-            profile = activeProfile
+            profile = activeProfile,
+            stats = stats
         )
 
         val dedupedCandidates = filterOverlappingCandidates(candidates)
+        val baseDiag = "fg=$fgPkg(${activeProfile.id}) src=$configuredSource->$configuredTarget scr=${screenWidth}x$screenHeight d=${"%.2f".format(density)} y=$topInset..$effectiveBottom " +
+            "vis=${stats.visitedNodes} ed=${stats.editableNodes} t=${stats.nodesWithText} dsc=${stats.nodesWithDesc} " +
+            "skW=${stats.skippedWidget} skF=${stats.skippedFilter} skTiny=${stats.skippedTinyDesc} skBnd=${stats.skippedBubbleBounds} " +
+            "cands=${candidates.size}/${dedupedCandidates.size} smp=${stats.samples.joinToString(";")}"
 
         if (dedupedCandidates.isEmpty()) {
+            ServiceBridge.lastScanDebug = "$baseDiag | out=empty"
             mainHandler.post {
                 overlayManager.removeAllMessageOverlays()
             }
             return 0
         }
+        ServiceBridge.lastScanDebug = "$baseDiag | out=translating(${dedupedCandidates.size})"
 
         // Por qué: Purgar inmediatamente cualquier burbuja previa que ya no coincida con los candidatos visibles actuales
         val currentValidBounds = dedupedCandidates.map { it.bounds }
@@ -705,6 +804,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                         identifiedLang = detectedLang
                     )
                     if (!isEligible) {
+                        ServiceBridge.lastScanDebug = "${ServiceBridge.lastScanDebug} | mlkit=ineligible(det=$detectedLang,len=${cleanText.length})"
                         return@launch
                     }
 
@@ -734,8 +834,11 @@ class TranslationAccessibilityService : AccessibilityService() {
                                 !isScreenScrolling
                             ) {
                                 overlayManager.addOrUpdateOverlay(rect, senseCorrected, profile = activeProfile)
+                                ServiceBridge.lastScanDebug = "${ServiceBridge.lastScanDebug} | overlay=ok(rect=${rect.left},${rect.top}-${rect.right},${rect.bottom})"
                             }
                         }
+                    } else {
+                        ServiceBridge.lastScanDebug = "${ServiceBridge.lastScanDebug} | mlkit=null_output"
                     }
                 } finally {
                     inFlightKeys.remove(flightKey)
@@ -754,23 +857,26 @@ class TranslationAccessibilityService : AccessibilityService() {
         configuredSource: String,
         configuredTarget: String,
         requireTranslatable: Boolean = true,
-        profile: ChatAppProfile = TargetAppCatalog.GENERIC_DEFAULT_PROFILE
-    ): Boolean {
+        profile: ChatAppProfile = TargetAppCatalog.GENERIC_DEFAULT_PROFILE,
+        stats: ScanStats? = null
+    ): Int {
+        stats?.let { it.visitedNodes++ }
         // Por qué: Ignora inmediatamente nodos fuera de las apps habilitadas para no leer pantallas ajenas
         val nodePkg = node.packageName?.toString() ?: ""
         if (nodePkg.isNotBlank() && !isEnabledTargetPackage(nodePkg)) {
-            return false
+            return 0
         }
 
         if (node.isEditable) {
+            stats?.let { it.editableNodes++ }
             // Skip input fields during message scan (handled by handleOutgoingTyping)
-            return false
+            return 0
         }
 
-        var childFound = false
+        var maxChildTextLen = 0
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            val found = collectMessageCandidates(
+            val childLen = collectMessageCandidates(
                 child,
                 outList,
                 minY,
@@ -778,28 +884,20 @@ class TranslationAccessibilityService : AccessibilityService() {
                 configuredSource,
                 configuredTarget,
                 requireTranslatable,
-                profile
+                profile,
+                stats
             )
-            if (found) {
-                childFound = true
+            if (childLen > maxChildTextLen) {
+                maxChildTextLen = childLen
             }
-        }
-
-        // If children already contained the message text, do not process container node
-        if (childFound) {
-            return true
         }
 
         // Por qué: Descarta controles no textuales e imágenes sin bloquear burbujas clicables de Litho (Messenger/Instagram)
         // que exponen AccessibilityRole.BUTTON ("android.widget.Button").
         val className = node.className?.toString() ?: ""
-        if (className.contains("Image", ignoreCase = true) ||
-            className.contains("CheckBox", ignoreCase = true) ||
-            className.contains("Switch", ignoreCase = true) ||
-            className.contains("SeekBar", ignoreCase = true) ||
-            className.contains("ProgressBar", ignoreCase = true) ||
-            className.contains("EditText", ignoreCase = true)) {
-            return false
+        if (isIgnoredWidgetClass(className)) {
+            stats?.let { it.skippedWidget++ }
+            return maxChildTextLen
         }
 
         // Por qué: Frameworks como Litho (Messenger/Instagram) y celdas personalizadas suelen exponer el texto
@@ -811,80 +909,111 @@ class TranslationAccessibilityService : AccessibilityService() {
             className.contains("ViewPager", ignoreCase = true) ||
             className.contains("Toolbar", ignoreCase = true)
         val directText = node.text?.toString()?.takeIf { it.isNotBlank() }
-        val rawText = directText ?: if (!isScrollableContainer) {
+        val descText = if (!isScrollableContainer) {
             node.contentDescription?.toString()?.takeIf { it.isNotBlank() }
         } else {
             null
         }
-        if (rawText.isNullOrBlank()) {
-            return false
+        if (directText != null) stats?.let { it.nodesWithText++ }
+        if (descText != null) stats?.let { it.nodesWithDesc++ }
+
+        // Por qué: Si los hijos ya aportaron el texto del mensaje, evita duplicar el nodo padre salvo que este
+        // contenga una descripción mucho más larga (ej. burbuja Litho cuya cita/reacción era un subnodo menor).
+        if (maxChildTextLen > 0) {
+            val outerLen = (directText ?: descText)?.length ?: 0
+            if (isScrollableContainer || node.childCount > 6 || outerLen <= maxChildTextLen + 12) {
+                return maxChildTextLen
+            }
         }
+
+        val rawText = directText ?: descText
+        if (rawText.isNullOrBlank()) {
+            return maxChildTextLen
+        }
+
+        val rect = Rect()
+        node.getBoundsInScreen(rect)
+        val screenWidth = getScreenWidthPx()
+        val screenHeight = getScreenHeightPx()
+        val density = resources.displayMetrics.density
+        val shortClass = className.substringAfterLast('.')
 
         val cleanText = TranslationFilter.cleanMessageText(rawText)
         val passesLanguageFilter = !requireTranslatable || TranslationFilter.shouldTranslate(cleanText, configuredTarget, configuredSource)
-        if (cleanText.isNotBlank() && passesLanguageFilter) {
-            val rect = Rect()
-            node.getBoundsInScreen(rect)
-
-            val screenWidth = resources.displayMetrics.widthPixels
-            val screenHeight = resources.displayMetrics.heightPixels
-            val density = resources.displayMetrics.density
-
-            // Por qué: Si el texto provino de contentDescription, descarta iconos cuadrados pequeños (botones de llamada/cámara)
-            if (directText == null && rect.width() < (48 * density).toInt() && rect.height() < (48 * density).toInt()) {
-                return false
+        if (cleanText.isBlank() || !passesLanguageFilter) {
+            stats?.let {
+                it.skippedFilter++
+                it.addSample("$shortClass(t=${directText?.length ?: 0},d=${descText?.length ?: 0},[${rect.left},${rect.top}-${rect.right},${rect.bottom}],flt)")
             }
+            return maxChildTextLen
+        }
 
-            // Por qué: Solo expande al contenedor padre en apps con burbujas aisladas; en filas anchas
-            // (como Discord o Messenger) limita la expansión para no cubrir avatares ni cabeceras de usuario.
-            var container = node.parent
-            val maxLevels = if (profile.expandContainerToParent) 1 else 0
-            val maxParentWidthRatio = if (profile.expandContainerToParent) 0.95f else 0.85f
-            for (level in 0..maxLevels) {
-                if (container != null) {
-                    val pRect = Rect()
-                    container.getBoundsInScreen(pRect)
-                    val safeExpansion = profile.expandContainerToParent ||
-                        (pRect.width() <= (rect.width() * 1.35f) && pRect.height() <= (rect.height() * 1.50f))
-                    if (safeExpansion &&
-                        pRect.width() <= screenWidth * maxParentWidthRatio &&
-                        pRect.height() <= screenHeight &&
-                        pRect.width() >= rect.width() &&
-                        pRect.height() >= rect.height() &&
-                        Rect.intersects(pRect, rect)) {
-                        rect.set(pRect)
-                        break
-                    }
-                    container = container.parent
+        // Por qué: Si el texto provino de contentDescription, descarta únicamente micro-iconos sin perder burbujas cortas
+        if (directText == null && rect.width() < (22 * density).toInt() && rect.height() < (18 * density).toInt()) {
+            stats?.let {
+                it.skippedTinyDesc++
+                it.addSample("$shortClass(d=${descText?.length ?: 0},[${rect.left},${rect.top}-${rect.right},${rect.bottom}],tiny)")
+            }
+            return maxChildTextLen
+        }
+
+        // Por qué: Ignora nodos fuera del área horizontal visible (p. ej. pestañas ocultas en ViewPager).
+        if (rect.right <= 0 || rect.left >= screenWidth) {
+            stats?.let { it.skippedBubbleBounds++ }
+            return maxChildTextLen
+        }
+
+        // Por qué: Solo expande al contenedor padre en apps con burbujas aisladas; en filas anchas
+        // (como Discord o Messenger) limita la expansión para no cubrir avatares ni cabeceras de usuario.
+        var container = node.parent
+        val maxLevels = if (profile.expandContainerToParent) 1 else 0
+        val maxParentWidthRatio = if (profile.expandContainerToParent) 0.95f else 0.85f
+        for (level in 0..maxLevels) {
+            if (container != null) {
+                val pRect = Rect()
+                container.getBoundsInScreen(pRect)
+                val safeExpansion = profile.expandContainerToParent ||
+                    (pRect.width() <= (rect.width() * 1.35f) && pRect.height() <= (rect.height() * 1.50f))
+                if (safeExpansion &&
+                    pRect.width() <= screenWidth * maxParentWidthRatio &&
+                    pRect.height() <= screenHeight &&
+                    pRect.width() >= rect.width() &&
+                    pRect.height() >= rect.height() &&
+                    Rect.intersects(pRect, rect)) {
+                    rect.set(pRect)
+                    break
                 }
-            }
-
-            // Por qué: Cuando Litho (Messenger) o ChatMessageCell (Telegram) aplana la fila del mensaje a todo el ancho
-            // de la pantalla, aplica un margen horizontal limpio para pasar la validación de burbuja y no tocar bordes.
-            if (rect.width() >= (screenWidth * 0.94f).toInt() && rect.height() <= (screenHeight * 0.45f).toInt()) {
-                val horizontalMargin = (16 * density).toInt()
-                rect.left = (rect.left + horizontalMargin).coerceAtMost(rect.right - 24)
-                rect.right = (rect.right - horizontalMargin).coerceAtLeast(rect.left + 24)
-            }
-
-            // Validate chat message bubble based on active app alignment layout
-            val isBubble = TranslationSenseEngine.isMessageBubble(rect.left, rect.right, screenWidth, profile.alignmentMode)
-            val visibleMargin = (20 * density).toInt()
-
-            if (isBubble && rect.width() > (22 * density).toInt() && rect.height() > (16 * density).toInt() &&
-                rect.bottom > minY + visibleMargin && rect.top < maxY - visibleMargin) {
-                val clampedRect = Rect(
-                    rect.left,
-                    rect.top.coerceAtLeast(minY),
-                    rect.right,
-                    rect.bottom.coerceAtMost(maxY)
-                )
-                outList.add(MessageCandidate(cleanText, clampedRect))
-                return true
+                container = container.parent
             }
         }
 
-        return false
+        normalizeFullWidthMessageBounds(rect, screenWidth, screenHeight, density)
+
+        // Validate chat message bubble based on active app alignment layout
+        val isBubble = TranslationSenseEngine.isMessageBubble(rect.left, rect.right, screenWidth, profile.alignmentMode)
+        val visibleMargin = (20 * density).toInt()
+
+        if (isBubble && rect.width() > (22 * density).toInt() && rect.height() > (16 * density).toInt() &&
+            rect.bottom > minY + visibleMargin && rect.top < maxY - visibleMargin) {
+            val clampedRect = Rect(
+                rect.left,
+                rect.top.coerceAtLeast(minY),
+                rect.right,
+                rect.bottom.coerceAtMost(maxY)
+            )
+            outList.add(MessageCandidate(cleanText, clampedRect))
+            stats?.let {
+                it.passedCandidates++
+                it.addSample("$shortClass(t=${directText?.length ?: 0},d=${descText?.length ?: 0},[${clampedRect.left},${clampedRect.top}-${clampedRect.right},${clampedRect.bottom}],ok)")
+            }
+            return maxOf(maxChildTextLen, rawText.length)
+        }
+
+        stats?.let {
+            it.skippedBubbleBounds++
+            it.addSample("$shortClass(b=$isBubble,[${rect.left},${rect.top}-${rect.right},${rect.bottom}],bnd)")
+        }
+        return maxChildTextLen
     }
 
     private fun filterOverlappingCandidates(candidates: List<MessageCandidate>): List<MessageCandidate> {
@@ -928,35 +1057,14 @@ class TranslationAccessibilityService : AccessibilityService() {
         return accepted
     }
 
-    // Por qué: Verifica la elevación del campo de texto de WhatsApp sobre la barra de navegación
-    // para confirmar con certeza si el teclado está visible sin depender de ventanas restringidas de otros paquetes.
+    // Por qué: Verifica la elevación del campo de composición inferior visible sobre la barra de navegación
+    // para confirmar si el teclado está abierto, ignorando campos de búsqueda o vistas ocultas fuera de pantalla.
     private fun isKeyboardVisible(candidateNode: AccessibilityNodeInfo? = null): Boolean {
-        val screenHeight = resources.displayMetrics.heightPixels
+        val screenHeight = getScreenHeightPx()
+        val screenWidth = getScreenWidthPx()
         val density = resources.displayMetrics.density
 
-        // 1. Verificación primaria: Si el campo de entrada de WhatsApp está activo, medir su posición vertical
-        try {
-            val input = candidateNode ?: findCurrentEditableNode()
-            if (input != null) {
-                val inputRect = Rect()
-                input.getBoundsInScreen(inputRect)
-                if (inputRect.bottom > 0) {
-                    val bottomOffset = screenHeight - inputRect.bottom
-                    // Por qué: Con el teclado cerrado el campo descansa a ras de la barra de navegación (<= 95dp).
-                    // Con el teclado desplegado se eleva de forma inmediata (> 100dp).
-                    if (bottomOffset <= (95 * density).toInt()) {
-                        return false
-                    }
-                    if (bottomOffset > (100 * density).toInt()) {
-                        return true
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            // Ignorar y pasar a verificación secundaria
-        }
-
-        // 2. Verificación secundaria: Inspeccionar ventanas del sistema para ventana de método de entrada (IME)
+        // 1. Verificación secundaria de ventana IME del sistema cuando esté disponible
         try {
             val windowList = windows
             if (windowList != null) {
@@ -965,9 +1073,32 @@ class TranslationAccessibilityService : AccessibilityService() {
                         val rect = Rect()
                         w.getBoundsInScreen(rect)
                         if (rect.top in 1 until (screenHeight - (95 * density).toInt()) &&
-                            rect.height() > (100 * density).toInt()) {
+                            rect.height() > (120 * density).toInt()) {
                             return true
                         }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // Ignorar
+        }
+
+        // 2. Verificación por posición vertical del compositor inferior visible dentro de la pantalla
+        try {
+            val input = candidateNode ?: findCurrentEditableNode()
+            if (input != null && isEditableNodeOnScreen(input, screenWidth, screenHeight)) {
+                val inputRect = Rect()
+                input.getBoundsInScreen(inputRect)
+                val bottomOffset = screenHeight - inputRect.bottom
+                // Por qué: Un buscador superior oculto en otro fragmento no es el compositor del chat;
+                // solo evaluamos nodos editables en la mitad inferior o enfocados activamente.
+                val isLowerHalfOrFocused = input.isFocused || inputRect.top >= (screenHeight * 0.35f).toInt()
+                if (isLowerHalfOrFocused) {
+                    if (bottomOffset <= (110 * density).toInt()) {
+                        return false
+                    }
+                    if (bottomOffset > (120 * density).toInt()) {
+                        return true
                     }
                 }
             }
@@ -978,6 +1109,18 @@ class TranslationAccessibilityService : AccessibilityService() {
         return false
     }
 
+    private fun isEditableNodeOnScreen(node: AccessibilityNodeInfo, screenWidth: Int, screenHeight: Int): Boolean {
+        if (!node.isEditable || !node.isVisibleToUser) return false
+        val rect = Rect()
+        node.getBoundsInScreen(rect)
+        return rect.width() > 0 &&
+            rect.height() > 0 &&
+            rect.right > 0 &&
+            rect.left < screenWidth &&
+            rect.bottom > 0 &&
+            rect.top < screenHeight
+    }
+
     private var lastInsertedText: String? = null
     private var dismissedDraftText: String? = null
     private var lastRenderedDraftSource: String? = null
@@ -985,9 +1128,12 @@ class TranslationAccessibilityService : AccessibilityService() {
     private var lastRenderedDraftManualLang: String? = null
 
     private fun findCurrentEditableNode(): AccessibilityNodeInfo? {
+        val screenWidth = getScreenWidthPx()
+        val screenHeight = getScreenHeightPx()
+
         try {
             val focused = findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-            if (focused != null && focused.isEditable) {
+            if (focused != null && isEditableNodeOnScreen(focused, screenWidth, screenHeight)) {
                 return focused
             }
         } catch (e: Exception) {
@@ -997,7 +1143,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         try {
             val activeRoot = rootInActiveWindow
             val focused = activeRoot?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-            if (focused != null && focused.isEditable) {
+            if (focused != null && isEditableNodeOnScreen(focused, screenWidth, screenHeight)) {
                 return focused
             }
         } catch (e: Exception) {
@@ -1005,17 +1151,39 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
 
         val root = findActiveTargetRootNode() ?: return null
-        return findFirstEditableChild(root)
+        return findBottomMostVisibleEditableChild(root, screenWidth, screenHeight)
     }
 
-    private fun findFirstEditableChild(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        if (node.isEditable) return node
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
-            val found = findFirstEditableChild(child)
-            if (found != null) return found
+    // Por qué: En apps con múltiples fragmentos en memoria (como Messenger), selecciona el campo editable visible
+    // más cercano al borde inferior (barra de mensaje) y descarta buscadores superiores o pestañas ocultas.
+    private fun findBottomMostVisibleEditableChild(
+        node: AccessibilityNodeInfo,
+        screenWidth: Int,
+        screenHeight: Int
+    ): AccessibilityNodeInfo? {
+        var bestNode: AccessibilityNodeInfo? = null
+        var bestBottom = Int.MIN_VALUE
+
+        fun walk(current: AccessibilityNodeInfo) {
+            if (current.isEditable) {
+                if (isEditableNodeOnScreen(current, screenWidth, screenHeight)) {
+                    val rect = Rect()
+                    current.getBoundsInScreen(rect)
+                    if (rect.top >= (screenHeight * 0.30f).toInt() && rect.bottom > bestBottom) {
+                        bestBottom = rect.bottom
+                        bestNode = current
+                    }
+                }
+                return
+            }
+            for (i in 0 until current.childCount) {
+                val child = current.getChild(i) ?: continue
+                walk(child)
+            }
         }
-        return null
+
+        walk(node)
+        return bestNode
     }
 
     companion object {
@@ -1395,9 +1563,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         val hasDirectOrDescText = !node.text.isNullOrBlank() || (node.childCount <= 3 && !node.contentDescription.isNullOrBlank())
         if (!node.isEditable && hasDirectOrDescText) {
             val cls = node.className?.toString() ?: ""
-            if (!cls.contains("Image", ignoreCase = true) &&
-                !cls.contains("CheckBox", ignoreCase = true) &&
-                !cls.contains("Switch", ignoreCase = true)) {
+            if (!isIgnoredWidgetClass(cls)) {
                 return node
             }
         }
@@ -1435,14 +1601,10 @@ class TranslationAccessibilityService : AccessibilityService() {
 
             val rect = Rect()
             nodeWithText.getBoundsInScreen(rect)
-            val screenWidth = resources.displayMetrics.widthPixels
-            val screenHeight = resources.displayMetrics.heightPixels
+            val screenWidth = getScreenWidthPx()
+            val screenHeight = getScreenHeightPx()
             val density = resources.displayMetrics.density
-            if (rect.width() >= (screenWidth * 0.94f).toInt() && rect.height() <= (screenHeight * 0.45f).toInt()) {
-                val horizontalMargin = (16 * density).toInt()
-                rect.left = (rect.left + horizontalMargin).coerceAtMost(rect.right - 24)
-                rect.right = (rect.right - horizontalMargin).coerceAtLeast(rect.left + 24)
-            }
+            normalizeFullWidthMessageBounds(rect, screenWidth, screenHeight, density)
             if (!TranslationSenseEngine.isMessageBubble(rect, screenWidth, activeProfile.alignmentMode)) return
 
             // Por qué: Usa estrictamente el par de idiomas configurado por el usuario en el menú

@@ -296,6 +296,7 @@ fun MainScreen(
   }
   var learningStats by remember { mutableStateOf(learningStore.stats()) }
   var showResetLearningDialog by remember { mutableStateOf(false) }
+  var showDiagnosticsDialog by remember { mutableStateOf(false) }
   var controlInterface by remember {
       mutableStateOf(prefs.getString(AppDefaults.KEY_CONTROL_INTERFACE, AppDefaults.INTERFACE_NOTIFICATION) ?: AppDefaults.INTERFACE_NOTIFICATION)
   }
@@ -627,36 +628,89 @@ fun MainScreen(
               }
           }
 
-          Surface(
-              shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
-              color = MaterialTheme.colorScheme.surfaceVariant,
-              // Por qué: Permite al usuario comprobar manualmente actualizaciones al pulsar sobre la versión
-              modifier = Modifier.clickable {
-                  if (!isCheckingForUpdate && !isDownloadingUpdate) {
-                      isCheckingForUpdate = true
-                      coroutineScope.launch {
-                          val info = appUpdater.checkForUpdates()
-                          isCheckingForUpdate = false
-                          if (info != null) {
-                              pendingUpdate = info
-                              val dest = appUpdater.getUpdateFile(info.version)
-                              if (dest.exists() && dest.length() > 0L && (info.apkSize == 0L || dest.length() == info.apkSize)) {
-                                  downloadedApkFile = dest
+          Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+              Surface(
+                  shape = RoundedCornerShape(8.dp),
+                  color = MaterialTheme.colorScheme.surfaceVariant,
+                  modifier = Modifier.clickable { showDiagnosticsDialog = true }
+              ) {
+                  Text(
+                      text = "Debug",
+                      style = MaterialTheme.typography.labelSmall,
+                      color = MaterialTheme.colorScheme.onSurfaceVariant,
+                      modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                  )
+              }
+              Surface(
+                  shape = RoundedCornerShape(8.dp),
+                  color = MaterialTheme.colorScheme.surfaceVariant,
+                  // Por qué: Permite al usuario comprobar manualmente actualizaciones al pulsar sobre la versión
+                  modifier = Modifier.clickable {
+                      if (!isCheckingForUpdate && !isDownloadingUpdate) {
+                          isCheckingForUpdate = true
+                          coroutineScope.launch {
+                              val info = appUpdater.checkForUpdates()
+                              isCheckingForUpdate = false
+                              if (info != null) {
+                                  pendingUpdate = info
+                                  val dest = appUpdater.getUpdateFile(info.version)
+                                  if (dest.exists() && dest.length() > 0L && (info.apkSize == 0L || dest.length() == info.apkSize)) {
+                                      downloadedApkFile = dest
+                                  }
+                              } else {
+                                  snackbarHostState.showSnackbar("You're on the latest version (v${BuildConfig.VERSION_NAME})")
                               }
-                          } else {
-                              snackbarHostState.showSnackbar("You're on the latest version (v${BuildConfig.VERSION_NAME})")
                           }
                       }
                   }
+              ) {
+                  Text(
+                      text = if (isCheckingForUpdate) "Checking..." else "v${BuildConfig.VERSION_NAME}",
+                      style = MaterialTheme.typography.labelSmall,
+                      color = MaterialTheme.colorScheme.onSurfaceVariant,
+                      modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                  )
               }
-          ) {
-              Text(
-                  text = if (isCheckingForUpdate) "Checking..." else "v${BuildConfig.VERSION_NAME}",
-                  style = MaterialTheme.typography.labelSmall,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant,
-                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-              )
           }
+      }
+
+      if (showDiagnosticsDialog) {
+          val messengerOn = enabledPackages.contains("com.facebook.orca")
+          val diagReport = buildString {
+              appendLine("Version: v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+              appendLine("AccService: ${ServiceBridge.isAccessibilityActive} | Translating: ${ServiceBridge.isTranslatingActive}")
+              appendLine("Pair: $sourceLanguage -> $targetLanguage | Mode: $translationMode")
+              appendLine("EnabledPkgs: ${enabledPackages.size} (Messenger=$messengerOn)")
+              appendLine("LastScan: ${ServiceBridge.lastScanDebug}")
+          }.trim()
+
+          AlertDialog(
+              onDismissRequest = { showDiagnosticsDialog = false },
+              title = { Text("Scan Diagnostics") },
+              text = {
+                  Text(
+                      text = diagReport,
+                      style = MaterialTheme.typography.bodySmall
+                  )
+              },
+              confirmButton = {
+                  TextButton(onClick = {
+                      val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                      clipboard.setPrimaryClip(android.content.ClipData.newPlainText("OverChat Diagnostics", diagReport))
+                      showDiagnosticsDialog = false
+                      coroutineScope.launch {
+                          snackbarHostState.showSnackbar("Diagnostics copied")
+                      }
+                  }) {
+                      Text("Copy")
+                  }
+              },
+              dismissButton = {
+                  TextButton(onClick = { showDiagnosticsDialog = false }) {
+                      Text("Close")
+                  }
+              }
+          )
       }
 
       // ── Sección 1: Configuración de Traducción ────────────────────────────
