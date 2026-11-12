@@ -35,5 +35,14 @@ object AppDefaults {
     const val KEY_CONTROL_INTERFACE = "control_interface"
     const val INTERFACE_NOTIFICATION = "NOTIFICATION"
     const val INTERFACE_BUBBLE = "BUBBLE"
+
+    // Por qué: Conjunto de paquetes de apps de mensajería habilitados dinámicamente para traducción en pantalla
+    const val KEY_ENABLED_PACKAGES = "enabled_target_packages"
+
+    // Por qué: Tema visual de las burbujas traducidas para integrarse de forma natural en cualquier app
+    const val KEY_OVERLAY_THEME = "overlay_theme"
+    const val OVERLAY_THEME_AUTO = "AUTO"
+    const val OVERLAY_THEME_WHATSAPP = "WHATSAPP"
+    const val OVERLAY_THEME_LIGHT = "LIGHT"
 }
 

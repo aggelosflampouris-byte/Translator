@@ -1,4 +1,4 @@
 <resources>
     <string name="app_name">OverChat</string>
-    <string name="accessibility_service_description">Reads text on screen for real-time translation overlays.</string>
+    <string name="accessibility_service_description">Reads text on screen inside your enabled chat apps to display real-time translation overlays.</string>
 </resources>

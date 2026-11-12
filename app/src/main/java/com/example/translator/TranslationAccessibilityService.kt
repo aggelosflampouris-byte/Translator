@@ -71,6 +71,8 @@ class TranslationAccessibilityService : AccessibilityService() {
     private lateinit var pipeline: TranslationPipeline
     private var manualDraftTargetLang: String? = null
     private val resourcesReleased = java.util.concurrent.atomic.AtomicBoolean(false)
+    @Volatile private var enabledTargetPackages: Set<String> = TargetAppCatalog.getDefaultEnabledPackages()
+    @Volatile private var lastForegroundTargetPackage: String? = null
 
     // Por qué: Memoria local de aprendizaje (frases enviadas y correcciones del usuario) y estado del bucle de retroalimentación
     private lateinit var learningStore: LearningStore
@@ -80,6 +82,15 @@ class TranslationAccessibilityService : AccessibilityService() {
 
     private val prefListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { prefs, key ->
         when (key) {
+            AppDefaults.KEY_ENABLED_PACKAGES -> {
+                enabledTargetPackages = TargetAppCatalog.getEnabledPackages(prefs, packageName)
+                syncAccessibilityPackageScope()
+                if (!isTargetAppInForeground()) {
+                    mainHandler.post { overlayManager.removeAllOverlays() }
+                } else {
+                    scheduleScan(100L)
+                }
+            }
             AppDefaults.KEY_SOURCE_LANGUAGE -> {
                 configuredSource = prefs.getString(key, AppDefaults.SOURCE_LANGUAGE) ?: AppDefaults.SOURCE_LANGUAGE
                 manualDraftTargetLang = null
@@ -150,6 +161,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         isGlossaryAndValidationEnabled = prefs.getBoolean(AppDefaults.KEY_AI_ENABLED, true)
         isLearningEnabled = prefs.getBoolean(AppDefaults.KEY_LEARNING_ENABLED, true)
         translationMode = prefs.getString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_ALL) ?: AppDefaults.MODE_ALL
+        enabledTargetPackages = TargetAppCatalog.getEnabledPackages(prefs, packageName)
         prefs.registerOnSharedPreferenceChangeListener(prefListener)
 
         // Publish to ServiceBridge — no static Service reference stored.
@@ -173,7 +185,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
 
         // Por qué: El vigilante se inicia de inmediato y permanece activo para garantizar que ninguna
-        // pastilla huérfana sobreviva fuera de WhatsApp, incluso si el servicio cambia de estado.
+        // pastilla huérfana sobreviva fuera de una app habilitada, incluso si el servicio cambia de estado.
         startOverlayWatchdog()
 
         // Por qué: Precarga el modelo neuronal en memoria en segundo plano para eliminar la latencia inicial al abrir un chat
@@ -186,10 +198,12 @@ class TranslationAccessibilityService : AccessibilityService() {
             serviceScope.launch {
                 isScreenScrolling = false
                 lastScrollTimestamp = 0L
-                if (!isWhatsAppInForeground()) {
+                val activeTarget = resolveForegroundTargetPackage()
+                handleForegroundTargetTransition(activeTarget)
+                if (activeTarget == null) {
                     mainHandler.post {
                         overlayManager.removeAllOverlays()
-                        Toast.makeText(applicationContext, "Open a WhatsApp chat to translate messages", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(applicationContext, "Open a supported chat app to translate messages", Toast.LENGTH_SHORT).show()
                     }
                     return@launch
                 }
@@ -197,10 +211,21 @@ class TranslationAccessibilityService : AccessibilityService() {
             }
         }
 
+        syncAccessibilityPackageScope()
+
+        Log.d("Translator", "TranslationAccessibilityService connected")
+    }
+
+    private fun syncAccessibilityPackageScope() {
         try {
             val info = serviceInfo ?: android.accessibilityservice.AccessibilityServiceInfo()
-            // Por qué: Restringir a WhatsApp y eventos requeridos para preservar la privacidad y rendimiento
-            info.packageNames = arrayOf("com.whatsapp", "com.whatsapp.w4b")
+            val scope = enabledTargetPackages
+            // Por qué: Nunca asignar null a packageNames porque en Android significa escuchar todas las apps del dispositivo
+            info.packageNames = if (scope.isEmpty()) {
+                arrayOf("${applicationContext.packageName}.none")
+            } else {
+                scope.toTypedArray()
+            }
             info.flags = info.flags or
                 android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
                 android.accessibilityservice.AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
@@ -216,58 +241,51 @@ class TranslationAccessibilityService : AccessibilityService() {
         } catch (e: Exception) {
             Log.e("Translator", "Failed to configure serviceInfo programmatically", e)
         }
-
-        Log.d("Translator", "TranslationAccessibilityService connected")
     }
 
-    private fun isWhatsAppPackage(pkg: String?): Boolean {
-        return pkg != null && (pkg == "com.whatsapp" || pkg == "com.whatsapp.w4b")
-    }
-
-    // Por qué: Identifica lanzadores del sistema, interfaces de inicio y la propia app
-    // para descartar inmediatamente que WhatsApp esté en primer plano y evitar falsos positivos
-    // producidos por accesos directos o iconos de WhatsApp en la pantalla de inicio.
-    private fun isKnownNonWhatsAppPackage(pkg: String?): Boolean {
+    private fun isEnabledTargetPackage(pkg: String?): Boolean {
         if (pkg.isNullOrBlank()) return false
-        val lower = pkg.lowercase()
-        return lower.contains("launcher") ||
-               lower.contains("quickstep") ||
-               lower.contains("home") ||
-               pkg == "android" ||
-               pkg == "com.android.systemui" ||
-               pkg == applicationContext.packageName
+        return enabledTargetPackages.contains(pkg) &&
+            !TargetAppCatalog.isBlockedSensitivePackage(pkg, applicationContext.packageName)
     }
 
-    private fun isIgnoredPackage(pkg: String?): Boolean {
-        if (pkg.isNullOrBlank()) return true
-        if (isKnownNonWhatsAppPackage(pkg)) return true
-        val lower = pkg.lowercase()
-        if (lower.contains("keyboard") || lower.contains("honeyboard") || lower.contains("inputmethod") || lower.contains("ime")) {
-            return true
-        }
-        return false
+    private fun isBlockedNonTargetPackage(pkg: String?): Boolean {
+        return TargetAppCatalog.isBlockedSensitivePackage(pkg, applicationContext.packageName)
     }
 
     private fun isKeyboardPackage(pkg: String?): Boolean {
-        if (pkg.isNullOrBlank()) return false
-        val lower = pkg.lowercase()
-        return lower.contains("keyboard") || lower.contains("honeyboard") ||
-               lower.contains("inputmethod") || lower.contains("ime")
+        return TargetAppCatalog.isKeyboardPackage(pkg)
     }
 
-    // Por qué: Determina de forma estricta y sin ambigüedades si WhatsApp es la app activa en primer plano,
-    // comprobando el paquete raíz de la ventana y evitando examinar árboles de nodos secundarios que puedan
-    // contener accesos directos o widgets de WhatsApp en el escritorio del teléfono.
-    private fun isWhatsAppInForeground(): Boolean {
+    // Por qué: Al cambiar de una app habilitada a otra (p. ej. WhatsApp a Telegram), limpia inmediatamente
+    // las burbujas previas, trabajos en vuelo y estado de borrador para evitar superposiciones cruzadas.
+    private fun handleForegroundTargetTransition(activeTargetPkg: String?) {
+        if (activeTargetPkg == lastForegroundTargetPackage) return
+        lastForegroundTargetPackage = activeTargetPkg
+        scanGeneration.incrementAndGet()
+        inFlightKeys.clear()
+        typingJob?.cancel()
+        scanDebounceJob?.cancel()
+        lastRenderedDraftSource = null
+        manualDraftTargetLang = null
+        dismissedDraftText = null
+        mainHandler.post {
+            overlayManager.removeAllOverlays()
+        }
+    }
+
+    // Por qué: Determina de forma estricta qué aplicación habilitada está en primer plano,
+    // descartando lanzadores, teclados y apps bloqueadas para evitar falsos positivos.
+    private fun resolveForegroundTargetPackage(): String? {
         try {
             val active = rootInActiveWindow
             if (active != null) {
                 val pkg = active.packageName?.toString() ?: ""
-                if (isKnownNonWhatsAppPackage(pkg)) {
-                    return false
+                if (isBlockedNonTargetPackage(pkg)) {
+                    return null
                 }
-                if (isWhatsAppPackage(pkg)) {
-                    return true
+                if (isEnabledTargetPackage(pkg)) {
+                    return pkg
                 }
             }
         } catch (e: Exception) {
@@ -278,48 +296,48 @@ class TranslationAccessibilityService : AccessibilityService() {
             val windowList = windows
             if (windowList != null && windowList.isNotEmpty()) {
                 for (window in windowList) {
-                    if (window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION && window.isActive) {
+                    if (window.type == AccessibilityWindowInfo.TYPE_APPLICATION && window.isActive) {
                         val root = window.root ?: continue
                         val pkg = root.packageName?.toString() ?: ""
-                        if (isKnownNonWhatsAppPackage(pkg)) {
-                            return false
+                        if (isBlockedNonTargetPackage(pkg)) {
+                            return null
                         }
-                        if (isWhatsAppPackage(pkg)) {
-                            return true
+                        if (isEnabledTargetPackage(pkg)) {
+                            return pkg
                         }
                     }
                 }
 
-                // Por qué: Si el teclado IME o una superposición del sistema tiene el foco activo,
-                // verificamos si la ventana de aplicación principal subyacente pertenece a WhatsApp.
-                val appWindows = windowList.filter { it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION }
+                // Por qué: Si el teclado IME tiene el foco activo, inspecciona la ventana de app subyacente
+                val appWindows = windowList.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
                 if (appWindows.isNotEmpty()) {
-                    val activeApp = appWindows.firstOrNull { it.isActive }
-                    if (activeApp != null) {
-                        val pkg = activeApp.root?.packageName?.toString() ?: ""
-                        return isWhatsAppPackage(pkg)
+                    val activeApp = appWindows.firstOrNull { it.isActive } ?: appWindows.firstOrNull()
+                    val pkg = activeApp?.root?.packageName?.toString() ?: ""
+                    if (isEnabledTargetPackage(pkg)) {
+                        return pkg
                     }
-                    val firstApp = appWindows.firstOrNull()
-                    val pkg = firstApp?.root?.packageName?.toString() ?: ""
-                    return isWhatsAppPackage(pkg)
                 }
             }
         } catch (e: Exception) {
             // Ignore
         }
 
-        return false
+        return null
     }
+
+    private fun isTargetAppInForeground(): Boolean = resolveForegroundTargetPackage() != null
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         if (!ServiceBridge.isTranslatingActive) return
 
         val packageName = event.packageName?.toString() ?: ""
+        val activeForeground = resolveForegroundTargetPackage()
+        handleForegroundTargetTransition(activeForeground)
 
         // Por qué: Limpieza inmediata de pantalla si el evento proviene de una app externa o del lanzador
-        if (!isWhatsAppPackage(packageName) && !isKeyboardPackage(packageName)) {
-            if (!isWhatsAppInForeground()) {
+        if (!isEnabledTargetPackage(packageName) && !isKeyboardPackage(packageName)) {
+            if (activeForeground == null) {
                 mainHandler.post {
                     overlayManager.removeAllOverlays()
                 }
@@ -327,12 +345,12 @@ class TranslationAccessibilityService : AccessibilityService() {
             }
         }
 
-        if (isIgnoredPackage(packageName)) {
+        if (isBlockedNonTargetPackage(packageName) || isKeyboardPackage(packageName)) {
             return
         }
 
-        if (!isWhatsAppPackage(packageName)) {
-            if (!isWhatsAppInForeground()) {
+        if (!isEnabledTargetPackage(packageName)) {
+            if (activeForeground == null) {
                 mainHandler.post {
                     overlayManager.removeAllOverlays()
                 }
@@ -362,7 +380,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                     // antes de traducir, garantizando que la pantalla esté 100% estable.
                     delay(350L)
                     isScreenScrolling = false
-                    if (isWhatsAppInForeground() && ServiceBridge.isTranslatingActive) {
+                    if (isTargetAppInForeground() && ServiceBridge.isTranslatingActive) {
                         scanAndTranslateVisibleMessages()
                     }
                 }
@@ -398,7 +416,7 @@ class TranslationAccessibilityService : AccessibilityService() {
     // Por qué: Aplica un retraso controlado para no saturar con cancelaciones constantes en cada fotograma de desplazamiento
     private fun scheduleScan(delayMs: Long, eventSource: AccessibilityNodeInfo? = null) {
         if (!ServiceBridge.isTranslatingActive) return
-        if (!isWhatsAppInForeground()) {
+        if (!isTargetAppInForeground()) {
             if (overlayManager.hasOverlays()) {
                 mainHandler.post { overlayManager.removeAllOverlays() }
             }
@@ -412,7 +430,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         scanDebounceJob = serviceScope.launch {
             delay(delayMs)
             val elapsed = android.os.SystemClock.uptimeMillis() - lastScrollTimestamp
-            if (ServiceBridge.isTranslatingActive && isWhatsAppInForeground() && !isScreenScrolling && elapsed >= 350L) {
+            if (ServiceBridge.isTranslatingActive && isTargetAppInForeground() && !isScreenScrolling && elapsed >= 350L) {
                 scanAndTranslateVisibleMessages(eventSource)
             }
         }
@@ -421,15 +439,16 @@ class TranslationAccessibilityService : AccessibilityService() {
     private var overlayWatchdogJob: Job? = null
 
     // Por qué: Vigila activamente si hay píldoras dibujadas en pantalla y las remueve inmediatamente
-    // si el usuario minimiza WhatsApp o vuelve a la pantalla de inicio, superando las limitaciones
-    // del filtrado de eventos por paquete de accesibilidad del sistema operativo.
+    // si el usuario sale de la app objetivo o cambia entre apps habilitadas sin generar evento previo.
     private fun startOverlayWatchdog() {
         overlayWatchdogJob?.cancel()
         overlayWatchdogJob = serviceScope.launch {
             while (true) {
                 delay(250L)
+                val activeTarget = resolveForegroundTargetPackage()
+                handleForegroundTargetTransition(activeTarget)
                 if (overlayManager.hasOverlays()) {
-                    if (!isWhatsAppInForeground() || !ServiceBridge.isTranslatingActive) {
+                    if (activeTarget == null || !ServiceBridge.isTranslatingActive) {
                         mainHandler.post {
                             overlayManager.removeAllOverlays()
                         }
@@ -445,7 +464,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             delay(50L)
             if (!ServiceBridge.isTranslatingActive) return@launch
             val elapsedInit = android.os.SystemClock.uptimeMillis() - lastScrollTimestamp
-            if (isWhatsAppInForeground() && !isScreenScrolling && elapsedInit >= 350L) {
+            if (isTargetAppInForeground() && !isScreenScrolling && elapsedInit >= 350L) {
                 scanAndTranslateVisibleMessages()
             }
 
@@ -453,19 +472,18 @@ class TranslationAccessibilityService : AccessibilityService() {
                 delay(2000L)
                 if (!ServiceBridge.isTranslatingActive) break
                 val timeSinceScroll = android.os.SystemClock.uptimeMillis() - lastScrollTimestamp
-                if (isWhatsAppInForeground() && !isScreenScrolling && timeSinceScroll >= 350L) {
+                if (isTargetAppInForeground() && !isScreenScrolling && timeSinceScroll >= 350L) {
                     scanAndTranslateVisibleMessages()
-                } else if (!isWhatsAppInForeground() && overlayManager.hasOverlays()) {
+                } else if (!isTargetAppInForeground() && overlayManager.hasOverlays()) {
                     mainHandler.post { overlayManager.removeAllOverlays() }
                 }
             }
         }
     }
 
-    private fun findWhatsAppRootNode(eventSource: AccessibilityNodeInfo? = null): AccessibilityNodeInfo? {
-        if (!isWhatsAppInForeground()) {
-            return null
-        }
+    private fun findActiveTargetRootNode(eventSource: AccessibilityNodeInfo? = null): AccessibilityNodeInfo? {
+        val activePkg = resolveForegroundTargetPackage() ?: return null
+        handleForegroundTargetTransition(activePkg)
 
         if (eventSource != null) {
             try {
@@ -474,7 +492,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                     val parent = current.parent ?: break
                     current = parent
                 }
-                if (isWhatsAppPackage(current.packageName?.toString())) {
+                if (current.packageName?.toString() == activePkg) {
                     return current
                 }
             } catch (e: Exception) {
@@ -484,7 +502,7 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         try {
             val active = rootInActiveWindow
-            if (active != null && isWhatsAppPackage(active.packageName?.toString())) {
+            if (active != null && active.packageName?.toString() == activePkg) {
                 return active
             }
         } catch (e: Exception) {
@@ -495,9 +513,9 @@ class TranslationAccessibilityService : AccessibilityService() {
             val windowList = windows
             if (windowList != null) {
                 for (window in windowList) {
-                    if (window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) {
+                    if (window.type == AccessibilityWindowInfo.TYPE_APPLICATION) {
                         val root = window.root ?: continue
-                        if (isWhatsAppPackage(root.packageName?.toString())) {
+                        if (root.packageName?.toString() == activePkg) {
                             return root
                         }
                     }
@@ -522,16 +540,15 @@ class TranslationAccessibilityService : AccessibilityService() {
             return 0
         }
 
-        // Por qué: Verifica estrictamente que WhatsApp esté en primer plano antes de iniciar cualquier escaneo
-        // para garantizar que nunca se lean ni se superpongan píldoras sobre la pantalla de inicio u otras apps.
-        if (!isWhatsAppInForeground()) {
+        // Por qué: Verifica estrictamente que una app habilitada esté en primer plano antes de iniciar cualquier escaneo
+        if (!isTargetAppInForeground()) {
             mainHandler.post {
                 overlayManager.removeAllOverlays()
             }
             return 0
         }
 
-        val rootNode = findWhatsAppRootNode(eventSource)
+        val rootNode = findActiveTargetRootNode(eventSource)
         if (rootNode == null) {
             mainHandler.post {
                 overlayManager.removeAllOverlays()
@@ -614,7 +631,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         // para que aparezcan en pantalla en menos de 2ms sin esperar a las peticiones de red.
         if (immediateResults.isNotEmpty()) {
             mainHandler.post {
-                if (ServiceBridge.isTranslatingActive && isWhatsAppInForeground() && currentGeneration == scanGeneration.get() && !isScreenScrolling) {
+                if (ServiceBridge.isTranslatingActive && isTargetAppInForeground() && currentGeneration == scanGeneration.get() && !isScreenScrolling) {
                     overlayManager.updateOverlays(immediateResults, isFullSync = pendingCandidates.isEmpty())
                 }
             }
@@ -661,7 +678,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                         }
                         if (isScreenScrolling ||
                             timeSinceScroll < 350L ||
-                            !isWhatsAppInForeground() ||
+                            !isTargetAppInForeground() ||
                             !ServiceBridge.isTranslatingActive
                         ) {
                             return@launch
@@ -670,7 +687,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                         mainHandler.post {
                             if (currentGeneration == scanGeneration.get() &&
                                 ServiceBridge.isTranslatingActive &&
-                                isWhatsAppInForeground() &&
+                                isTargetAppInForeground() &&
                                 !isScreenScrolling
                             ) {
                                 overlayManager.addOrUpdateOverlay(rect, senseCorrected)
@@ -695,9 +712,9 @@ class TranslationAccessibilityService : AccessibilityService() {
         configuredTarget: String,
         requireTranslatable: Boolean = true
     ): Boolean {
-        // Por qué: Ignora inmediatamente nodos que no pertenezcan a WhatsApp para evitar procesar la pantalla del lanzador o ajustes del sistema
+        // Por qué: Ignora inmediatamente nodos fuera de las apps habilitadas para no leer pantallas ajenas
         val nodePkg = node.packageName?.toString() ?: ""
-        if (nodePkg.isNotBlank() && !isWhatsAppPackage(nodePkg)) {
+        if (nodePkg.isNotBlank() && !isEnabledTargetPackage(nodePkg)) {
             return false
         }
 
@@ -897,7 +914,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             // Ignore
         }
 
-        val root = findWhatsAppRootNode() ?: return null
+        val root = findActiveTargetRootNode() ?: return null
         return findFirstEditableChild(root)
     }
 
@@ -1025,7 +1042,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             val effectiveBadge = effectiveTargetLang.uppercase()
 
             // Por qué: Los mensajes visibles sobre el campo de texto dan contexto conversacional al borrador
-            val draftContext = findWhatsAppRootNode()
+            val draftContext = findActiveTargetRootNode()
                 ?.let { root -> collectVisibleConversation(root, freshRect.top) }
                 ?.map { it.text }
                 ?.takeLast(AppDefaults.MAX_CONTEXT_MESSAGES)
@@ -1049,7 +1066,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             val finalTranslatedDraft = translatedLines.joinToString("\n")
             if (finalTranslatedDraft.isNotBlank() && finalTranslatedDraft != liveText) {
                 mainHandler.post {
-                    if (ServiceBridge.isTranslatingActive && isWhatsAppInForeground() && !isPlaceholderText(liveText, liveHint)) {
+                    if (ServiceBridge.isTranslatingActive && isTargetAppInForeground() && !isPlaceholderText(liveText, liveHint)) {
                         lastRenderedDraftSource = liveText
                         lastRenderedDraftTop = freshRect.top
                         lastRenderedDraftManualLang = manualDraftTargetLang
@@ -1167,7 +1184,7 @@ class TranslationAccessibilityService : AccessibilityService() {
 
     private fun isSentBubbleVisible(sentText: String): Boolean {
         return try {
-            val root = findWhatsAppRootNode() ?: return false
+            val root = findActiveTargetRootNode() ?: return false
             val probe = sentText.lines().first().take(60)
             root.findAccessibilityNodeInfosByText(probe).any { !it.isEditable }
         } catch (e: Exception) {
@@ -1266,9 +1283,9 @@ class TranslationAccessibilityService : AccessibilityService() {
     private fun handleMessageClicked(sourceNode: AccessibilityNodeInfo?) {
         if (!ServiceBridge.isTranslatingActive) return
         if (sourceNode == null) return
-        if (!isWhatsAppInForeground()) return
+        if (!isTargetAppInForeground()) return
         val nodePkg = sourceNode.packageName?.toString() ?: ""
-        if (nodePkg.isNotBlank() && !isWhatsAppPackage(nodePkg)) return
+        if (nodePkg.isNotBlank() && !isEnabledTargetPackage(nodePkg)) return
 
         try {
             val nodeWithText = findFirstTextChild(sourceNode) ?: sourceNode
@@ -1301,7 +1318,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                     return@launch
                 }
 
-                val context = findWhatsAppRootNode()
+                val context = findActiveTargetRootNode()
                     ?.let { root -> contextAbove(collectVisibleConversation(root, rect.top), rect) }
                     ?: emptyList()
                 val hints = buildHints(msgSource, msgTarget, context)
