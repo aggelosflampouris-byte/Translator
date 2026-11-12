@@ -174,21 +174,18 @@ class AdaptiveLearningTest {
     }
 
     @Test
-    fun greekScriptRomanian_isRecognizedAndTranslated() {
+    fun phoneticTextInTargetScript_isNotTranslated() {
         val incoming = "Μπουνα σέρα ρε μαλακα"
-        assertTrue(TranslationSenseEngine.hasGreekScriptRomanian(incoming))
-        assertTrue(TranslationFilter.shouldTranslate(incoming, "el", "ro"))
-        assertEquals(
-            "Καλησπέρα ρε μαλάκα",
-            TranslationSenseEngine.resolveIdiomPreTranslation(incoming, "ro", "el")
-        )
+        assertFalse(TranslationFilter.shouldTranslate(incoming, "el", "ro"))
+        assertFalse(TranslationSenseEngine.isEligibleSourceText(incoming, "ro", "el"))
+        assertNull(TranslationSenseEngine.resolveIdiomPreTranslation(incoming, "ro", "el"))
     }
 
     @Test
-    fun mixedGreetingAndSenseNormalization_producesConsistentGreekOutput() {
+    fun genuineRomanianAndSenseNormalization_producesConsistentGreekOutput() {
         assertEquals(
             "Bună seara Giannis Acesta este un test",
-            TextNormalizer.restoreRomanianDiacritics("Good seara Giannis Acesta este un test")
+            TextNormalizer.restoreRomanianDiacritics("Buna seara Giannis Acesta este un test")
         )
         assertEquals(
             "Προσπαθώντας να καταλάβω πώς θα κάνω την εφαρμογή να δουλέψει για τον ηλίθιο της παρέας",

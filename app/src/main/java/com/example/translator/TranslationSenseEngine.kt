@@ -61,44 +61,6 @@ object TranslationSenseEngine {
 
     private val GENERIC_ROMANCE_PREPOSITIONS = setOf("de", "in", "e", "a", "la")
 
-    // Por qué: Expresiones rumanas escritas fonéticamente con alfabeto griego (ej. "Μπουνα σέρα ρε μαλακα")
-    private val GREEK_SCRIPT_ROMANIAN_MAP = listOf(
-        "μπουνα ντιμινεατσα" to "Καλημέρα",
-        "μπουνα σερα" to "Καλησπέρα",
-        "μπουνα ζιουα" to "Γεια σας",
-        "νοαπτε μπουνα" to "Καληνύχτα",
-        "τσε φατσι" to "Τι κάνεις",
-        "μουλτσουμεσκ" to "Ευχαριστώ"
-    )
-
-    fun hasGreekScriptRomanian(text: String): Boolean {
-        val norm = normalizeGreek(text)
-        return GREEK_SCRIPT_ROMANIAN_MAP.any { (greekRo, _) -> norm.contains(greekRo) }
-    }
-
-    private fun translateGreekScriptRomanian(text: String): String? {
-        val clean = text.trim()
-        val norm = normalizeGreek(clean)
-        if (!GREEK_SCRIPT_ROMANIAN_MAP.any { (greekRo, _) -> norm.contains(greekRo) }) {
-            return null
-        }
-        var result = clean
-        // Por qué: Sustituye el saludo rumano fonético en alfabeto griego por su equivalente griego real
-        val replacements = listOf(
-            Regex("""(?iu)μπο[υύ]να\s+ντιμιν[εέ][αά]τσα""") to "Καλημέρα",
-            Regex("""(?iu)μπο[υύ]να\s+σ[εέ]ρα""") to "Καλησπέρα",
-            Regex("""(?iu)μπο[υύ]να\s+ζ[ιί]ουα""") to "Γεια σας",
-            Regex("""(?iu)νο[αά]πτε\s+μπο[υύ]να""") to "Καληνύχτα",
-            Regex("""(?iu)τσε\s+φ[αά]τσι""") to "Τι κάνεις",
-            Regex("""(?iu)μουλτσουμ[εέ]σκ""") to "Ευχαριστώ"
-        )
-        for ((pattern, greekReplacement) in replacements) {
-            result = pattern.replace(result, greekReplacement)
-        }
-        result = result.replace(Regex("""(?iu)(?<!\p{L})μαλακα(?!\p{L})"""), "μαλάκα")
-        return result
-    }
-
     /**
      * Determines whether a recognized rectangle corresponds to a chat message bubble
      * (either incoming on the left or sent outgoing on the right), while filtering out
@@ -145,11 +107,8 @@ object TranslationSenseEngine {
             return false
         }
 
-        // If target is Greek, discard any text already composed of Greek script unless it contains phonetic Romanian
+        // If target is Greek, discard any text already composed of Greek script
         if (targetLang == TranslateLanguage.GREEK) {
-            if (sourceLang == TranslateLanguage.ROMANIAN && hasGreekScriptRomanian(clean)) {
-                return true
-            }
             val greekLetters = clean.count { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }
             val latinLetters = clean.count { it in 'a'..'z' || it in 'A'..'Z' || it in "ăâîșțĂÂÎȘȚ" }
             if (greekLetters > 0 && greekLetters >= latinLetters) {
@@ -286,8 +245,6 @@ object TranslationSenseEngine {
 
     private fun resolveRomanianToGreekIdioms(text: String): String? {
         val clean = TranslationFilter.cleanMessageText(text).trim()
-        translateGreekScriptRomanian(clean)?.let { return it }
-
         val normalized = clean.lowercase()
             .replace("ă", "a")
             .replace("â", "a")

@@ -944,6 +944,27 @@ class TranslationAccessibilityService : AccessibilityService() {
         )
     }
 
+    // Por qué: Determina el par (origen, destino) para el borrador usando los idiomas elegidos en el menú
+    private fun resolveDraftDirection(text: String, manualTarget: String?): Pair<String, String> {
+        val menuSource = if (configuredSource != "AUTO") configuredSource else AppDefaults.SOURCE_LANGUAGE
+        val menuTarget = configuredTarget
+        if (manualTarget != null) {
+            val source = if (manualTarget == menuTarget) menuSource else menuTarget
+            return source to manualTarget
+        }
+        val greekLang = TranslateLanguage.GREEK
+        val hasGreekAndLatinPair = (menuSource == greekLang) xor (menuTarget == greekLang)
+        if (hasGreekAndLatinPair) {
+            val otherLang = if (menuSource == greekLang) menuTarget else menuSource
+            return when (TextNormalizer.detectScriptType(text)) {
+                TextNormalizer.ScriptType.GREEK -> greekLang to otherLang
+                TextNormalizer.ScriptType.LATIN -> otherLang to greekLang
+                TextNormalizer.ScriptType.NEUTRAL -> menuTarget to menuSource
+            }
+        }
+        return menuTarget to menuSource
+    }
+
     private fun isPlaceholderText(text: String, hintText: String): Boolean {
         if (text.length < 2 || !text.any { it.isLetter() }) return true
         if (text.equals(hintText, ignoreCase = true)) return true
@@ -1000,25 +1021,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             return
         }
 
-        // Auto-detect script direction or respect user manual override
-        val scriptType = TextNormalizer.detectScriptType(rawText)
-        val defaultDraftSourceLang = when (scriptType) {
-            TextNormalizer.ScriptType.GREEK -> com.google.mlkit.nl.translate.TranslateLanguage.GREEK
-            TextNormalizer.ScriptType.LATIN -> com.google.mlkit.nl.translate.TranslateLanguage.ROMANIAN
-            TextNormalizer.ScriptType.NEUTRAL -> if (configuredSource != "AUTO") configuredTarget else AppDefaults.TARGET_LANGUAGE
-        }
-        val defaultDraftTargetLang = when (scriptType) {
-            TextNormalizer.ScriptType.GREEK -> com.google.mlkit.nl.translate.TranslateLanguage.ROMANIAN
-            TextNormalizer.ScriptType.LATIN -> com.google.mlkit.nl.translate.TranslateLanguage.GREEK
-            TextNormalizer.ScriptType.NEUTRAL -> if (configuredSource != "AUTO") configuredSource else AppDefaults.SOURCE_LANGUAGE
-        }
-
-        val draftTargetLang = manualDraftTargetLang ?: defaultDraftTargetLang
-        val draftSourceLang = if (draftTargetLang == com.google.mlkit.nl.translate.TranslateLanguage.GREEK) {
-            com.google.mlkit.nl.translate.TranslateLanguage.ROMANIAN
-        } else {
-            com.google.mlkit.nl.translate.TranslateLanguage.GREEK
-        }
+        val (_, draftTargetLang) = resolveDraftDirection(rawText, manualDraftTargetLang)
 
         typingJob?.cancel()
         typingJob = serviceScope.launch {
@@ -1041,18 +1044,11 @@ class TranslationAccessibilityService : AccessibilityService() {
                 node.getBoundsInScreen(freshRect)
             }
 
-            // Re-evaluar idioma según el texto actualizado si no hay selección manual fijada
-            val liveScriptType = TextNormalizer.detectScriptType(liveText)
-            val effectiveTargetLang = manualDraftTargetLang ?: when (liveScriptType) {
-                TextNormalizer.ScriptType.GREEK -> com.google.mlkit.nl.translate.TranslateLanguage.ROMANIAN
-                TextNormalizer.ScriptType.LATIN -> com.google.mlkit.nl.translate.TranslateLanguage.GREEK
-                TextNormalizer.ScriptType.NEUTRAL -> draftTargetLang
-            }
-            val effectiveSourceLang = if (effectiveTargetLang == com.google.mlkit.nl.translate.TranslateLanguage.GREEK) {
-                com.google.mlkit.nl.translate.TranslateLanguage.ROMANIAN
-            } else {
-                com.google.mlkit.nl.translate.TranslateLanguage.GREEK
-            }
+            // Re-evaluar idioma según el texto actualizado respetando los idiomas elegidos en el menú
+            val (effectiveSourceLang, effectiveTargetLang) = resolveDraftDirection(
+                liveText,
+                manualDraftTargetLang ?: draftTargetLang.takeIf { TextNormalizer.detectScriptType(liveText) == TextNormalizer.ScriptType.NEUTRAL }
+            )
             val effectiveBadge = effectiveTargetLang.uppercase()
 
             // Por qué: Los mensajes visibles sobre el campo de texto dan contexto conversacional al borrador
@@ -1158,11 +1154,13 @@ class TranslationAccessibilityService : AccessibilityService() {
                                 overlayManager.removeDraftOverlay()
                             },
                             onBadgeClicked = {
-                                // Por qué: Alterna manualmente la dirección de traducción al tocar la insignia
-                                manualDraftTargetLang = if (effectiveTargetLang == com.google.mlkit.nl.translate.TranslateLanguage.GREEK) {
-                                    com.google.mlkit.nl.translate.TranslateLanguage.ROMANIAN
+                                // Por qué: Alterna manualmente la dirección entre los dos idiomas elegidos en el menú
+                                val menuSource = if (configuredSource != "AUTO") configuredSource else AppDefaults.SOURCE_LANGUAGE
+                                val menuTarget = configuredTarget
+                                manualDraftTargetLang = if (effectiveTargetLang == menuTarget) {
+                                    menuSource
                                 } else {
-                                    com.google.mlkit.nl.translate.TranslateLanguage.GREEK
+                                    menuTarget
                                 }
                                 lastRenderedDraftSource = null
                                 handleOutgoingTyping(event)

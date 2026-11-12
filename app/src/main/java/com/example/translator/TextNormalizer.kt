@@ -88,12 +88,7 @@ object TextNormalizer {
         "noapte buna" to "noapte bună",
         "buna dimineata" to "bună dimineața",
         "buna seara" to "bună seara",
-        "buna ziua" to "bună ziua",
-        "good seara" to "bună seara",
-        "good dimineata" to "bună dimineața",
-        "good dimineața" to "bună dimineața",
-        "good ziua" to "bună ziua",
-        "good noapte" to "noapte bună"
+        "buna ziua" to "bună ziua"
     )
 
     private val WORD_BOUNDARY_REGEX = Regex("""(?i)\b([a-zăâîșț]+(-[a-zăâîșț]+)?)\b""")
@@ -127,14 +122,7 @@ object TextNormalizer {
             "buna seara" to "bună seara",
             "bună seară" to "bună seara",
             "buna ziua" to "bună ziua",
-            "bună ziua" to "bună ziua",
-            "good seara" to "bună seara",
-            "good seară" to "bună seara",
-            "good dimineata" to "bună dimineața",
-            "good dimineața" to "bună dimineața",
-            "good dimineață" to "bună dimineața",
-            "good ziua" to "bună ziua",
-            "good noapte" to "noapte bună"
+            "bună ziua" to "bună ziua"
         )
         for ((plain, withDiacritics) in multiWordOverrides) {
             val pattern = Regex("""(?iu)(?<!\p{L})${Regex.escape(plain)}(?!\p{L})""")
