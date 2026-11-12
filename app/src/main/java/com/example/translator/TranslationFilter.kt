@@ -11,21 +11,26 @@ object TranslationFilter {
 
     private val URL_PATH_REGEX = Regex("""^/?[a-zA-Z0-9_\-/%?&=.]+$""")
     private val TIMESTAMP_REGEX = Regex("""^\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?$""", RegexOption.IGNORE_CASE)
-    private val WHATSAPP_STATUS_REGEX = Regex(
-        """[,.\s\n]+(delivered|read|sent|pending|unread|παραδόθηκε|διαβάστηκε|στάλθηκε|σε εκκρεμότητα|trimis|citit|citiți|cititi|livrat|în așteptare|[✓✔\u2713\u2714\u2705]+)\s*$""",
+    private val CHAT_RELATIVE_TIMESTAMP_REGEX = Regex(
+        """^(today|yesterday|σήμερα|χθες|astăzi|ieri)\s+at\s+\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?$""",
+        RegexOption.IGNORE_CASE
+    )
+    private val CHAT_STATUS_REGEX = Regex(
+        """[,.\s\n]+(delivered|read|sent|seen|pending|unread|edited|\(edited\)|επεξεργάστηκε|\(επεξεργάστηκε\)|editat|παραδόθηκε|διαβάστηκε|στάλθηκε|σε εκκρεμότητα|trimis|citit|citiți|cititi|livrat|în așteptare|[✓✔\u2713\u2714\u2705]+)\s*$""",
         RegexOption.IGNORE_CASE
     )
     private val STANDALONE_STATUS_REGEX = Regex(
-        """^([,.:\s\n]*(\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?)?[,.:\s\n]*(delivered|read|sent|pending|unread|παραδόθηκε|παραδοθηκε|διαβάστηκε|διαβαστηκε|στάλθηκε|σταλθηκε|σε εκκρεμότητα|σε εκκρεμοτητα|εκκρεμεί|εκκρεμει|trimis|citit|citiți|cititi|livrat|în așteptare|in asteptare|[✓✔\u2713\u2714\u2705]+)[,.:\s\n]*)+$""",
+        """^([,.:\s\n]*(\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?)?[,.:\s\n]*(delivered|read|sent|seen|pending|unread|edited|\(edited\)|επεξεργάστηκε|\(επεξεργάστηκε\)|editat|παραδόθηκε|παραδοθηκε|διαβάστηκε|διαβαστηκε|στάλθηκε|σταλθηκε|σε εκκρεμότητα|σε εκκρεμοτητα|εκκρεμεί|εκκρεμει|trimis|citit|citiți|cititi|livrat|în așteptare|in asteptare|[✓✔\u2713\u2714\u2705]+)[,.:\s\n]*)+$""",
         RegexOption.IGNORE_CASE
     )
     private val TRAILING_TIMESTAMP_REGEX = Regex("""[\s\n]+\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?(\s*[✓✔\u2713\u2714\u2705]+)?\s*$""", RegexOption.IGNORE_CASE)
     private val PERCENTAGE_REGEX = Regex("""^\d{1,3}%$""")
 
     private val COMMON_UI_TOKENS = setOf(
-        "μήνυμα", "type a message", "message", "search", "αναζήτηση",
-        "χθες", "σήμερα", "yesterday", "today", "online", "συνδέθηκε",
-        "συνομιλίες", "ενημερώσεις", "κλήσεις", "chats", "updates", "calls"
+        "μήνυμα", "type a message", "type a message...", "message", "aa", "signal message",
+        "search", "αναζήτηση", "χθες", "σήμερα", "yesterday", "today", "online", "συνδέθηκε",
+        "active now", "typing...", "συνομιλίες", "ενημερώσεις", "κλήσεις",
+        "chats", "updates", "calls", "channels", "stories", "reels", "bot", "app"
     )
 
     private val SYSTEM_NOTICE_PHRASES = listOf(
@@ -49,14 +54,17 @@ object TranslationFilter {
         "apel video nepreluat",
         "disappearing messages",
         "αυτοκαταστρεφόμενα μηνύματα",
-        "mesaje temporare"
+        "mesaje temporare",
+        "liked a message",
+        "reacted to your message"
     )
 
     private val MESSAGE_STATUS_TOKENS = setOf(
         "διαβάστηκε", "διαβαστηκε", "παραδόθηκε", "παραδοθηκε", "στάλθηκε", "σταλθηκε",
         "σε εκκρεμότητα", "σε εκκρεμοτητα", "εκκρεμεί", "εκκρεμει", "μη αναγνωσμένο", "μη αναγνωσμενο",
-        "read", "delivered", "sent", "pending", "unread",
-        "citit", "citiți", "cititi", "livrat", "trimis", "în așteptare", "in asteptare",
+        "επεξεργάστηκε", "επεξεργαστηκε",
+        "read", "delivered", "sent", "seen", "pending", "unread", "edited", "(edited)",
+        "citit", "citiți", "cititi", "livrat", "trimis", "editat", "în așteptare", "in asteptare",
         "leído", "leido", "entregado", "enviado", "pendiente"
     )
 
@@ -84,8 +92,8 @@ object TranslationFilter {
             return false
         }
 
-        // Filter out pure timestamps (e.g. "5:16 μ.μ.", "12:55", "3:23 pm", "7:27")
-        if (trimmed.matches(TIMESTAMP_REGEX)) {
+        // Filter out pure timestamps (e.g. "5:16 μ.μ.", "12:55", "Today at 2:30 PM")
+        if (trimmed.matches(TIMESTAMP_REGEX) || trimmed.matches(CHAT_RELATIVE_TIMESTAMP_REGEX)) {
             return false
         }
 
@@ -94,7 +102,7 @@ object TranslationFilter {
             return false
         }
 
-        // Filter out WhatsApp system and call notices
+        // Filter out chat system and call notices
         if (SYSTEM_NOTICE_PHRASES.any { lower.contains(it) }) {
             return false
         }
@@ -135,18 +143,15 @@ object TranslationFilter {
     }
 
     /**
-     * Cleans OCR- or Accessibility-detected text by stripping trailing timestamps
-     * and WhatsApp delivery status markers commonly grouped into chat bubble metadata.
+     * Cleans OCR- or Accessibility-detected text by stripping trailing timestamps,
+     * edited tags, and delivery status markers across supported messaging apps.
      */
     fun cleanMessageText(text: String): String {
         var cleaned = TextSanitizer.sanitizeSpecialCharacters(text)
-        // Strip trailing WhatsApp status markers (e.g. ", Delivered", ", Παραδόθηκε")
-        cleaned = cleaned.replace(WHATSAPP_STATUS_REGEX, "").trim()
-        // Strip trailing timestamps (e.g. ", 7:27 μ.μ.")
+        // Por qué: Elimina marcadores de estado/edición y horas adjuntas en cualquier orden al final de la burbuja
+        cleaned = cleaned.replace(CHAT_STATUS_REGEX, "").trim()
         cleaned = cleaned.replace(TRAILING_TIMESTAMP_REGEX, "").trim()
-        // Repeat status strip in case status was after timestamp or vice-versa
-        cleaned = cleaned.replace(WHATSAPP_STATUS_REGEX, "").trim()
-        // Strip trailing commas, periods or colons left over from timestamp removal
+        cleaned = cleaned.replace(CHAT_STATUS_REGEX, "").trim()
         cleaned = cleaned.replace(Regex("""[,:\s]+$"""), "").trim()
         return cleaned
     }

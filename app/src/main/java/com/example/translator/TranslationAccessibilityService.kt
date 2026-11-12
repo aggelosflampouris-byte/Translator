@@ -555,6 +555,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             }
             return 0
         }
+        val activeProfile = TargetAppCatalog.profileForPackage(rootNode.packageName?.toString())
 
         // When the soft keyboard is open, hide chat message bubbles so the screen is not overflooded.
         // When the soft keyboard is closed, still evaluate the input bar in case a draft is present.
@@ -572,8 +573,8 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         val candidates = mutableListOf<MessageCandidate>()
         val density = resources.displayMetrics.density
-        val topInset = (48 * density).toInt()
-        val bottomInset = (40 * density).toInt()
+        val topInset = (activeProfile.topInsetDp * density).toInt()
+        val bottomInset = (activeProfile.bottomInsetDp * density).toInt()
         val screenHeight = resources.displayMetrics.heightPixels
 
         // When keyboard is closed, scan all messages up to the top of the input bar (with 5dp tolerance)
@@ -590,7 +591,15 @@ class TranslationAccessibilityService : AccessibilityService() {
             screenHeight - bottomInset
         }
 
-        collectMessageCandidates(rootNode, candidates, topInset, effectiveBottom, configuredSource, configuredTarget)
+        collectMessageCandidates(
+            node = rootNode,
+            outList = candidates,
+            minY = topInset,
+            maxY = effectiveBottom,
+            configuredSource = configuredSource,
+            configuredTarget = configuredTarget,
+            profile = activeProfile
+        )
 
         val dedupedCandidates = filterOverlappingCandidates(candidates)
 
@@ -710,7 +719,8 @@ class TranslationAccessibilityService : AccessibilityService() {
         maxY: Int,
         configuredSource: String,
         configuredTarget: String,
-        requireTranslatable: Boolean = true
+        requireTranslatable: Boolean = true,
+        profile: ChatAppProfile = TargetAppCatalog.GENERIC_DEFAULT_PROFILE
     ): Boolean {
         // Por qué: Ignora inmediatamente nodos fuera de las apps habilitadas para no leer pantallas ajenas
         val nodePkg = node.packageName?.toString() ?: ""
@@ -726,7 +736,16 @@ class TranslationAccessibilityService : AccessibilityService() {
         var childFound = false
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            val found = collectMessageCandidates(child, outList, minY, maxY, configuredSource, configuredTarget, requireTranslatable)
+            val found = collectMessageCandidates(
+                child,
+                outList,
+                minY,
+                maxY,
+                configuredSource,
+                configuredTarget,
+                requireTranslatable,
+                profile
+            )
             if (found) {
                 childFound = true
             }
@@ -737,10 +756,12 @@ class TranslationAccessibilityService : AccessibilityService() {
             return true
         }
 
-        // Real chat messages in WhatsApp are TextViews with non-null text.
-        // Ignore ImageViews, ImageButtons, and checkmark icons.
+        // Por qué: Descarta controles interactivos e imágenes para extraer únicamente texto de mensajes
         val className = node.className?.toString() ?: ""
-        if (className.contains("Image", ignoreCase = true) || className.contains("Button", ignoreCase = true)) {
+        if (className.contains("Image", ignoreCase = true) ||
+            className.contains("Button", ignoreCase = true) ||
+            className.contains("CheckBox", ignoreCase = true) ||
+            className.contains("Switch", ignoreCase = true)) {
             return false
         }
 
@@ -755,17 +776,23 @@ class TranslationAccessibilityService : AccessibilityService() {
             val rect = Rect()
             node.getBoundsInScreen(rect)
 
-            // Por qué: Busca el contenedor visual de la burbuja (hasta 2 niveles en la jerarquía)
-            // para abarcar los límites completos del mensaje con padding, marcas de tiempo y bordes.
-            var container = node.parent
             val screenWidth = resources.displayMetrics.widthPixels
             val screenHeight = resources.displayMetrics.heightPixels
             val density = resources.displayMetrics.density
-            for (level in 0..1) {
+
+            // Por qué: Solo expande al contenedor padre en apps con burbujas aisladas; en filas anchas
+            // (como Discord o Messenger) limita la expansión para no cubrir avatares ni cabeceras de usuario.
+            var container = node.parent
+            val maxLevels = if (profile.expandContainerToParent) 1 else 0
+            val maxParentWidthRatio = if (profile.expandContainerToParent) 0.95f else 0.85f
+            for (level in 0..maxLevels) {
                 if (container != null) {
                     val pRect = Rect()
                     container.getBoundsInScreen(pRect)
-                    if (pRect.width() <= screenWidth * 0.95f &&
+                    val safeExpansion = profile.expandContainerToParent ||
+                        (pRect.width() <= (rect.width() * 1.35f) && pRect.height() <= (rect.height() * 1.50f))
+                    if (safeExpansion &&
+                        pRect.width() <= screenWidth * maxParentWidthRatio &&
                         pRect.height() <= screenHeight &&
                         pRect.width() >= rect.width() &&
                         pRect.height() >= rect.height() &&
@@ -777,8 +804,8 @@ class TranslationAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // Validate chat message bubble (both incoming and sent outgoing messages, excluding centered date pills)
-            val isBubble = TranslationSenseEngine.isMessageBubble(rect.left, rect.right, screenWidth)
+            // Validate chat message bubble based on active app alignment layout
+            val isBubble = TranslationSenseEngine.isMessageBubble(rect.left, rect.right, screenWidth, profile.alignmentMode)
             val visibleMargin = (20 * density).toInt()
 
             if (isBubble && rect.width() > (30 * density).toInt() && rect.height() > (16 * density).toInt() &&
@@ -930,7 +957,8 @@ class TranslationAccessibilityService : AccessibilityService() {
 
     companion object {
         private val PLACEHOLDER_TOKENS = setOf(
-            "μήνυμα", "μηνυμα", "message", "type a message"
+            "μήνυμα", "μηνυμα", "message", "message...", "type a message", "type a message...",
+            "aa", "signal message", "add a comment", "add a comment...", "write a message", "reply..."
         )
     }
 
@@ -955,10 +983,20 @@ class TranslationAccessibilityService : AccessibilityService() {
         return menuTarget to menuSource
     }
 
-    private fun isPlaceholderText(text: String, hintText: String): Boolean {
+    private fun isPlaceholderText(
+        text: String,
+        hintText: String,
+        node: AccessibilityNodeInfo? = null
+    ): Boolean {
+        // Por qué: En Android 8+ la API del sistema indica de forma fiable si el texto actual es un hint visual
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O && node?.isShowingHintText == true) {
+            return true
+        }
         if (text.length < 2 || !text.any { it.isLetter() }) return true
         if (text.equals(hintText, ignoreCase = true)) return true
-        return PLACEHOLDER_TOKENS.contains(text.lowercase())
+        val lower = text.lowercase()
+        if (lower.startsWith("message #") || lower.startsWith("message @")) return true
+        return PLACEHOLDER_TOKENS.contains(lower)
     }
 
     private fun handleOutgoingTyping(event: AccessibilityEvent? = null) {
@@ -982,9 +1020,9 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
         lastInsertedText = null
 
-        val isPlaceholder = isPlaceholderText(rawText, hintText)
+        val isPlaceholder = isPlaceholderText(rawText, hintText, node)
         if (isPlaceholder) {
-            // Por qué: Si el campo está vacío o muestra el placeholder de WhatsApp,
+            // Por qué: Si el campo está vacío o muestra un placeholder de la app,
             // se limpia de inmediato la pastilla para mantener la pantalla 100% limpia sin textos distractores.
             typingJob?.cancel()
             manualDraftTargetLang = null
@@ -1022,7 +1060,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             val liveText = liveNode.text?.toString()?.trim() ?: rawText
             val liveHint = liveNode.hintText?.toString()?.trim() ?: hintText
 
-            if (isPlaceholderText(liveText, liveHint)) {
+            if (isPlaceholderText(liveText, liveHint, liveNode)) {
                 manualDraftTargetLang = null
                 overlayManager.removeDraftOverlay()
                 return@launch
@@ -1066,7 +1104,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             val finalTranslatedDraft = translatedLines.joinToString("\n")
             if (finalTranslatedDraft.isNotBlank() && finalTranslatedDraft != liveText) {
                 mainHandler.post {
-                    if (ServiceBridge.isTranslatingActive && isTargetAppInForeground() && !isPlaceholderText(liveText, liveHint)) {
+                    if (ServiceBridge.isTranslatingActive && isTargetAppInForeground() && !isPlaceholderText(liveText, liveHint, liveNode)) {
                         lastRenderedDraftSource = liveText
                         lastRenderedDraftTop = freshRect.top
                         lastRenderedDraftManualLang = manualDraftTargetLang
@@ -1136,10 +1174,20 @@ class TranslationAccessibilityService : AccessibilityService() {
 
     // Por qué: Recoge todos los mensajes visibles (en ambos idiomas) ordenados de arriba abajo como historial del chat
     private fun collectVisibleConversation(rootNode: AccessibilityNodeInfo, maxY: Int): List<MessageCandidate> {
+        val profile = TargetAppCatalog.profileForPackage(rootNode.packageName?.toString())
         val density = resources.displayMetrics.density
-        val topInset = (48 * density).toInt()
+        val topInset = (profile.topInsetDp * density).toInt()
         val messages = mutableListOf<MessageCandidate>()
-        collectMessageCandidates(rootNode, messages, topInset, maxY, configuredSource, configuredTarget, requireTranslatable = false)
+        collectMessageCandidates(
+            node = rootNode,
+            outList = messages,
+            minY = topInset,
+            maxY = maxY,
+            configuredSource = configuredSource,
+            configuredTarget = configuredTarget,
+            requireTranslatable = false,
+            profile = profile
+        )
         return filterOverlappingCandidates(messages).sortedBy { it.bounds.top }
     }
 
@@ -1194,7 +1242,7 @@ class TranslationAccessibilityService : AccessibilityService() {
 
     // Por qué: Marca el contenido como sensible (Android 13+) para que el sistema no muestre el texto privado
     // en la vista previa del portapapeles ni lo ofrezca a teclados con historial de portapapeles.
-    private fun copyTranslationToClipboard(text: String) {
+    private fun setSensitiveClipboard(text: String) {
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val clip = ClipData.newPlainText("Translated Text", text).apply {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
@@ -1204,6 +1252,10 @@ class TranslationAccessibilityService : AccessibilityService() {
             }
         }
         clipboard.setPrimaryClip(clip)
+    }
+
+    private fun copyTranslationToClipboard(text: String) {
+        setSensitiveClipboard(text)
         mainHandler.post {
             overlayManager.removeDraftOverlay()
             Toast.makeText(this, "Copied to clipboard (Tap Paste in chat)", Toast.LENGTH_SHORT).show()
@@ -1218,8 +1270,22 @@ class TranslationAccessibilityService : AccessibilityService() {
                 val arguments = Bundle().apply {
                     putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
                 }
-                val success = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
-                if (success) {
+                val directSuccess = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
+                val pastedSuccess = if (!directSuccess) {
+                    // Por qué: En editores personalizados o WebView donde ACTION_SET_TEXT falla, intenta pegar vía portapapeles
+                    setSensitiveClipboard(text)
+                    val allRange = Bundle().apply {
+                        val existingLen = node.text?.length ?: 0
+                        putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, 0)
+                        putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, existingLen)
+                    }
+                    node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, allRange)
+                    node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+                } else {
+                    false
+                }
+
+                if (directSuccess || pastedSuccess) {
                     val selArgs = Bundle().apply {
                         putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, text.length)
                         putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, text.length)
@@ -1231,8 +1297,10 @@ class TranslationAccessibilityService : AccessibilityService() {
                         Toast.makeText(this, "Replaced in chat", Toast.LENGTH_SHORT).show()
                     }
                 } else {
-                    // Fallback to clipboard if direct action is restricted
-                    copyTranslationToClipboard(text)
+                    mainHandler.post {
+                        overlayManager.removeDraftOverlay()
+                        Toast.makeText(this, "Copied to clipboard (Tap Paste in chat)", Toast.LENGTH_SHORT).show()
+                    }
                 }
             } else {
                 copyTranslationToClipboard(text)
@@ -1286,6 +1354,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         if (!isTargetAppInForeground()) return
         val nodePkg = sourceNode.packageName?.toString() ?: ""
         if (nodePkg.isNotBlank() && !isEnabledTargetPackage(nodePkg)) return
+        val activeProfile = TargetAppCatalog.profileForPackage(nodePkg.ifBlank { resolveForegroundTargetPackage() })
 
         try {
             val nodeWithText = findFirstTextChild(sourceNode) ?: sourceNode
@@ -1299,7 +1368,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             val rect = Rect()
             nodeWithText.getBoundsInScreen(rect)
             val screenWidth = resources.displayMetrics.widthPixels
-            if (!TranslationSenseEngine.isMessageBubble(rect, screenWidth)) return
+            if (!TranslationSenseEngine.isMessageBubble(rect, screenWidth, activeProfile.alignmentMode)) return
 
             // Por qué: Usa estrictamente el par de idiomas configurado por el usuario en el menú
             val msgSource = if (configuredSource != "AUTO") configuredSource else AppDefaults.SOURCE_LANGUAGE

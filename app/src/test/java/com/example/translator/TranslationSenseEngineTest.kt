@@ -270,6 +270,16 @@ class TranslationSenseEngineTest {
     }
 
     @Test
+    fun isMessageBubble_supportsLeftStreamChatAlignment() {
+        val screenWidth = 1080
+        // Discord/Slack messages indent ~160-340px past user avatar
+        assertTrue(TranslationSenseEngine.isMessageBubble(180, 900, screenWidth, ChatAlignmentMode.LEFT_STREAM_CHAT))
+        assertTrue(TranslationSenseEngine.isMessageBubble(330, 820, screenWidth, ChatAlignmentMode.LEFT_STREAM_CHAT))
+        // Right-aligned chrome / centered tags are rejected in LEFT_STREAM_CHAT
+        assertFalse(TranslationSenseEngine.isMessageBubble(500, 1020, screenWidth, ChatAlignmentMode.LEFT_STREAM_CHAT))
+    }
+
+    @Test
     fun isEligibleSourceText_strictlyRejectsEnglishJobOfferWhenSourceIsRomanian() {
         val jobOfferEnglish = """
             Game Presenters with Greek Language

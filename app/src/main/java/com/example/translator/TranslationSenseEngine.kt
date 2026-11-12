@@ -107,26 +107,41 @@ object TranslationSenseEngine {
 
     /**
      * Determines whether a recognized rectangle corresponds to a chat message bubble
-     * (either incoming on the left or sent outgoing on the right), while filtering out
-     * centered date pills (e.g. "Σήμερα", "Πέμπτη") and full-width background chrome.
+     * based on the target app's [alignmentMode], while filtering out centered date pills
+     * and full-width background chrome.
      */
-    fun isMessageBubble(rectLeft: Int, rectRight: Int, screenWidth: Int): Boolean {
+    fun isMessageBubble(
+        rectLeft: Int,
+        rectRight: Int,
+        screenWidth: Int,
+        alignmentMode: ChatAlignmentMode = ChatAlignmentMode.LEFT_RIGHT_CHAT
+    ): Boolean {
         if (screenWidth <= 0) return true
         val width = rectRight - rectLeft
         val hasReasonableWidth = width < (screenWidth * 0.95f) && width > 20
         if (!hasReasonableWidth) return false
 
-        // Por qué: Los mensajes entrantes abrazan el margen izquierdo (< 28% del ancho).
-        // Los mensajes salientes abrazan el margen derecho (> 72% del ancho).
-        // Las pastillas centradas de fechas se sitúan en el centro (40%-60%) y se descartan.
-        val isIncoming = rectLeft < (screenWidth * 0.28f)
-        val isOutgoing = rectRight > (screenWidth * 0.72f)
-
-        return isIncoming || isOutgoing
+        return when (alignmentMode) {
+            ChatAlignmentMode.LEFT_RIGHT_CHAT -> {
+                // Por qué: Los mensajes entrantes abrazan el margen izquierdo (< 28% del ancho)
+                // y los salientes el derecho (> 72% del ancho), descartando pastillas de fecha centradas.
+                val isIncoming = rectLeft < (screenWidth * 0.28f)
+                val isOutgoing = rectRight > (screenWidth * 0.72f)
+                isIncoming || isOutgoing
+            }
+            ChatAlignmentMode.LEFT_STREAM_CHAT -> {
+                // Por qué: Apps como Discord y Slack alinean todos los mensajes en columna izquierda tras el avatar
+                rectLeft < (screenWidth * 0.35f)
+            }
+        }
     }
 
-    fun isMessageBubble(rect: Rect, screenWidth: Int): Boolean {
-        return isMessageBubble(rect.left, rect.right, screenWidth)
+    fun isMessageBubble(
+        rect: Rect,
+        screenWidth: Int,
+        alignmentMode: ChatAlignmentMode = ChatAlignmentMode.LEFT_RIGHT_CHAT
+    ): Boolean {
+        return isMessageBubble(rect.left, rect.right, screenWidth, alignmentMode)
     }
 
     /**

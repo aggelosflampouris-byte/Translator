@@ -227,4 +227,16 @@ class TranslationFilterTest {
         assertFalse(TranslationFilter.shouldTranslate("You are an expert chat translator between Greek and Romanian.", TranslateLanguage.GREEK))
         assertFalse(TranslationFilter.shouldTranslate("Translate this informal WhatsApp chat message from Romanian to Greek", TranslateLanguage.GREEK))
     }
+
+    @Test
+    fun cleanMessageText_andShouldTranslate_handlesTelegramDiscordAndMessengerMetadata() {
+        assertEquals("Ne vedem diseară", TranslationFilter.cleanMessageText("Ne vedem diseară, 14:32, edited"))
+        assertEquals("Salutare tuturor", TranslationFilter.cleanMessageText("Salutare tuturor (edited)"))
+        assertEquals("Ajung imediat", TranslationFilter.cleanMessageText("Ajung imediat, Seen"))
+
+        assertFalse(TranslationFilter.shouldTranslate("Today at 2:30 PM", TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.shouldTranslate("Seen", TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.shouldTranslate("Liked a message", TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.shouldTranslate("BOT", TranslateLanguage.GREEK))
+    }
 }
