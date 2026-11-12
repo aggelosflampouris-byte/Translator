@@ -40,7 +40,7 @@
         <!-- Mosaico de Ajustes Rápidos (Quick Settings Tile) para activar/desactivar la traducción en un toque -->
         <service
             android:name=".TranslationTileService"
-            android:label="WhatsApp Translator"
+            android:label="OverChat"
             android:icon="@drawable/ic_translate_sphere"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
             android:exported="true">

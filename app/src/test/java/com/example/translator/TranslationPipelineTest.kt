@@ -89,3 +89,4 @@ class TranslationPipelineTest {
         assertEquals(0, stored.size)
     }
 }
+

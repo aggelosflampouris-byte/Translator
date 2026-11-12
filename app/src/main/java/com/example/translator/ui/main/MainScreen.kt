@@ -9,15 +9,19 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -30,6 +34,7 @@ import com.example.translator.AppUpdater
 import com.example.translator.BuildConfig
 import com.example.translator.FloatingBubbleService
 import com.example.translator.LearningStore
+import com.example.translator.R
 import com.example.translator.ServiceBridge
 import com.example.translator.TranslationNotificationManager
 import com.example.translator.TranslatorApplication
@@ -483,11 +488,11 @@ fun MainScreen(
                 ServiceBridge.onTranslationStateChanged?.invoke(false)
                 ServiceBridge.notifyUiStateChanged()
                 isServiceActive = false
-                android.widget.Toast.makeText(context, "Translator stopped", android.widget.Toast.LENGTH_SHORT).show()
+                android.widget.Toast.makeText(context, "OverChat stopped", android.widget.Toast.LENGTH_SHORT).show()
               }
             ) {
               Text(
-                text = "Stop Translator",
+                text = "Stop OverChat",
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.error,
                 maxLines = 1,
@@ -511,7 +516,7 @@ fun MainScreen(
                   ServiceBridge.onTranslationStateChanged?.invoke(true)
                   TranslationNotificationManager.showNotification(context, isTranslating = true)
                   isServiceActive = true
-                  android.widget.Toast.makeText(context, "Translator active in notification drawer", android.widget.Toast.LENGTH_SHORT).show()
+                  android.widget.Toast.makeText(context, "OverChat active in notification drawer", android.widget.Toast.LENGTH_SHORT).show()
                 } else {
                   TranslationNotificationManager.cancelNotification(context)
                   ServiceBridge.isBubbleRunning = true
@@ -553,35 +558,48 @@ fun MainScreen(
           horizontalArrangement = Arrangement.SpaceBetween,
           verticalAlignment = Alignment.CenterVertically
       ) {
-          Column(modifier = Modifier.weight(1f)) {
-              Row(verticalAlignment = Alignment.CenterVertically) {
-                  Text(
-                      text = "Translator",
-                      style = MaterialTheme.typography.titleLarge,
-                      color = MaterialTheme.colorScheme.onBackground
-                  )
-                  if (isServiceActive) {
-                      Spacer(modifier = Modifier.width(8.dp))
-                      Surface(
-                          shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
-                          color = MaterialTheme.colorScheme.secondaryContainer
-                      ) {
-                          Text(
-                              text = "Locked",
-                              style = MaterialTheme.typography.labelSmall,
-                              color = MaterialTheme.colorScheme.onSecondaryContainer,
-                              modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                          )
+          Row(
+              modifier = Modifier.weight(1f),
+              verticalAlignment = Alignment.CenterVertically
+          ) {
+              Image(
+                  painter = painterResource(id = R.drawable.ic_overchat_logo),
+                  contentDescription = "OverChat Logo",
+                  modifier = Modifier
+                      .size(42.dp)
+                      .clip(RoundedCornerShape(10.dp))
+              )
+              Spacer(modifier = Modifier.width(10.dp))
+              Column {
+                  Row(verticalAlignment = Alignment.CenterVertically) {
+                      Text(
+                          text = "OverChat",
+                          style = MaterialTheme.typography.titleLarge,
+                          color = MaterialTheme.colorScheme.onBackground
+                      )
+                      if (isServiceActive) {
+                          Spacer(modifier = Modifier.width(8.dp))
+                          Surface(
+                              shape = RoundedCornerShape(6.dp),
+                              color = MaterialTheme.colorScheme.secondaryContainer
+                          ) {
+                              Text(
+                                  text = "Locked",
+                                  style = MaterialTheme.typography.labelSmall,
+                                  color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                  modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                              )
+                          }
                       }
                   }
+                  Text(
+                      text = "WhatsApp Bilingual Assistant",
+                      style = MaterialTheme.typography.bodySmall,
+                      color = MaterialTheme.colorScheme.onSurfaceVariant,
+                      maxLines = 1,
+                      overflow = TextOverflow.Ellipsis
+                  )
               }
-              Text(
-                  text = "WhatsApp Bilingual Assistant",
-                  style = MaterialTheme.typography.bodySmall,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant,
-                  maxLines = 1,
-                  overflow = TextOverflow.Ellipsis
-              )
           }
 
           Surface(

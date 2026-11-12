@@ -95,7 +95,7 @@ class AppUpdater(private val appContext: Context) {
         if (!dir.exists()) {
             dir.mkdirs()
         }
-        return File(dir, "Translator-$safeVersion.apk")
+        return File(dir, "OverChat-$safeVersion.apk")
     }
 
     /**
@@ -120,7 +120,7 @@ class AppUpdater(private val appContext: Context) {
 
             val request = Request.Builder()
                 .url(apkUrl)
-                .header("User-Agent", "Translator-Android/${BuildConfig.VERSION_NAME}")
+                .header("User-Agent", "OverChat-Android/${BuildConfig.VERSION_NAME}")
                 .build()
 
             val response = client.newCall(request).execute()

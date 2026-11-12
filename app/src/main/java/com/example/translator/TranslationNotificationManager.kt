@@ -26,7 +26,7 @@ object TranslationNotificationManager {
 
     fun createNotificationChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val name = "WhatsApp Translation Controls"
+            val name = "OverChat Translation Controls"
             val descriptionText = "Controles rápidos para traducir mensajes en WhatsApp"
             val importance = NotificationManager.IMPORTANCE_LOW
             val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
@@ -100,7 +100,7 @@ object TranslationNotificationManager {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val title = if (isTranslating) "WhatsApp Translator Active" else "WhatsApp Translator Paused"
+        val title = if (isTranslating) "OverChat Active" else "OverChat Paused"
         val subtitle = "$srcCode to $tgtCode"
 
         val toggleActionTitle = if (isTranslating) "Pause" else "Resume"

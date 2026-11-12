@@ -44,7 +44,7 @@ class TranslationNotificationReceiver : BroadcastReceiver() {
                 TranslationNotificationManager.cancelNotification(context)
                 context.stopService(Intent(context, FloatingBubbleService::class.java))
                 ServiceBridge.notifyUiStateChanged()
-                Toast.makeText(context, "Translator Stopped", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "OverChat Stopped", Toast.LENGTH_SHORT).show()
             }
         }
     }

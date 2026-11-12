@@ -53,10 +53,10 @@ class TranslationTileService : TileService() {
         if (newState) {
             TranslationNotificationManager.showNotification(this, isTranslating = true)
             ServiceBridge.onScanRequested?.invoke()
-            Toast.makeText(this, "WhatsApp Translator Active", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "OverChat Active", Toast.LENGTH_SHORT).show()
         } else {
             TranslationNotificationManager.showNotification(this, isTranslating = false)
-            Toast.makeText(this, "WhatsApp Translator Paused", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "OverChat Paused", Toast.LENGTH_SHORT).show()
         }
 
         updateTileState()
@@ -67,7 +67,7 @@ class TranslationTileService : TileService() {
         val isActive = ServiceBridge.isTranslatingActive
 
         tile.state = if (isActive) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
-        tile.label = "WhatsApp Translator"
+        tile.label = "OverChat"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             tile.subtitle = if (isActive) "Active" else "Inactive"
         }

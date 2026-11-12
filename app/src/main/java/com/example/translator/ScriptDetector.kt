@@ -64,3 +64,4 @@ object ScriptDetector {
         return URL_OR_DOMAIN_REGEX.containsMatchIn(text)
     }
 }
+
