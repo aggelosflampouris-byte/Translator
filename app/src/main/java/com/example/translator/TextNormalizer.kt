@@ -150,8 +150,7 @@ object TextNormalizer {
     // Por qué: Protege emojis compuestos, @menciones y #hashtags para que ningún motor neuronal
     // traduzca ni corrompa identificadores o secuencias de símbolos especiales.
     private val EMOJI_PATTERN: Pattern = Pattern.compile(
-        """(@[A-Za-z0-9_.]+|#[\p{L}\p{N}_]+|[\x{1F300}-\x{1FAFF}\x{2600}-\x{26FF}\x{2700}-\x{27BF}\x{1F1E6}-\x{1F1FF}\x{1F600}-\x{1F64F}\x{1F680}-\x{1F6FF}\uFE0F\u200D]+)""",
-        Pattern.UNICODE_CHARACTER_CLASS
+        """(@[A-Za-z0-9_.]+|#[\p{L}\p{N}_]+|[\x{1F300}-\x{1FAFF}\x{2600}-\x{26FF}\x{2700}-\x{27BF}\x{1F1E6}-\x{1F1FF}\x{1F600}-\x{1F64F}\x{1F680}-\x{1F6FF}\uFE0F\u200D]+)"""
     )
 
     data class ProtectedResult(

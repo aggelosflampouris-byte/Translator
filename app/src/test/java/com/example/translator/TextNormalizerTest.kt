@@ -67,4 +67,13 @@ class TextNormalizerTest {
 
         assertEquals("Γεια σου φιλε! 😊 Πως εισαι; 🔥👍 Σε εναν αγγελο", restored)
     }
+
+    @Test
+    fun protectAndRestoreEmojis_protectsMentionsAndUnicodeHashtagsWithoutUnsupportedFlags() {
+        val input = "Salut @giannis_99 #καλημέρα 😊"
+        val protected = TextNormalizer.protectEmojis(input)
+        assertEquals(listOf("@giannis_99", "#καλημέρα", "😊"), protected.tokens)
+        val restored = TextNormalizer.restoreEmojis(protected.text, protected.tokens)
+        assertEquals(input, restored)
+    }
 }
