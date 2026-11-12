@@ -115,12 +115,14 @@ object TranslationNotificationManager {
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         notificationManager.notify(NOTIFICATION_ID, builder.build())
         ServiceBridge.isNotificationActive = true
+        ServiceBridge.notifyUiStateChanged()
     }
 
     fun cancelNotification(context: Context) {
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         notificationManager.cancel(NOTIFICATION_ID)
         ServiceBridge.isNotificationActive = false
+        ServiceBridge.notifyUiStateChanged()
     }
 }
 

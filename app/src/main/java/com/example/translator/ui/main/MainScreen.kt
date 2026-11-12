@@ -439,6 +439,7 @@ fun MainScreen(
           if (event == Lifecycle.Event.ON_RESUME) {
               canDrawOverlays = Settings.canDrawOverlays(context)
               isAccessibilityEnabled = checkAccessibilityEnabled(context)
+              ServiceBridge.notifyUiStateChanged()
               if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                   isNotificationPermissionGranted = ContextCompat.checkSelfPermission(
                       context,
@@ -474,7 +475,16 @@ fun MainScreen(
 
   val isNotificationRequired = controlInterface == AppDefaults.INTERFACE_NOTIFICATION && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
   val allPermissionsGranted = canDrawOverlays && isAccessibilityEnabled && (!isNotificationRequired || isNotificationPermissionGranted)
-  val isServiceActive = ServiceBridge.isTranslatingActive || ServiceBridge.isBubbleRunning || ServiceBridge.isNotificationActive
+  var isServiceActive by remember { mutableStateOf(ServiceBridge.isAnyServiceActive()) }
+
+  DisposableEffect(Unit) {
+      ServiceBridge.onUiStateChanged = {
+          isServiceActive = ServiceBridge.isAnyServiceActive()
+      }
+      onDispose {
+          ServiceBridge.onUiStateChanged = null
+      }
+  }
 
   Scaffold(
     snackbarHost = { SnackbarHost(snackbarHostState) }
@@ -1127,8 +1137,12 @@ fun MainScreen(
               onClick = {
                   context.stopService(Intent(context, FloatingBubbleService::class.java))
                   TranslationNotificationManager.cancelNotification(context)
+                  ServiceBridge.isBubbleRunning = false
+                  ServiceBridge.isNotificationActive = false
                   ServiceBridge.isTranslatingActive = false
                   ServiceBridge.onTranslationStateChanged?.invoke(false)
+                  ServiceBridge.notifyUiStateChanged()
+                  isServiceActive = false
                   android.widget.Toast.makeText(context, "Translator stopped", android.widget.Toast.LENGTH_SHORT).show()
               }
           ) {
@@ -1149,15 +1163,20 @@ fun MainScreen(
                   if (controlInterface == AppDefaults.INTERFACE_NOTIFICATION) {
                       if (ServiceBridge.isBubbleRunning) {
                           context.stopService(Intent(context, FloatingBubbleService::class.java))
+                          ServiceBridge.isBubbleRunning = false
                       }
                       ServiceBridge.isTranslatingActive = true
                       ServiceBridge.onTranslationStateChanged?.invoke(true)
                       TranslationNotificationManager.showNotification(context, isTranslating = true)
+                      isServiceActive = true
                       android.widget.Toast.makeText(context, "Translator active in notification drawer", android.widget.Toast.LENGTH_SHORT).show()
                   } else {
                       TranslationNotificationManager.cancelNotification(context)
+                      ServiceBridge.isBubbleRunning = true
                       val intent = Intent(context, FloatingBubbleService::class.java)
                       context.startService(intent)
+                      ServiceBridge.notifyUiStateChanged()
+                      isServiceActive = true
                       android.widget.Toast.makeText(context, "Floating bubble opened", android.widget.Toast.LENGTH_SHORT).show()
                   }
               }

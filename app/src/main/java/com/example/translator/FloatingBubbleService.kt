@@ -34,6 +34,7 @@ class FloatingBubbleService : Service() {
         super.onCreate()
         ServiceBridge.isBubbleRunning = true
         ServiceBridge.isTranslatingActive = false
+        ServiceBridge.notifyUiStateChanged()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         createFloatingSphere()
     }
@@ -171,11 +172,13 @@ class FloatingBubbleService : Service() {
             val engineName = if (ModelAssetManager.isModelReady(this)) "Index-Translate 2B Neural" else "ML Kit Local"
             Toast.makeText(this, "Translation Active ($engineName)", Toast.LENGTH_SHORT).show()
             ServiceBridge.onTranslationStateChanged?.invoke(true)
+            ServiceBridge.notifyUiStateChanged()
         } else {
             ServiceBridge.isTranslatingActive = false
             root?.setBackgroundResource(R.drawable.bg_floating_sphere_idle)
             Toast.makeText(this, "Translation Paused (Idle)", Toast.LENGTH_SHORT).show()
             ServiceBridge.onTranslationStateChanged?.invoke(false)
+            ServiceBridge.notifyUiStateChanged()
         }
     }
 
@@ -186,6 +189,7 @@ class FloatingBubbleService : Service() {
         ServiceBridge.currentBubbleBounds = null
         // Notify the accessibility service that translation stopped
         ServiceBridge.onTranslationStateChanged?.invoke(false)
+        ServiceBridge.notifyUiStateChanged()
         sphereView?.let {
             try {
                 windowManager?.removeView(it)

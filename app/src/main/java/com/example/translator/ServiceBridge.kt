@@ -51,5 +51,18 @@ object ServiceBridge {
      * Invoked when the user taps "Translate Screen" in the notification menu or Quick Settings tile.
      */
     @Volatile var onScanRequested: (() -> Unit)? = null
+
+    /**
+     * Callback para actualizar inmediatamente el estado reactivo de la interfaz principal (Start / Stop).
+     */
+    @Volatile var onUiStateChanged: (() -> Unit)? = null
+
+    fun isAnyServiceActive(): Boolean {
+        return isTranslatingActive || isBubbleRunning || isNotificationActive
+    }
+
+    fun notifyUiStateChanged() {
+        onUiStateChanged?.invoke()
+    }
 }
 

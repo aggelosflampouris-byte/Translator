@@ -39,11 +39,11 @@ class TranslationNotificationReceiver : BroadcastReceiver() {
 
             TranslationNotificationManager.ACTION_STOP -> {
                 ServiceBridge.isTranslatingActive = false
+                ServiceBridge.isBubbleRunning = false
                 ServiceBridge.onTranslationStateChanged?.invoke(false)
                 TranslationNotificationManager.cancelNotification(context)
-                if (ServiceBridge.isBubbleRunning) {
-                    context.stopService(Intent(context, FloatingBubbleService::class.java))
-                }
+                context.stopService(Intent(context, FloatingBubbleService::class.java))
+                ServiceBridge.notifyUiStateChanged()
                 Toast.makeText(context, "Translator Stopped", Toast.LENGTH_SHORT).show()
             }
         }
