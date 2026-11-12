@@ -154,6 +154,9 @@ class TranslationAccessibilityService : AccessibilityService() {
     @Volatile private var lastPartialTargetRootNode: AccessibilityNodeInfo? = null
     @Volatile private var lastRootExtractAttemptMs: Long = 0L
     @Volatile private var lastRootExtractDiag: String = "init"
+    @Volatile private var targetSrcNonNullCount: Int = 0
+    @Volatile private var targetSrcNullCount: Int = 0
+    @Volatile private var lastDiagTargetPkg: String? = null
     @Volatile private var lastRootOrigin: String = "none"
     @Volatile private var pendingScanWindowStartMs: Long = 0L
     @Volatile private var acceptedScrollCount: Int = 0
@@ -192,7 +195,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         ServiceBridge.lastRuntimeTrace =
             "$tag | c=$connectCount s=$stateChangeCount l=$scanLoopTicks(alive=$loopAlive) e=$eventCount " +
             "svcPkgs=${enabledTargetPackages.size}(msg=$msgEnabled) scr=$isScreenScrolling($acceptedScrollCount/$ignoredScrollCount:$lastScrollDiag) " +
-            "fg=${lastForegroundTargetPackage ?: "null"} root=$lastRootOrigin($lastRootExtractDiag) res=$lastResolveReason " +
+            "fg=${lastForegroundTargetPackage ?: "null"} root=$lastRootOrigin($lastRootExtractDiag,src=$targetSrcNonNullCount/$targetSrcNullCount) res=$lastResolveReason " +
             "tgtEvt=${lastTargetEventPkg ?: "none"} lastEvt=${lastEventPkg ?: "none"}(${lastEventType}) seen=[${formatSeenPackages()}] " +
             "ext=[$lastExternalWindowsSummary]"
     }
@@ -480,13 +483,52 @@ class TranslationAccessibilityService : AccessibilityService() {
         return WindowRect(rect.left, rect.top, rect.right, rect.bottom)
     }
 
+    @android.annotation.SuppressLint("WrongConstant")
+    private fun safeRootInActiveWindow(): AccessibilityNodeInfo? {
+        try {
+            val direct = rootInActiveWindow
+            if (direct != null) return direct
+            // Por qué: En árboles Litho muy profundos (Messenger), el prefetch híbrido por defecto puede fallar
+            // o agotar el límite Binder; pedir el nodo raíz sin prefetch (0) o ininterrumpible evita el bloqueo.
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                val noPrefetch = getRootInActiveWindow(0)
+                if (noPrefetch != null) return noPrefetch
+                val uninterruptible = getRootInActiveWindow(AccessibilityNodeInfo.FLAG_PREFETCH_UNINTERRUPTIBLE)
+                if (uninterruptible != null) return uninterruptible
+            }
+        } catch (_: Exception) {
+            // Ignore
+        }
+        return null
+    }
+
+    @android.annotation.SuppressLint("WrongConstant")
+    private fun safeWindowRoot(window: AccessibilityWindowInfo?): AccessibilityNodeInfo? {
+        if (window == null) return null
+        try {
+            val direct = window.root
+            if (direct != null) return direct
+            // Por qué: Algunas ventanas complejas devuelven null en window.root con prefetch híbrido;
+            // reintentar con estrategia 0 (solo nodo raíz) e ininterrumpible recupera la jerarquía sin exceder 1MB IPC.
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                val noPrefetch = window.getRoot(0)
+                if (noPrefetch != null) return noPrefetch
+                val uninterruptible = window.getRoot(AccessibilityNodeInfo.FLAG_PREFETCH_UNINTERRUPTIBLE)
+                if (uninterruptible != null) return uninterruptible
+            }
+        } catch (_: Exception) {
+            // Ignore
+        }
+        return null
+    }
+
     // Por qué: Determina de forma estricta qué aplicación habilitada está en primer plano,
     // descartando lanzadores, teclados, tiras Edge delgadas y apps bloqueadas sin perder trazabilidad.
     private fun resolveForegroundTargetPackage(captureExternalSnapshot: Boolean = false): String? {
         var activePkg: String? = null
         var activeBounds: WindowRect? = null
         try {
-            val active = rootInActiveWindow
+            val active = safeRootInActiveWindow()
             if (active != null) {
                 activePkg = active.packageName?.toString()
                 val rect = Rect()
@@ -505,7 +547,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             val windowList = windows
             if (windowList != null) {
                 for (window in windowList) {
-                    val wRoot = try { window.root } catch (_: Exception) { null }
+                    val wRoot = safeWindowRoot(window)
                     val wPkg = wRoot?.packageName?.toString() ?: ""
                     val wRect = Rect()
                     window.getBoundsInScreen(wRect)
@@ -669,24 +711,33 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         val isTargetEvt = isEnabledTargetPackage(packageName)
         var capturedSourceNode: AccessibilityNodeInfo? = null
-        if (isTargetEvt && ServiceBridge.isTranslatingActive) {
+        if (isTargetEvt && (ServiceBridge.isTranslatingActive || ServiceBridge.isBubbleRunning)) {
+            if (lastDiagTargetPkg != packageName) {
+                lastDiagTargetPkg = packageName
+                targetSrcNonNullCount = 0
+                targetSrcNullCount = 0
+                lastRootExtractDiag = "init"
+            }
             capturedSourceNode = event.source
-            // Por qué: si aún no tenemos root en caché, reintentamos cada 100ms (en vez de cada evento sin límite o 250ms)
-            // para capturar rápido un nodo válido de Messenger sin saturar el hilo con 200+ eventos/seg.
+            // Por qué: Si aún no tenemos root en caché, capturamos incluso mientras solo la burbuja está activa
+            // para aprovechar el evento inicial TYPE_WINDOW_STATE_CHANGED antes de que el usuario pulse Start.
             val minExtractIntervalMs = when {
                 cachedTargetRootPkg != packageName -> 0L
                 cachedTargetRootNode == null -> 100L
                 else -> 250L
             }
             if (capturedSourceNode != null) {
+                targetSrcNonNullCount++
                 if (nowMs - lastRootExtractAttemptMs >= minExtractIntervalMs) {
                     lastRootExtractAttemptMs = nowMs
                     capturedSourceNode = extractTargetRootFromEventSource(capturedSourceNode, packageName, allowPartial = true)
                         ?: capturedSourceNode
                 }
-            } else if (cachedTargetRootNode == null && lastPartialTargetRootNode == null && nowMs - lastRootExtractAttemptMs >= 1000L) {
-                lastRootExtractAttemptMs = nowMs
-                lastRootExtractDiag = "srcNull(t=${event.eventType})"
+            } else {
+                targetSrcNullCount++
+                if (cachedTargetRootNode == null && lastPartialTargetRootNode == null && lastRootExtractDiag == "init") {
+                    lastRootExtractDiag = "srcNull(t=${event.eventType})"
+                }
             }
         }
 
@@ -907,7 +958,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         if (source == null) return null
         val minFullHeight = (getScreenHeightPx() / 4).coerceAtLeast(200)
         try {
-            val winRoot = source.window?.root
+            val winRoot = safeWindowRoot(source.window)
             if (winRoot != null) {
                 val winPkg = winRoot.packageName?.toString()
                 if (winPkg == expectedPkg) {
@@ -999,7 +1050,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         // Por qué: Prioriza siempre la raíz real de la ventana (rootInActiveWindow / windows) sobre eventSource,
         // ya que en frameworks como Litho (Messenger) eventSource.parent puede detenerse en un subnodo parcial.
         try {
-            val active = rootInActiveWindow
+            val active = safeRootInActiveWindow()
             if (active != null && active.packageName?.toString() == activePkg) {
                 cachedTargetRootPkg = activePkg
                 cachedTargetRootNode = active
@@ -1022,7 +1073,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                             .thenByDescending { it.isActive || it.isFocused }
                     )
                 for (window in sortedWindows) {
-                    val root = window.root ?: continue
+                    val root = safeWindowRoot(window) ?: continue
                     if (root.packageName?.toString() == activePkg) {
                         cachedTargetRootPkg = activePkg
                         cachedTargetRootNode = root
@@ -1045,6 +1096,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         // Por qué: En escaneos periódicos sin eventSource (bucle de 2s) cuando window.root es null en One UI,
         // reutiliza la última raíz válida de Messenger tras refrescarla contra el árbol vivo.
         val cached = cachedTargetRootNode
+        var cacheStateDiag = if (cached != null) "valid" else "null"
         if (cached != null && cachedTargetRootPkg == activePkg) {
             try {
                 if (cached.refresh() && cached.packageName?.toString() == activePkg) {
@@ -1054,19 +1106,16 @@ class TranslationAccessibilityService : AccessibilityService() {
                         lastRootOrigin = "cache:${rect.height()}"
                         return cached
                     }
+                    cacheStateDiag = "h${rect.height()}"
                 } else {
                     cachedTargetRootPkg = null
                     cachedTargetRootNode = null
-                    if (eventSource == null) {
-                        lastRootExtractDiag = "cacheStale"
-                    }
+                    cacheStateDiag = "stale"
                 }
             } catch (_: Exception) {
                 cachedTargetRootPkg = null
                 cachedTargetRootNode = null
-                if (eventSource == null) {
-                    lastRootExtractDiag = "cacheExc"
-                }
+                cacheStateDiag = "exc"
             }
         }
 
@@ -1095,7 +1144,21 @@ class TranslationAccessibilityService : AccessibilityService() {
             }
         }
 
-        lastRootOrigin = "null(evt=${eventSource != null},cache=${cached != null},part=${cachedPartial != null},d=$lastRootExtractDiag)"
+        // Por qué: Último respaldo vía foco activo de entrada o accesibilidad; si Messenger expone
+        // algún subnodo enfocado aunque window.root sea null, podemos escalar desde él al contenedor del chat.
+        val focusInput = try { findFocus(AccessibilityNodeInfo.FOCUS_INPUT) } catch (_: Exception) { null }
+        val focusInputPkg = try { focusInput?.packageName?.toString() } catch (_: Exception) { null }
+        if (focusInput != null && (focusInputPkg == activePkg || focusInputPkg == null)) {
+            extractTargetRootFromEventSource(focusInput, activePkg, allowPartial = true)?.let { return it }
+        }
+        val focusA11y = try { findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY) } catch (_: Exception) { null }
+        val focusA11yPkg = try { focusA11y?.packageName?.toString() } catch (_: Exception) { null }
+        if (focusA11y != null && (focusA11yPkg == activePkg || focusA11yPkg == null)) {
+            extractTargetRootFromEventSource(focusA11y, activePkg, allowPartial = true)?.let { return it }
+        }
+
+        val focusDiag = "fI=${focusInput != null}(${focusInputPkg ?: "-"}),fA=${focusA11y != null}(${focusA11yPkg ?: "-"})"
+        lastRootOrigin = "null(evt=${eventSource != null},cache=$cacheStateDiag,part=${cachedPartial != null},src=$targetSrcNonNullCount/$targetSrcNullCount,$focusDiag,d=$lastRootExtractDiag)"
         return null
     }
 
@@ -2115,6 +2178,9 @@ class TranslationAccessibilityService : AccessibilityService() {
         lastPartialTargetRootNode = null
         pendingScanWindowStartMs = 0L
         pendingScanEventSource = null
+        lastDiagTargetPkg = null
+        targetSrcNonNullCount = 0
+        targetSrcNullCount = 0
         lastTargetEventPkg = null
         lastTargetEventTimeMs = 0L
         TranslationNotificationManager.cancelNotification(this)
