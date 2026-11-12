@@ -561,13 +561,16 @@ fun MainScreen(
               )
               Spacer(modifier = Modifier.height(12.dp))
 
+              // Por qué: Bloquea todos los ajustes del menú mientras el traductor está activo hasta que se detenga
+              val settingsEnabled = !isServiceActive
+
               // Selector de pares lingüísticos restringido a los idiomas disponibles
               Row(
                   modifier = Modifier.fillMaxWidth(),
                   verticalAlignment = Alignment.CenterVertically
               ) {
                   Box(modifier = Modifier.weight(1f)) {
-                      LanguageDropdown("From", sourceLanguage, availableLanguages) { selected ->
+                      LanguageDropdown("From", sourceLanguage, availableLanguages, enabled = settingsEnabled) { selected ->
                           if (selected == targetLanguage) {
                               targetLanguage = sourceLanguage
                               prefs.edit().putString(AppDefaults.KEY_TARGET_LANGUAGE, targetLanguage).apply()
@@ -587,17 +590,18 @@ fun MainScreen(
                               .putString(AppDefaults.KEY_TARGET_LANGUAGE, targetLanguage)
                               .apply()
                       },
+                      enabled = settingsEnabled,
                       modifier = Modifier.padding(horizontal = 4.dp)
                   ) {
                       Text(
                           text = "⇄",
                           style = MaterialTheme.typography.titleMedium,
-                          color = MaterialTheme.colorScheme.primary
+                          color = if (settingsEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
                       )
                   }
 
                   Box(modifier = Modifier.weight(1f)) {
-                      LanguageDropdown("To", targetLanguage, availableLanguages) { selected ->
+                      LanguageDropdown("To", targetLanguage, availableLanguages, enabled = settingsEnabled) { selected ->
                           if (selected == sourceLanguage) {
                               sourceLanguage = targetLanguage
                               prefs.edit().putString(AppDefaults.KEY_SOURCE_LANGUAGE, sourceLanguage).apply()
@@ -648,6 +652,7 @@ fun MainScreen(
                           translationMode = AppDefaults.MODE_TAP
                           prefs.edit().putString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_TAP).apply()
                       },
+                      enabled = !isServiceActive,
                       label = { Text("Tap Message") },
                       modifier = Modifier.weight(1f)
                   )
@@ -657,6 +662,7 @@ fun MainScreen(
                           translationMode = AppDefaults.MODE_ALL
                           prefs.edit().putString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_ALL).apply()
                       },
+                      enabled = !isServiceActive,
                       label = { Text("Auto-Translate All") },
                       modifier = Modifier.weight(1f)
                   )
@@ -714,7 +720,7 @@ fun MainScreen(
                   Spacer(modifier = Modifier.width(12.dp))
                   Switch(
                       checked = isAiActive,
-                      enabled = isModelReady,
+                      enabled = !isServiceActive && isModelReady,
                       onCheckedChange = { isChecked ->
                           aiTranslationEnabled = isChecked
                           prefs.edit().putBoolean(AppDefaults.KEY_AI_ENABLED, isChecked).apply()
@@ -791,9 +797,10 @@ fun MainScreen(
                                       ModelAssetManager.deleteModel(context)
                                       isModelReady = false
                                   },
+                                  enabled = !isServiceActive,
                                   contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                               ) {
-                                  Text("Delete Model", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                                  Text("Delete Model", style = MaterialTheme.typography.labelSmall, color = if (!isServiceActive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline)
                               }
                           }
                       } else {
@@ -814,6 +821,7 @@ fun MainScreen(
                                               ModelAssetManager.startDownload(context)
                                           }
                                       },
+                                      enabled = !isServiceActive,
                                       modifier = Modifier.weight(1f),
                                       contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
                                   ) {
@@ -823,6 +831,7 @@ fun MainScreen(
                                       onClick = {
                                           modelPickerLauncher.launch("*/*")
                                       },
+                                      enabled = !isServiceActive,
                                       modifier = Modifier.weight(1f),
                                       contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
                                   ) {
@@ -873,6 +882,7 @@ fun MainScreen(
                   Spacer(modifier = Modifier.width(12.dp))
                   Switch(
                       checked = learningEnabled,
+                      enabled = !isServiceActive,
                       onCheckedChange = { isChecked ->
                           learningEnabled = isChecked
                           prefs.edit().putBoolean(AppDefaults.KEY_LEARNING_ENABLED, isChecked).apply()
@@ -892,10 +902,10 @@ fun MainScreen(
                   )
                   TextButton(
                       onClick = { showResetLearningDialog = true },
-                      enabled = learningStats.first + learningStats.second > 0,
+                      enabled = !isServiceActive && learningStats.first + learningStats.second > 0,
                       contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                   ) {
-                      Text("Reset", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                      Text("Reset", style = MaterialTheme.typography.labelSmall, color = if (!isServiceActive && learningStats.first + learningStats.second > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline)
                   }
               }
           }
@@ -959,6 +969,7 @@ fun MainScreen(
                   Spacer(modifier = Modifier.width(12.dp))
                   Switch(
                       checked = keyboardTranslatorEnabled,
+                      enabled = !isServiceActive,
                       onCheckedChange = { isChecked ->
                           keyboardTranslatorEnabled = isChecked
                           prefs.edit().putBoolean(AppDefaults.KEY_KEYBOARD_ENABLED, isChecked).apply()
@@ -988,6 +999,7 @@ fun MainScreen(
                           controlInterface = AppDefaults.INTERFACE_NOTIFICATION
                           prefs.edit().putString(AppDefaults.KEY_CONTROL_INTERFACE, AppDefaults.INTERFACE_NOTIFICATION).apply()
                       },
+                      enabled = !isServiceActive,
                       label = { Text("Notification Menu") },
                       modifier = Modifier.weight(1f)
                   )
@@ -997,6 +1009,7 @@ fun MainScreen(
                           controlInterface = AppDefaults.INTERFACE_BUBBLE
                           prefs.edit().putString(AppDefaults.KEY_CONTROL_INTERFACE, AppDefaults.INTERFACE_BUBBLE).apply()
                       },
+                      enabled = !isServiceActive,
                       label = { Text("Floating Bubble") },
                       modifier = Modifier.weight(1f)
                   )
@@ -1192,8 +1205,20 @@ fun MainScreen(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LanguageDropdown(label: String, selectedCode: String, options: List<String>, onSelected: (String) -> Unit) {
+fun LanguageDropdown(
+    label: String,
+    selectedCode: String,
+    options: List<String>,
+    enabled: Boolean = true,
+    onSelected: (String) -> Unit
+) {
     var expanded by remember { mutableStateOf(false) }
+
+    LaunchedEffect(enabled) {
+        if (!enabled) {
+            expanded = false
+        }
+    }
 
     val getDisplayName = { code: String ->
         if (code == "AUTO") "Auto-Detect"
@@ -1201,20 +1226,21 @@ fun LanguageDropdown(label: String, selectedCode: String, options: List<String>,
     }
 
     ExposedDropdownMenuBox(
-        expanded = expanded,
-        onExpandedChange = { expanded = !expanded }
+        expanded = expanded && enabled,
+        onExpandedChange = { if (enabled) expanded = !expanded }
     ) {
         OutlinedTextField(
             modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
             readOnly = true,
+            enabled = enabled,
             value = getDisplayName(selectedCode),
             onValueChange = {},
             label = { Text(label) },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded && enabled) },
             colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
         )
         ExposedDropdownMenu(
-            expanded = expanded,
+            expanded = expanded && enabled,
             onDismissRequest = { expanded = false }
         ) {
             options.forEach { code ->
