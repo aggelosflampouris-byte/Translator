@@ -45,8 +45,16 @@ object TranslationNotificationManager {
         val src = prefs.getString(AppDefaults.KEY_SOURCE_LANGUAGE, AppDefaults.SOURCE_LANGUAGE) ?: AppDefaults.SOURCE_LANGUAGE
         val tgt = prefs.getString(AppDefaults.KEY_TARGET_LANGUAGE, AppDefaults.TARGET_LANGUAGE) ?: AppDefaults.TARGET_LANGUAGE
 
-        val srcCode = if (src == "ro") "Romanian" else "Greek"
-        val tgtCode = if (tgt == "el") "Greek" else "Romanian"
+        val srcCode = if (src == "AUTO") {
+            "Auto"
+        } else {
+            java.util.Locale.forLanguageTag(src).displayLanguage.replaceFirstChar {
+                if (it.isLowerCase()) it.titlecase(java.util.Locale.getDefault()) else it.toString()
+            }
+        }
+        val tgtCode = java.util.Locale.forLanguageTag(tgt).displayLanguage.replaceFirstChar {
+            if (it.isLowerCase()) it.titlecase(java.util.Locale.getDefault()) else it.toString()
+        }
 
         // Intent al tocar la notificación (abre MainActivity)
         val openAppIntent = Intent(context, MainActivity::class.java).apply {

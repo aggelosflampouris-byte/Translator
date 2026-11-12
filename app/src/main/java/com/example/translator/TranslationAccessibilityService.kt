@@ -66,7 +66,7 @@ class TranslationAccessibilityService : AccessibilityService() {
     private var configuredSource: String = AppDefaults.SOURCE_LANGUAGE
     private var configuredTarget: String = AppDefaults.TARGET_LANGUAGE
     private var isKeyboardTranslatorEnabled: Boolean = true
-    private var translationMode: String = AppDefaults.MODE_TAP
+    private var translationMode: String = AppDefaults.MODE_ALL
     private lateinit var hybridEngine: HybridTranslationEngine
     private var manualDraftTargetLang: String? = null
 
@@ -80,9 +80,25 @@ class TranslationAccessibilityService : AccessibilityService() {
         when (key) {
             AppDefaults.KEY_SOURCE_LANGUAGE -> {
                 configuredSource = prefs.getString(key, AppDefaults.SOURCE_LANGUAGE) ?: AppDefaults.SOURCE_LANGUAGE
+                manualDraftTargetLang = null
+                lastRenderedDraftSource = null
+                mainHandler.post { overlayManager.removeAllOverlays() }
+                if (ServiceBridge.isNotificationActive) {
+                    TranslationNotificationManager.showNotification(this, ServiceBridge.isTranslatingActive)
+                }
+                serviceScope.launch(Dispatchers.Default) { hybridEngine.preload() }
+                scheduleScan(100L)
             }
             AppDefaults.KEY_TARGET_LANGUAGE -> {
                 configuredTarget = prefs.getString(key, AppDefaults.TARGET_LANGUAGE) ?: AppDefaults.TARGET_LANGUAGE
+                manualDraftTargetLang = null
+                lastRenderedDraftSource = null
+                mainHandler.post { overlayManager.removeAllOverlays() }
+                if (ServiceBridge.isNotificationActive) {
+                    TranslationNotificationManager.showNotification(this, ServiceBridge.isTranslatingActive)
+                }
+                serviceScope.launch(Dispatchers.Default) { hybridEngine.preload() }
+                scheduleScan(100L)
             }
             AppDefaults.KEY_KEYBOARD_ENABLED -> {
                 isKeyboardTranslatorEnabled = prefs.getBoolean(key, true)
@@ -119,7 +135,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         configuredTarget = prefs.getString(AppDefaults.KEY_TARGET_LANGUAGE, AppDefaults.TARGET_LANGUAGE) ?: AppDefaults.TARGET_LANGUAGE
         isKeyboardTranslatorEnabled = prefs.getBoolean(AppDefaults.KEY_KEYBOARD_ENABLED, true)
         isLearningEnabled = prefs.getBoolean(AppDefaults.KEY_LEARNING_ENABLED, true)
-        translationMode = prefs.getString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_TAP) ?: AppDefaults.MODE_TAP
+        translationMode = prefs.getString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_ALL) ?: AppDefaults.MODE_ALL
         prefs.registerOnSharedPreferenceChangeListener(prefListener)
 
         // Publish to ServiceBridge — no static Service reference stored.
@@ -327,22 +343,18 @@ class TranslationAccessibilityService : AccessibilityService() {
                     }
                 }
 
-                if (translationMode == AppDefaults.MODE_ALL) {
-                    scrollSettleJob = serviceScope.launch {
-                        // Por qué: Espera 350ms de quietud absoluta tras finalizar el desplazamiento
-                        // antes de traducir, garantizando que la pantalla esté 100% estable.
-                        delay(350L)
-                        isScreenScrolling = false
-                        if (isWhatsAppInForeground() && ServiceBridge.isTranslatingActive) {
-                            scanAndTranslateVisibleMessages()
-                        }
+                scrollSettleJob = serviceScope.launch {
+                    // Por qué: Espera 350ms de quietud absoluta tras finalizar el desplazamiento
+                    // antes de traducir, garantizando que la pantalla esté 100% estable.
+                    delay(350L)
+                    isScreenScrolling = false
+                    if (isWhatsAppInForeground() && ServiceBridge.isTranslatingActive) {
+                        scanAndTranslateVisibleMessages()
                     }
                 }
             }
             AccessibilityEvent.TYPE_VIEW_CLICKED -> {
-                if (translationMode == AppDefaults.MODE_TAP) {
-                    handleMessageClicked(event.source)
-                }
+                handleMessageClicked(event.source)
             }
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
@@ -371,7 +383,7 @@ class TranslationAccessibilityService : AccessibilityService() {
     private var scanDebounceJob: Job? = null
     // Por qué: Aplica un retraso controlado para no saturar con cancelaciones constantes en cada fotograma de desplazamiento
     private fun scheduleScan(delayMs: Long, eventSource: AccessibilityNodeInfo? = null) {
-        if (translationMode != AppDefaults.MODE_ALL) return
+        if (!ServiceBridge.isTranslatingActive) return
         if (!isWhatsAppInForeground()) {
             if (overlayManager.hasOverlays()) {
                 mainHandler.post { overlayManager.removeAllOverlays() }
@@ -386,7 +398,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         scanDebounceJob = serviceScope.launch {
             delay(delayMs)
             val elapsed = android.os.SystemClock.uptimeMillis() - lastScrollTimestamp
-            if (isWhatsAppInForeground() && !isScreenScrolling && elapsed >= 350L) {
+            if (ServiceBridge.isTranslatingActive && isWhatsAppInForeground() && !isScreenScrolling && elapsed >= 350L) {
                 scanAndTranslateVisibleMessages(eventSource)
             }
         }
@@ -414,8 +426,6 @@ class TranslationAccessibilityService : AccessibilityService() {
     }
 
     private fun startActiveScanning() {
-        if (translationMode != AppDefaults.MODE_ALL) return
-
         activeScanLoopJob?.cancel()
         activeScanLoopJob = serviceScope.launch {
             delay(50L)
@@ -777,13 +787,14 @@ class TranslationAccessibilityService : AccessibilityService() {
             // para abarcar los límites completos del mensaje con padding, marcas de tiempo y bordes.
             var container = node.parent
             val screenWidth = resources.displayMetrics.widthPixels
+            val screenHeight = resources.displayMetrics.heightPixels
             val density = resources.displayMetrics.density
             for (level in 0..1) {
                 if (container != null) {
                     val pRect = Rect()
                     container.getBoundsInScreen(pRect)
                     if (pRect.width() <= screenWidth * 0.95f &&
-                        pRect.height() <= (600 * density).toInt() &&
+                        pRect.height() <= screenHeight &&
                         pRect.width() >= rect.width() &&
                         pRect.height() >= rect.height() &&
                         Rect.intersects(pRect, rect)) {
@@ -796,10 +807,17 @@ class TranslationAccessibilityService : AccessibilityService() {
 
             // Validate chat message bubble (both incoming and sent outgoing messages, excluding centered date pills)
             val isBubble = TranslationSenseEngine.isMessageBubble(rect.left, rect.right, screenWidth)
+            val visibleMargin = (20 * density).toInt()
 
             if (isBubble && rect.width() > (30 * density).toInt() && rect.height() > (16 * density).toInt() &&
-                rect.top >= minY && rect.bottom <= maxY) {
-                outList.add(MessageCandidate(cleanText, rect))
+                rect.bottom > minY + visibleMargin && rect.top < maxY - visibleMargin) {
+                val clampedRect = Rect(
+                    rect.left,
+                    rect.top.coerceAtLeast(minY),
+                    rect.right,
+                    rect.bottom.coerceAtMost(maxY)
+                )
+                outList.add(MessageCandidate(cleanText, clampedRect))
                 return true
             }
         }
@@ -1327,10 +1345,25 @@ class TranslationAccessibilityService : AccessibilityService() {
             }
     }
 
+    private fun findFirstTextChild(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        if (!node.isEditable && !node.text.isNullOrBlank()) {
+            val cls = node.className?.toString() ?: ""
+            if (!cls.contains("Image", ignoreCase = true) && !cls.contains("Button", ignoreCase = true)) {
+                return node
+            }
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = findFirstTextChild(child)
+            if (found != null) return found
+        }
+        return null
+    }
+
     /**
      * Traduce únicamente el mensaje específico sobre el que el usuario ha pulsado.
      * Por qué: Proporciona la experiencia 'Tap to Translate', evitando cubrir toda la pantalla con overlays
-     * y permitiendo traducir con alta fidelidad solo el texto seleccionado.
+     * y permitiendo traducir con alta fidelidad solo el texto seleccionado en los idiomas del menú.
      */
     private fun handleMessageClicked(sourceNode: AccessibilityNodeInfo?) {
         if (!ServiceBridge.isTranslatingActive) return
@@ -1340,20 +1373,8 @@ class TranslationAccessibilityService : AccessibilityService() {
         if (nodePkg.isNotBlank() && !isWhatsAppPackage(nodePkg)) return
 
         try {
-            var nodeWithText: AccessibilityNodeInfo = sourceNode
-            var text = nodeWithText.text?.toString() ?: ""
-
-            if (text.isBlank() && sourceNode.childCount > 0) {
-                for (i in 0 until sourceNode.childCount) {
-                    val child = sourceNode.getChild(i) ?: continue
-                    val childText = child.text?.toString() ?: ""
-                    if (childText.isNotBlank()) {
-                        nodeWithText = child
-                        text = childText
-                        break
-                    }
-                }
-            }
+            val nodeWithText = findFirstTextChild(sourceNode) ?: sourceNode
+            val text = nodeWithText.text?.toString() ?: ""
 
             if (text.isBlank()) return
             val cleanText = TranslationFilter.cleanMessageText(text).trim()
@@ -1365,24 +1386,10 @@ class TranslationAccessibilityService : AccessibilityService() {
             val screenWidth = resources.displayMetrics.widthPixels
             if (!TranslationSenseEngine.isMessageBubble(rect, screenWidth)) return
 
-            val script = TextNormalizer.detectScriptType(cleanText)
-            val msgSource: String
-            val msgTarget: String
-
-            when (script) {
-                TextNormalizer.ScriptType.GREEK -> {
-                    msgSource = TranslateLanguage.GREEK
-                    msgTarget = TranslateLanguage.ROMANIAN
-                }
-                TextNormalizer.ScriptType.LATIN -> {
-                    msgSource = TranslateLanguage.ROMANIAN
-                    msgTarget = TranslateLanguage.GREEK
-                }
-                TextNormalizer.ScriptType.NEUTRAL -> {
-                    msgSource = configuredSource
-                    msgTarget = configuredTarget
-                }
-            }
+            // Por qué: Usa estrictamente el par de idiomas configurado por el usuario en el menú
+            val msgSource = if (configuredSource != "AUTO") configuredSource else AppDefaults.SOURCE_LANGUAGE
+            val msgTarget = configuredTarget
+            val targetCode = msgTarget.uppercase()
 
             val normalizedText = if (msgSource == TranslateLanguage.ROMANIAN) {
                 TextNormalizer.restoreRomanianDiacritics(cleanText)
@@ -1403,10 +1410,15 @@ class TranslationAccessibilityService : AccessibilityService() {
                     return@launch
                 }
 
-                val targetCode = if (msgTarget == TranslateLanguage.GREEK) "EL" else "RO"
                 val remembered = lookupLearnedMemory(msgSource, msgTarget, cleanText)
                 if (remembered != null) {
                     mainHandler.post { overlayManager.showSingleMessagePill(rect, remembered, targetCode) }
+                    return@launch
+                }
+
+                val cached = getCachedTranslation(msgSource, msgTarget, cleanText)
+                if (cached != null) {
+                    mainHandler.post { overlayManager.showSingleMessagePill(rect, cached, targetCode) }
                     return@launch
                 }
 
@@ -1433,6 +1445,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                     if (msgTarget == TranslateLanguage.GREEK && corrected.none { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }) {
                         return@launch
                     }
+                    putCachedTranslation(msgSource, msgTarget, cleanText, corrected)
                     mainHandler.post {
                         overlayManager.showSingleMessagePill(rect, corrected, targetCode)
                     }

@@ -35,7 +35,8 @@ object TranslationSenseEngine {
         "thanks", "thank", "job", "offer", "experience", "needed", "salary", "bonus", "payment",
         "language", "written", "speaking", "good", "knowledge", "tickets", "contract", "training",
         "team", "activities", "hours", "nightshift", "overtime", "holidays", "weekends", "subscription",
-        "public", "transportation", "medical", "clinic", "private", "relocation", "period", "paid"
+        "public", "transportation", "medical", "clinic", "private", "relocation", "period", "paid",
+        "online", "game", "presenters", "monthly", "net", "meal", "bank", "christmas", "easter"
     )
 
     val COMMON_ROMANIAN_WORDS = setOf(
@@ -107,11 +108,12 @@ object TranslationSenseEngine {
             return false
         }
 
-        // If target is Greek, discard any text already composed of Greek script
+        val greekLetters = clean.count { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }
+        val latinLetters = clean.count { it in 'a'..'z' || it in 'A'..'Z' || it in "ăâîșțĂÂÎȘȚ" }
+
+        // If target is Greek, discard text that is purely Greek or predominantly Greek
         if (targetLang == TranslateLanguage.GREEK) {
-            val greekLetters = clean.count { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }
-            val latinLetters = clean.count { it in 'a'..'z' || it in 'A'..'Z' || it in "ăâîșțĂÂÎȘȚ" }
-            if (greekLetters > 0 && greekLetters >= latinLetters) {
+            if (greekLetters > 0 && (latinLetters == 0 || greekLetters > latinLetters)) {
                 return false
             }
         }
@@ -121,21 +123,19 @@ object TranslationSenseEngine {
         val englishTokenCount = words.count { COMMON_ENGLISH_TOKENS.contains(it) }
         val romanianTokenCount = words.count { COMMON_ROMANIAN_WORDS.contains(it) }
 
-        // Reject if identified language from ML Kit is explicitly non-source (e.g. English "en", Spanish "es", etc.)
-        if (identifiedLang != null && identifiedLang != "und") {
-            if (sourceLang == TranslateLanguage.ROMANIAN && identifiedLang != TranslateLanguage.ROMANIAN) {
+        if (sourceLang == TranslateLanguage.ROMANIAN) {
+            // Reject if identified language from ML Kit is explicitly non-Romanian (e.g. English "en", Spanish "es")
+            if (identifiedLang != null && identifiedLang != "und" && identifiedLang != TranslateLanguage.ROMANIAN && identifiedLang != "ron") {
                 if (!clean.any { it in "ăâîșțĂÂÎȘȚ" }) {
                     return false
                 }
             }
-        }
 
-        // Reject if English tokens are dominant and there are no Romanian diacritics
-        if (englishTokenCount >= 2 && romanianTokenCount == 0 && !clean.any { it in "ăâîșțĂÂÎȘȚ" }) {
-            return false
-        }
+            // Reject if English tokens are dominant and there are no Romanian diacritics
+            if (englishTokenCount >= 2 && romanianTokenCount == 0 && !clean.any { it in "ăâîșțĂÂÎȘȚ" }) {
+                return false
+            }
 
-        if (sourceLang == TranslateLanguage.ROMANIAN) {
             // 1. Definite Romanian diacritics (unmistakably Romanian)
             if (clean.any { it in "ăâîșțĂÂÎȘȚ" }) return true
 
@@ -167,9 +167,27 @@ object TranslationSenseEngine {
             return false
         }
 
+        if (sourceLang == TranslateLanguage.ENGLISH) {
+            if (latinLetters < 2) return false
+            if (englishTokenCount > 0) return true
+            if (identifiedLang == TranslateLanguage.ENGLISH || identifiedLang == "eng") return true
+            if (clean.any { it in "ăâîșțĂÂÎȘȚ" } || romanianTokenCount > 0) return false
+            if (identifiedLang != null &&
+                identifiedLang != "und" &&
+                identifiedLang != TranslateLanguage.ENGLISH &&
+                identifiedLang != targetLang
+            ) {
+                return false
+            }
+            return true
+        }
+
         if (sourceLang == TranslateLanguage.GREEK) {
-            val greekLetters = clean.count { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }
             return greekLetters > 0
+        }
+
+        if (targetLang == TranslateLanguage.GREEK) {
+            return latinLetters >= 2
         }
 
         return true

@@ -214,5 +214,30 @@ class AdaptiveLearningTest {
             )
         )
     }
+
+    @Test
+    fun englishToGreek_acceptsEnglishAndMixedMessagesWhenSourceIsEnglish() {
+        val jobOffer = """
+            ΠΡΟΣΦΟΡΑ ΕΡΓΑΣΙΑΣ ΒΟΥΚΟΥΡΕΣΤΙ:
+            Game Presenters with Greek Language
+
+            No experience Needed
+            Good knowledge (written and speaking)
+            of Greek Language
+            900€ Monthly Salary (net) (4500 RON)
+        """.trimIndent()
+
+        // When source is English ("en") and target is Greek ("el"), both must be eligible
+        assertTrue(TranslationFilter.shouldTranslate(jobOffer, "el", "en"))
+        assertTrue(TranslationSenseEngine.isEligibleSourceText(jobOffer, "en", "el", "en"))
+        assertTrue(TranslationSenseEngine.isEligibleSourceText(jobOffer, "en", "el", "el"))
+
+        val shortMixed = "Online καζίνο"
+        assertTrue(TranslationFilter.shouldTranslate(shortMixed, "el", "en"))
+        assertTrue(TranslationSenseEngine.isEligibleSourceText(shortMixed, "en", "el"))
+
+        // When source is Romanian ("ro"), the English job offer is still rejected
+        assertFalse(TranslationSenseEngine.isEligibleSourceText(jobOffer, "ro", "el", "en"))
+    }
 }
 

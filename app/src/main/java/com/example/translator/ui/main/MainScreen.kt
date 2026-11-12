@@ -318,7 +318,7 @@ fun MainScreen(
       mutableStateOf(prefs.getBoolean(AppDefaults.KEY_KEYBOARD_ENABLED, true))
   }
   var translationMode by remember {
-      mutableStateOf(prefs.getString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_TAP) ?: AppDefaults.MODE_TAP)
+      mutableStateOf(prefs.getString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_ALL) ?: AppDefaults.MODE_ALL)
   }
   var aiTranslationEnabled by remember {
       mutableStateOf(prefs.getBoolean(AppDefaults.KEY_AI_ENABLED, true))

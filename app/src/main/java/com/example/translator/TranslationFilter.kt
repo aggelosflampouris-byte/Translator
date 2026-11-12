@@ -133,11 +133,11 @@ object TranslationFilter {
             return false
         }
 
-        // If target is Greek, skip any block that is primarily Greek text
+        // If target is Greek, skip any block that is purely or predominantly Greek text
         if (configuredTarget == TranslateLanguage.GREEK) {
             val greekCharCount = trimmed.count { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }
             val latinCharCount = trimmed.count { it in 'a'..'z' || it in 'A'..'Z' || it in "ăâîșțĂÂÎȘȚ" }
-            if (greekCharCount > 0 && greekCharCount >= latinCharCount) {
+            if (greekCharCount > 0 && (latinCharCount == 0 || greekCharCount > latinCharCount)) {
                 return false
             }
         }

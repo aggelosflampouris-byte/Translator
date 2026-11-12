@@ -73,9 +73,15 @@ class IndexTranslationEngine(private val context: Context) : TranslationEngine {
     }
 
     suspend fun preload() {
-        // Por qué: Precalienta los clientes neuronales de ambos sentidos de traducción en memoria
-        TranslatorPool.get(TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK)
-        TranslatorPool.get(TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN)
+        // Por qué: Precalienta los clientes neuronales del par de idiomas seleccionado en el menú
+        val prefs = context.getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
+        val src = prefs.getString(AppDefaults.KEY_SOURCE_LANGUAGE, AppDefaults.SOURCE_LANGUAGE)
+            ?.takeIf { it != "AUTO" } ?: AppDefaults.SOURCE_LANGUAGE
+        val tgt = prefs.getString(AppDefaults.KEY_TARGET_LANGUAGE, AppDefaults.TARGET_LANGUAGE)
+            ?: AppDefaults.TARGET_LANGUAGE
+        val conditions = com.google.mlkit.common.model.DownloadConditions.Builder().build()
+        TranslatorPool.get(src, tgt).downloadModelIfNeeded(conditions)
+        TranslatorPool.get(tgt, src).downloadModelIfNeeded(conditions)
     }
 
     override suspend fun translate(
@@ -115,21 +121,74 @@ class IndexTranslationEngine(private val context: Context) : TranslationEngine {
  */
 class MLKitTranslationEngine : TranslationEngine {
 
+    private val downloadConditions = com.google.mlkit.common.model.DownloadConditions.Builder().build()
+
+    private fun isLineAlreadyInTargetScript(line: String, targetLang: String): Boolean {
+        if (targetLang == "el" || targetLang == TranslateLanguage.GREEK) {
+            val greekCount = line.count { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }
+            val latinCount = line.count { it in 'a'..'z' || it in 'A'..'Z' || it in "ăâîșțĂÂÎȘȚ" }
+            return greekCount > 0 && latinCount == 0
+        }
+        return false
+    }
+
+    private suspend fun translateSingleLine(
+        line: String,
+        sourceLang: String,
+        targetLang: String
+    ): String? = suspendCancellableCoroutine { continuation ->
+        val client = TranslatorPool.get(sourceLang, targetLang)
+        client.downloadModelIfNeeded(downloadConditions)
+            .addOnSuccessListener {
+                client.translate(line)
+                    .addOnSuccessListener { result ->
+                        if (continuation.isActive) continuation.resume(result)
+                    }
+                    .addOnFailureListener { error ->
+                        Log.w("MLKitEngine", "ML Kit line translation failed", error)
+                        if (continuation.isActive) continuation.resume(null)
+                    }
+            }
+            .addOnFailureListener { error ->
+                Log.w("MLKitEngine", "ML Kit model download failed for $sourceLang->$targetLang", error)
+                if (continuation.isActive) continuation.resume(null)
+            }
+    }
+
     override suspend fun translate(
         text: String,
         sourceLang: String,
         targetLang: String,
         hints: TranslationHints
-    ): String? = suspendCancellableCoroutine { continuation ->
-        val client = TranslatorPool.get(sourceLang, targetLang)
-        client.translate(text)
-            .addOnSuccessListener { result ->
-                if (continuation.isActive) continuation.resume(result)
+    ): String? {
+        if (!text.contains('\n')) {
+            return translateSingleLine(text, sourceLang, targetLang)
+        }
+
+        // Por qué: En mensajes multilínea (ej. ofertas de trabajo o anuncios con encabezados en griego
+        // y cuerpo en inglés), se traduce línea por línea para preservar saltos de línea y encabezados ya en destino.
+        val lines = text.split('\n')
+        val translatedLines = ArrayList<String>(lines.size)
+        var anyTranslated = false
+
+        for (line in lines) {
+            val trimmed = line.trim()
+            if (trimmed.isEmpty() || !trimmed.any { it.isLetter() } || isLineAlreadyInTargetScript(trimmed, targetLang)) {
+                translatedLines.add(line)
+                continue
             }
-            .addOnFailureListener { error ->
-                Log.w("MLKitEngine", "ML Kit translation failed", error)
-                if (continuation.isActive) continuation.resume(null)
+            val translated = translateSingleLine(trimmed, sourceLang, targetLang)
+            if (!translated.isNullOrBlank()) {
+                translatedLines.add(translated)
+                if (!translated.trim().equals(trimmed, ignoreCase = true)) {
+                    anyTranslated = true
+                }
+            } else {
+                translatedLines.add(line)
             }
+        }
+
+        return if (anyTranslated) translatedLines.joinToString("\n") else null
     }
 }
 
