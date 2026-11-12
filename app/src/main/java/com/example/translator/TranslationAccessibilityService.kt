@@ -137,6 +137,59 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
     }
 
+    @Volatile private var connectCount: Int = 0
+    @Volatile private var stateChangeCount: Int = 0
+    @Volatile private var scanLoopTicks: Int = 0
+    @Volatile private var eventCount: Int = 0
+    @Volatile private var lastEventPkg: String? = null
+    @Volatile private var lastEventType: Int = 0
+    @Volatile private var lastEventTimeMs: Long = 0L
+    @Volatile private var lastNonTransientEventPkg: String? = null
+    @Volatile private var lastNonTransientEventTimeMs: Long = 0L
+    @Volatile private var lastExternalWindowsSummary: String = "none"
+    @Volatile private var lastResolveReason: String = "init"
+    @Volatile private var lastTraceUpdateMs: Long = 0L
+    private val seenExternalPackages = LinkedHashMap<String, Int>(8)
+
+    private fun recordSeenExternalPackage(pkg: String) {
+        synchronized(seenExternalPackages) {
+            if (!seenExternalPackages.containsKey(pkg) && seenExternalPackages.size >= 8) {
+                val oldestKey = seenExternalPackages.keys.firstOrNull()
+                if (oldestKey != null) seenExternalPackages.remove(oldestKey)
+            }
+            seenExternalPackages[pkg] = (seenExternalPackages[pkg] ?: 0) + 1
+        }
+    }
+
+    private fun formatSeenPackages(): String {
+        synchronized(seenExternalPackages) {
+            if (seenExternalPackages.isEmpty()) return "none"
+            return seenExternalPackages.entries.joinToString(",") { (pkg, count) ->
+                val shortPkg = pkg.removePrefix("com.facebook.").removePrefix("com.samsung.android.")
+                "$shortPkg#$count"
+            }
+        }
+    }
+
+    private fun updateRuntimeTrace(tag: String) {
+        lastTraceUpdateMs = android.os.SystemClock.uptimeMillis()
+        val msgEnabled = enabledTargetPackages.contains("com.facebook.orca")
+        val loopAlive = activeScanLoopJob?.isActive == true
+        ServiceBridge.lastRuntimeTrace =
+            "$tag | c=$connectCount s=$stateChangeCount l=$scanLoopTicks(alive=$loopAlive) e=$eventCount " +
+            "svcPkgs=${enabledTargetPackages.size}(msg=$msgEnabled) scr=$isScreenScrolling " +
+            "fg=${lastForegroundTargetPackage ?: "null"} res=$lastResolveReason " +
+            "lastEvt=${lastEventPkg ?: "none"}(${lastEventType}) seen=[${formatSeenPackages()}] " +
+            "ext=[$lastExternalWindowsSummary]"
+    }
+
+    private fun maybeUpdateRuntimeTrace(throttled: Boolean) {
+        val now = android.os.SystemClock.uptimeMillis()
+        if (!throttled || now - lastTraceUpdateMs >= 450L) {
+            updateRuntimeTrace("evt")
+        }
+    }
+
     // State is published via ServiceBridge — no Service reference held in statics.
 
     data class MessageCandidate(
@@ -244,10 +297,13 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         // Publish to ServiceBridge — no static Service reference stored.
         ServiceBridge.isAccessibilityActive = true
+        connectCount++
+        updateRuntimeTrace("conn")
 
         // Register the state-change callback so FloatingBubbleService can drive us
         // without importing or holding a reference to this service.
         ServiceBridge.onTranslationStateChanged = { isActive ->
+            stateChangeCount++
             if (!isActive) {
                 mainHandler.post {
                     overlayManager.removeAllOverlays()
@@ -257,11 +313,13 @@ class TranslationAccessibilityService : AccessibilityService() {
                 scrollSettleJob?.cancel()
                 activeScanLoopJob?.cancel()
                 isScreenScrolling = false
+                updateRuntimeTrace("off")
             } else {
                 val latestPrefs = getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
                 enabledTargetPackages = TargetAppCatalog.getEnabledPackages(latestPrefs, packageName)
                 syncAccessibilityPackageScope()
                 startActiveScanning()
+                updateRuntimeTrace("on")
             }
         }
 
@@ -279,14 +337,16 @@ class TranslationAccessibilityService : AccessibilityService() {
             serviceScope.launch {
                 isScreenScrolling = false
                 lastScrollTimestamp = 0L
-                var activeTarget = resolveForegroundTargetPackage()
+                var activeTarget = resolveForegroundTargetPackage(captureExternalSnapshot = true)
                 if (activeTarget == null) {
                     // Por qué: Al pulsar la acción desde la barra de notificaciones, SystemUI tarda ~300ms en cerrarse
                     delay(350L)
-                    activeTarget = resolveForegroundTargetPackage()
+                    activeTarget = resolveForegroundTargetPackage(captureExternalSnapshot = true)
                 }
                 handleForegroundTargetTransition(activeTarget)
+                updateRuntimeTrace("scanReq")
                 if (activeTarget == null) {
+                    ServiceBridge.lastScanDebug = "abort=scanReq_no_fg | $lastResolveReason | $lastExternalWindowsSummary"
                     mainHandler.post {
                         overlayManager.removeAllOverlays()
                         Toast.makeText(applicationContext, "Open a supported chat app to translate messages", Toast.LENGTH_SHORT).show()
@@ -304,34 +364,48 @@ class TranslationAccessibilityService : AccessibilityService() {
         if (ServiceBridge.isTranslatingActive) {
             startActiveScanning()
         }
+        updateRuntimeTrace("ready")
 
         Log.d("Translator", "TranslationAccessibilityService connected")
     }
 
     private fun syncAccessibilityPackageScope() {
         try {
-            val info = serviceInfo ?: android.accessibilityservice.AccessibilityServiceInfo()
+            val currentInfo = serviceInfo
+            val info = currentInfo ?: android.accessibilityservice.AccessibilityServiceInfo()
             val scope = enabledTargetPackages
             // Por qué: Cuando hay apps habilitadas dejamos packageNames en null a nivel de sistema para recibir
             // transiciones de ventana (lanzador, teclado, Messenger/Litho) sin bloqueos de caché de OEM,
             // aplicando el filtrado estricto de paquetes en isEnabledTargetPackage().
-            info.packageNames = if (scope.isEmpty()) {
+            val desiredPackages: Array<String>? = if (scope.isEmpty()) {
                 arrayOf("${applicationContext.packageName}.none")
             } else {
                 null
             }
-            info.flags = info.flags or
+            val desiredFlags = info.flags or
+                android.accessibilityservice.AccessibilityServiceInfo.DEFAULT or
                 android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
                 android.accessibilityservice.AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
                 android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
-            info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
+            val desiredEventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
                 AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
                 AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED or
                 AccessibilityEvent.TYPE_VIEW_SCROLLED or
                 AccessibilityEvent.TYPE_VIEW_FOCUSED or
                 AccessibilityEvent.TYPE_VIEW_CLICKED
-            info.feedbackType = android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_GENERIC
-            serviceInfo = info
+            val desiredFeedback = android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_GENERIC
+
+            val packagesMatch = (info.packageNames == null && desiredPackages == null) ||
+                (info.packageNames != null && desiredPackages != null && info.packageNames.contentEquals(desiredPackages))
+            // Por qué: Solo actualiza serviceInfo cuando algún parámetro cambia para no reiniciar
+            // innecesariamente los enlaces de ventanas interactivas en Android/One UI.
+            if (currentInfo == null || !packagesMatch || info.flags != desiredFlags || info.eventTypes != desiredEventTypes || info.feedbackType != desiredFeedback) {
+                info.packageNames = desiredPackages
+                info.flags = desiredFlags
+                info.eventTypes = desiredEventTypes
+                info.feedbackType = desiredFeedback
+                serviceInfo = info
+            }
         } catch (e: Exception) {
             Log.e("Translator", "Failed to configure serviceInfo programmatically", e)
         }
@@ -377,74 +451,144 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun toWindowRect(rect: Rect): WindowRect {
+        return WindowRect(rect.left, rect.top, rect.right, rect.bottom)
+    }
+
     // Por qué: Determina de forma estricta qué aplicación habilitada está en primer plano,
-    // descartando lanzadores, teclados y apps bloqueadas para evitar falsos positivos.
-    private fun resolveForegroundTargetPackage(): String? {
+    // descartando lanzadores, teclados, tiras Edge delgadas y apps bloqueadas sin perder trazabilidad.
+    private fun resolveForegroundTargetPackage(captureExternalSnapshot: Boolean = false): String? {
+        var activePkg: String? = null
+        var activeBounds: WindowRect? = null
         try {
             val active = rootInActiveWindow
             if (active != null) {
-                val pkg = active.packageName?.toString() ?: ""
-                if (isEnabledTargetPackage(pkg)) {
-                    return pkg
-                }
-                if (!isTransientOverlayOrInputPackage(pkg) && isBlockedNonTargetPackage(pkg)) {
-                    return null
+                activePkg = active.packageName?.toString()
+                val rect = Rect()
+                active.getBoundsInScreen(rect)
+                if (!rect.isEmpty) {
+                    activeBounds = toWindowRect(rect)
                 }
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             // Ignore
         }
 
+        val appSnapshots = mutableListOf<AppWindowSnapshot>()
+        val rawWinDiag = if (captureExternalSnapshot) mutableListOf<String>() else null
         try {
             val windowList = windows
-            if (windowList != null && windowList.isNotEmpty()) {
+            if (windowList != null) {
                 for (window in windowList) {
-                    if (window.type == AccessibilityWindowInfo.TYPE_APPLICATION && window.isActive) {
-                        val root = window.root ?: continue
-                        val pkg = root.packageName?.toString() ?: ""
-                        if (isEnabledTargetPackage(pkg)) {
-                            return pkg
-                        }
-                        if (!isTransientOverlayOrInputPackage(pkg) && isBlockedNonTargetPackage(pkg)) {
-                            return null
+                    val wRoot = try { window.root } catch (_: Exception) { null }
+                    val wPkg = wRoot?.packageName?.toString() ?: ""
+                    val wRect = Rect()
+                    window.getBoundsInScreen(wRect)
+                    if (wRect.isEmpty && wRoot != null) {
+                        try {
+                            wRoot.getBoundsInScreen(wRect)
+                        } catch (_: Exception) {
+                            // Ignore
                         }
                     }
-                }
-
-                // Por qué: Si el teclado IME, la cortina del sistema o nuestro overlay tienen el foco activo,
-                // inspecciona la ventana TYPE_APPLICATION más alta por orden de capa (layer descendente).
-                val topAppWindow = windowList
-                    .asSequence()
-                    .filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
-                    .sortedByDescending { it.layer }
-                    .firstOrNull { win ->
-                        val pkg = win.root?.packageName?.toString() ?: ""
-                        !isTransientOverlayOrInputPackage(pkg)
+                    if (rawWinDiag != null && rawWinDiag.size < 6) {
+                        val flags = buildString {
+                            if (window.isActive) append("A")
+                            if (window.isFocused) append("F")
+                        }.ifEmpty { "-" }
+                        rawWinDiag.add("${wPkg.ifBlank { "null" }}:t${window.type}@${window.layer}($flags,${wRect.width()}x${wRect.height()})")
                     }
-                val topPkg = topAppWindow?.root?.packageName?.toString() ?: ""
-                if (isEnabledTargetPackage(topPkg)) {
-                    return topPkg
-                }
-                if (topPkg.isNotBlank()) {
-                    return null
+                    if (window.type == AccessibilityWindowInfo.TYPE_APPLICATION && wPkg.isNotBlank()) {
+                        appSnapshots.add(
+                            AppWindowSnapshot(
+                                packageName = wPkg,
+                                isActive = window.isActive,
+                                isFocused = window.isFocused,
+                                layer = window.layer,
+                                bounds = if (wRect.isEmpty) WindowRect(0, 0, 0, 0) else toWindowRect(wRect)
+                            )
+                        )
+                    }
                 }
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             // Ignore
         }
 
-        return null
+        val screenWidth = getScreenWidthPx()
+        val screenHeight = getScreenHeightPx()
+        val now = android.os.SystemClock.uptimeMillis()
+        val eventAgeMs = if (lastNonTransientEventTimeMs > 0L) now - lastNonTransientEventTimeMs else Long.MAX_VALUE
+
+        val result = ForegroundTargetResolver.resolve(
+            activeWindowPkg = activePkg,
+            activeWindowBounds = activeBounds,
+            appWindows = appSnapshots,
+            screenWidthPx = screenWidth,
+            screenHeightPx = screenHeight,
+            recentEventPkg = lastNonTransientEventPkg,
+            recentEventAgeMs = eventAgeMs,
+            enabledTargetPackages = enabledTargetPackages,
+            selfPackage = applicationContext.packageName
+        )
+
+        lastResolveReason = result.reason
+
+        // Por qué: Conserva la instantánea de ventanas mientras hay una app externa visible para que,
+        // al regresar a OverChat y abrir Debug, no se pierda el diagnóstico de Messenger.
+        if (captureExternalSnapshot) {
+            val isOnlySelfUi = (activePkg == applicationContext.packageName || activePkg == null) &&
+                appSnapshots.isNotEmpty() &&
+                appSnapshots.all {
+                    it.packageName == applicationContext.packageName ||
+                        ForegroundTargetResolver.isSystemTransientPackage(it.packageName)
+                }
+            val hasNonTrivialSnapshot = (activePkg != null && activePkg != applicationContext.packageName) ||
+                (!isOnlySelfUi && rawWinDiag?.isNotEmpty() == true)
+            if (hasNonTrivialSnapshot) {
+                lastExternalWindowsSummary = "act=${activePkg ?: "null"} wins=[${rawWinDiag?.joinToString(",") ?: ""}]"
+            }
+        }
+
+        return result.targetPackage
     }
 
     private fun isTargetAppInForeground(): Boolean = resolveForegroundTargetPackage() != null
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
-        if (!ServiceBridge.isTranslatingActive) return
 
         val packageName = event.packageName?.toString() ?: ""
-        val activeForeground = resolveForegroundTargetPackage()
+        val nowMs = android.os.SystemClock.uptimeMillis()
+        eventCount++
+        lastEventPkg = packageName
+        lastEventType = event.eventType
+        lastEventTimeMs = nowMs
+
+        if (packageName.isNotBlank() &&
+            !ForegroundTargetResolver.isSystemTransientPackage(packageName) &&
+            (packageName != applicationContext.packageName || event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)
+        ) {
+            recordSeenExternalPackage(packageName)
+            if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+                event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
+                event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED ||
+                event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED
+            ) {
+                lastNonTransientEventPkg = packageName
+                lastNonTransientEventTimeMs = nowMs
+            }
+        }
+
+        if (!ServiceBridge.isTranslatingActive) {
+            maybeUpdateRuntimeTrace(throttled = true)
+            return
+        }
+
+        val shouldCaptureSnapshot = isEnabledTargetPackage(packageName) || (nowMs - lastTraceUpdateMs >= 450L)
+        val activeForeground = resolveForegroundTargetPackage(captureExternalSnapshot = shouldCaptureSnapshot)
         handleForegroundTargetTransition(activeForeground)
+        maybeUpdateRuntimeTrace(throttled = !isEnabledTargetPackage(packageName))
 
         // Por qué: Limpieza inmediata de pantalla si el evento proviene de una app externa o del lanzador
         if (!isEnabledTargetPackage(packageName) && !isKeyboardPackage(packageName)) {
@@ -469,6 +613,10 @@ class TranslationAccessibilityService : AccessibilityService() {
             return
         }
 
+        if (activeForeground == null) {
+            ServiceBridge.lastScanDebug = "abort=evt_target_no_fg | pkg=$packageName | evt=${event.eventType} | $lastResolveReason | $lastExternalWindowsSummary"
+        }
+
         when (event.eventType) {
             AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
                 scanGeneration.incrementAndGet()
@@ -487,9 +635,9 @@ class TranslationAccessibilityService : AccessibilityService() {
                 }
 
                 scrollSettleJob = serviceScope.launch {
-                    // Por qué: Espera 350ms de quietud absoluta tras finalizar el desplazamiento
+                    // Por qué: Espera 360ms (> 350ms con margen contra jitter) tras finalizar el desplazamiento
                     // antes de traducir, garantizando que la pantalla esté 100% estable.
-                    delay(350L)
+                    delay(360L)
                     isScreenScrolling = false
                     if (isTargetAppInForeground() && ServiceBridge.isTranslatingActive) {
                         scanAndTranslateVisibleMessages()
@@ -509,7 +657,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                 // Por qué: Ignora cambios de contenido si la lista aún se encuentra en movimiento por desplazamiento
                 val now = android.os.SystemClock.uptimeMillis()
                 if (!isScreenScrolling && (now - lastScrollTimestamp >= 350L)) {
-                    scheduleScan(350L, event.source)
+                    scheduleScan(360L, event.source)
                 }
             }
             AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED,
@@ -528,6 +676,9 @@ class TranslationAccessibilityService : AccessibilityService() {
     private fun scheduleScan(delayMs: Long, eventSource: AccessibilityNodeInfo? = null) {
         if (!ServiceBridge.isTranslatingActive) return
         if (!isTargetAppInForeground()) {
+            if (isEnabledTargetPackage(lastEventPkg)) {
+                ServiceBridge.lastScanDebug = "abort=sched_no_fg | pkg=$lastEventPkg | $lastResolveReason | $lastExternalWindowsSummary"
+            }
             if (overlayManager.hasOverlays()) {
                 mainHandler.post { overlayManager.removeAllOverlays() }
             }
@@ -556,7 +707,11 @@ class TranslationAccessibilityService : AccessibilityService() {
         overlayWatchdogJob = serviceScope.launch {
             while (true) {
                 delay(250L)
-                val activeTarget = resolveForegroundTargetPackage()
+                // Por qué: Autorrepara el bucle de escaneo periódico si la traducción está activa pero el trabajo no corre.
+                if (ServiceBridge.isTranslatingActive && (activeScanLoopJob == null || activeScanLoopJob?.isActive != true)) {
+                    startActiveScanning()
+                }
+                val activeTarget = resolveForegroundTargetPackage(captureExternalSnapshot = false)
                 handleForegroundTargetTransition(activeTarget)
                 if (overlayManager.hasOverlays()) {
                     if (activeTarget == null || !ServiceBridge.isTranslatingActive) {
@@ -574,19 +729,32 @@ class TranslationAccessibilityService : AccessibilityService() {
         activeScanLoopJob = serviceScope.launch {
             delay(50L)
             if (!ServiceBridge.isTranslatingActive) return@launch
+            scanLoopTicks++
+            val initFg = resolveForegroundTargetPackage(captureExternalSnapshot = true)
+            updateRuntimeTrace("loopInit")
             val elapsedInit = android.os.SystemClock.uptimeMillis() - lastScrollTimestamp
-            if (isTargetAppInForeground() && !isScreenScrolling && elapsedInit >= 350L) {
+            if (initFg != null && !isScreenScrolling && elapsedInit >= 350L) {
                 scanAndTranslateVisibleMessages()
+            } else if (initFg == null && isEnabledTargetPackage(lastNonTransientEventPkg)) {
+                ServiceBridge.lastScanDebug = "abort=loopInit_no_fg | $lastResolveReason | $lastExternalWindowsSummary"
             }
 
             while (ServiceBridge.isTranslatingActive) {
                 delay(2000L)
                 if (!ServiceBridge.isTranslatingActive) break
+                scanLoopTicks++
+                val loopFg = resolveForegroundTargetPackage(captureExternalSnapshot = true)
+                updateRuntimeTrace("loop")
                 val timeSinceScroll = android.os.SystemClock.uptimeMillis() - lastScrollTimestamp
-                if (isTargetAppInForeground() && !isScreenScrolling && timeSinceScroll >= 350L) {
+                if (loopFg != null && !isScreenScrolling && timeSinceScroll >= 350L) {
                     scanAndTranslateVisibleMessages()
-                } else if (!isTargetAppInForeground() && overlayManager.hasOverlays()) {
-                    mainHandler.post { overlayManager.removeAllOverlays() }
+                } else {
+                    if (loopFg == null && isEnabledTargetPackage(lastNonTransientEventPkg)) {
+                        ServiceBridge.lastScanDebug = "abort=loop_no_fg | $lastResolveReason | $lastExternalWindowsSummary"
+                    }
+                    if (loopFg == null && overlayManager.hasOverlays()) {
+                        mainHandler.post { overlayManager.removeAllOverlays() }
+                    }
                 }
             }
         }
@@ -610,12 +778,17 @@ class TranslationAccessibilityService : AccessibilityService() {
         try {
             val windowList = windows
             if (windowList != null) {
-                for (window in windowList) {
-                    if (window.type == AccessibilityWindowInfo.TYPE_APPLICATION) {
-                        val root = window.root ?: continue
-                        if (root.packageName?.toString() == activePkg) {
-                            return root
-                        }
+                val sortedWindows = windowList
+                    .asSequence()
+                    .filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+                    .sortedWith(
+                        compareByDescending<AccessibilityWindowInfo> { it.isActive || it.isFocused }
+                            .thenByDescending { it.layer }
+                    )
+                for (window in sortedWindows) {
+                    val root = window.root ?: continue
+                    if (root.packageName?.toString() == activePkg) {
+                        return root
                     }
                 }
             }
@@ -633,7 +806,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                 if (current.packageName?.toString() == activePkg) {
                     val bounds = Rect()
                     current.getBoundsInScreen(bounds)
-                    if (bounds.height() >= resources.displayMetrics.heightPixels / 2) {
+                    if (bounds.height() >= getScreenHeightPx() / 3) {
                         return current
                     }
                 }
@@ -658,10 +831,10 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
 
         // Por qué: Verifica estrictamente que una app habilitada esté en primer plano antes de iniciar cualquier escaneo
-        val fgPkg = resolveForegroundTargetPackage()
+        val fgPkg = resolveForegroundTargetPackage(captureExternalSnapshot = true)
         if (fgPkg == null) {
             val activePkg = try { rootInActiveWindow?.packageName?.toString() } catch (_: Exception) { null }
-            ServiceBridge.lastScanDebug = "abort=no_fg_target | activeWin=${activePkg ?: "null"} | enabled=${enabledTargetPackages.size}"
+            ServiceBridge.lastScanDebug = "abort=no_fg_target | activeWin=${activePkg ?: "null"} | $lastResolveReason | $lastExternalWindowsSummary"
             mainHandler.post {
                 overlayManager.removeAllOverlays()
             }
@@ -670,7 +843,7 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         val rootNode = findActiveTargetRootNode(eventSource)
         if (rootNode == null) {
-            ServiceBridge.lastScanDebug = "abort=null_root | fg=$fgPkg"
+            ServiceBridge.lastScanDebug = "abort=null_root | fg=$fgPkg | $lastResolveReason | $lastExternalWindowsSummary"
             mainHandler.post {
                 overlayManager.removeAllOverlays()
             }

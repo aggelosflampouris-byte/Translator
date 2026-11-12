@@ -681,6 +681,7 @@ fun MainScreen(
               appendLine("AccService: ${ServiceBridge.isAccessibilityActive} | Translating: ${ServiceBridge.isTranslatingActive}")
               appendLine("Pair: $sourceLanguage -> $targetLanguage | Mode: $translationMode")
               appendLine("EnabledPkgs: ${enabledPackages.size} (Messenger=$messengerOn)")
+              appendLine("Runtime: ${ServiceBridge.lastRuntimeTrace}")
               appendLine("LastScan: ${ServiceBridge.lastScanDebug}")
           }.trim()
 

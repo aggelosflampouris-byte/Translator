@@ -56,6 +56,12 @@ object ServiceBridge {
      */
     @Volatile var lastScanDebug: String = "No scan executed yet."
 
+    /**
+     * Traza continua del ciclo de vida, eventos y ventanas externas sin contenido de mensajes.
+     * Por qué: Permite distinguir si un fallo ocurre por falta de eventos, ventanas bloqueantes o bucle detenido.
+     */
+    @Volatile var lastRuntimeTrace: String = "No runtime events yet."
+
     fun isAnyServiceActive(): Boolean {
         return isTranslatingActive || isBubbleRunning || isNotificationActive
     }
