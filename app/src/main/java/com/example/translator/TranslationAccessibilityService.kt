@@ -1073,7 +1073,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             val draftContext = findWhatsAppRootNode()
                 ?.let { root -> collectVisibleConversation(root, freshRect.top) }
                 ?.map { it.text }
-                ?.takeLast(TranslationPromptBuilder.MAX_CONTEXT_MESSAGES)
+                ?.takeLast(AppDefaults.MAX_CONTEXT_MESSAGES)
                 ?: emptyList()
 
             // Process message line-by-line to preserve paragraphs, line breaks, and mixed lines
@@ -1227,7 +1227,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         return conversation
             .filter { it.bounds.bottom <= messageBounds.top + (4 * resources.displayMetrics.density).toInt() && it.bounds != messageBounds }
             .map { it.text }
-            .takeLast(TranslationPromptBuilder.MAX_CONTEXT_MESSAGES)
+            .takeLast(AppDefaults.MAX_CONTEXT_MESSAGES)
     }
 
     // Por qué: Observa el campo de texto para detectar el envío de un borrador insertado y aprender de las ediciones
@@ -1325,19 +1325,6 @@ class TranslationAccessibilityService : AccessibilityService() {
             mainHandler.post {
                 overlayManager.removeDraftOverlay()
             }
-        }
-    }
-
-    private fun translateText(
-        sourceLang: String,
-        targetLang: String,
-        text: String,
-        onResult: (String?) -> Unit
-    ) {
-        // Por qué: Usa el motor híbrido (Index-Translate-2B local o ML Kit de respaldo) de manera asíncrona
-        serviceScope.launch {
-            val result = hybridEngine.translate(text, sourceLang, targetLang)
-            onResult(result)
         }
     }
 
@@ -1481,8 +1468,6 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
         TranslatorPool.releaseAll()
         translationCache.evictAll()
-        // Por qué: Libera la memoria nativa y el descriptor de archivo del modelo neuronal al desvincular el servicio
-        hybridEngine.release()
         return super.onUnbind(intent)
     }
 
@@ -1502,7 +1487,6 @@ class TranslationAccessibilityService : AccessibilityService() {
         } catch (e: Exception) {
             Log.w("Translator", "Error unregistering prefListener in onDestroy", e)
         }
-        hybridEngine.release()
     }
 
     override fun onInterrupt() {

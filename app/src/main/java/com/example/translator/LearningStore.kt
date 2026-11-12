@@ -84,7 +84,7 @@ class LearningStore private constructor(context: Context) {
             return corrections.values
                 .filter { it.sourceLang == sourceLang && it.targetLang == targetLang }
                 .sortedWith(compareByDescending<CorrectionRecord> { it.hits }.thenByDescending { it.updatedAt })
-                .take(TranslationPromptBuilder.MAX_PREFERRED_TERMS)
+                .take(AppDefaults.MAX_PREFERRED_TERMS)
                 .map { TermCorrection(it.rejected, it.preferred) }
         }
     }

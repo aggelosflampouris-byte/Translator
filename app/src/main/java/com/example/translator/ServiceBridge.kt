@@ -1,7 +1,5 @@
 package com.example.translator
 
-import android.graphics.Rect
-
 /**
  * Puente ligero desacoplado para comunicar el estado entre servicios.
  *
@@ -22,12 +20,6 @@ object ServiceBridge {
 
     /** True when the user has tapped the sphere to activate translation. */
     @Volatile var isTranslatingActive: Boolean = false
-
-    /**
-     * Current bounding rect of the floating sphere in screen coordinates.
-     * Updated on the Main thread whenever the sphere moves or is added/removed.
-     */
-    @Volatile var currentBubbleBounds: Rect? = null
 
     // ── TranslationAccessibilityService state ──────────────────────────────────
 

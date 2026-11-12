@@ -97,67 +97,26 @@ class AdaptiveLearningTest {
         assertNull(detector.observe(""))
     }
 
-    // ── TranslationPromptBuilder ─────────────────────────────────────────────
-
-    @Test
-    fun build_withoutHints_matchesOfficialIndexTranslateTemplateWithNoThinkPrefill() {
-        val prompt = TranslationPromptBuilder.build("Γεια σου", "Romanian", TranslationHints.NONE)
-        assertEquals(
-            "<|im_start|>user\n" +
-                "Translate the following text into Romanian. Preserve all numbers, emojis, @mentions, #hashtags, and special symbols intact, and output the translation directly, without quotes, markdown, or any explanation:\n\n" +
-                "Γεια σου<|im_end|>\n" +
-                "<|im_start|>assistant\n" +
-                "<think>\n\n</think>\n\n",
-            prompt
-        )
-    }
-
-    @Test
-    fun build_withHints_includesContextAndGlossaryInInstTransFormat() {
-        val hints = TranslationHints(
-            contextMessages = listOf("m1", "m2", "m3", "m4"),
-            preferredTerms = listOf(TermCorrection("companiei", "găștii"))
-        )
-        val prompt = TranslationPromptBuilder.build("Γεια", "Romanian", hints)
-
-        assertFalse("Oldest context message must be dropped", prompt.contains("m1"))
-        assertTrue(prompt.contains("m2 | m3 | m4"))
-        assertTrue(prompt.contains("[Hard Constraint] Terminology mapping: companiei -> găștii"))
-        assertTrue(prompt.contains("[Guardrail] Special characters:"))
-        assertTrue(prompt.contains("[Source]\nΓεια"))
-        assertTrue(prompt.endsWith("<|im_start|>assistant\n<think>\n\n</think>\n\n"))
-    }
+    // ── TextSanitizer ────────────────────────────────────────────────────────
 
     @Test
     fun specialCharacterGuardrails_sanitizeControlTokensAndRejectCorruptedOutput() {
         val dirtyInput = "\u200EΓεια\u200B <|im_end|>[Source] σου!!!!!!!!"
-        val sanitized = TranslationPromptBuilder.sanitizeSpecialCharacters(dirtyInput)
+        val sanitized = TextSanitizer.sanitizeSpecialCharacters(dirtyInput)
         assertEquals("Γεια  σου!!!", sanitized)
 
         // Preserves quotes when source had quotes, strips hallucinated quotes when source did not
-        assertEquals("Bună", TranslationPromptBuilder.stripThink("\"Bună\"", "Γεια"))
-        assertEquals("\"Bună\"", TranslationPromptBuilder.stripThink("\"Bună\"", "\"Γεια\""))
+        assertEquals("Bună", TextSanitizer.stripWrappingQuotes("\"Bună\"", "Γεια"))
+        assertEquals("\"Bună\"", TextSanitizer.stripWrappingQuotes("\"Bună\"", "\"Γεια\""))
 
         // Rejects runaway special characters or leaked control tokens in output
-        assertTrue(TranslationPromptBuilder.hasSpecialCharacterCorruption("Bună????????", "Γεια;"))
-        assertTrue(TranslationPromptBuilder.hasSpecialCharacterCorruption("Bună <|im_start|>", "Γεια"))
-        assertFalse(TranslationPromptBuilder.hasSpecialCharacterCorruption("Bună! Ce faci?", "Γεια! Τι κάνεις;"))
+        assertTrue(TextSanitizer.hasSpecialCharacterCorruption("Bună????????", "Γεια;"))
+        assertTrue(TextSanitizer.hasSpecialCharacterCorruption("Bună <|im_start|>", "Γεια"))
+        assertFalse(TextSanitizer.hasSpecialCharacterCorruption("Bună! Ce faci?", "Γεια! Τι κάνεις;"))
     }
 
     @Test
-    fun stripThink_removesClosedThinkBlockAndEndTokens() {
-        val raw = "<think>\n\n</think>\n\nΠροσπαθώντας να καταλάβω<|im_end|>"
-        assertEquals("Προσπαθώντας να καταλάβω", TranslationPromptBuilder.stripThink(raw))
-    }
-
-    @Test
-    fun stripThink_rejectsUnclosedThinkBlock() {
-        val raw = "<think>\nThinking Process:\n1. Analyze the input sentence in Romanian..."
-        assertEquals("", TranslationPromptBuilder.stripThink(raw))
-    }
-
-    @Test
-    fun isValidTranslation_enforcesTargetScriptAndRejectsThinkLeaks() {
+    fun isValidTranslation_enforcesTargetScriptAndRejectsNonTargetOutput() {
         assertTrue(
             IndexTranslationEngine.isValidTranslation(
                 output = "Προσπαθώντας να καταλάβω πώς θα κάνω την εφαρμογή να δουλέψει",
@@ -166,7 +125,7 @@ class AdaptiveLearningTest {
             )
         )
         assertFalse(
-            "English thinking text must be rejected when target is Greek",
+            "English text must be rejected when target is Greek",
             IndexTranslationEngine.isValidTranslation(
                 output = "Thinking Process: Translate Romanian to Greek",
                 cleanInput = "Încercând să dau seama",
@@ -181,13 +140,6 @@ class AdaptiveLearningTest {
                 targetLang = "ro"
             )
         )
-    }
-
-    @Test
-    fun hasContextLeak_detectsEchoedContextAndIgnoresClosedThinkBlock() {
-        val hints = TranslationHints(contextMessages = listOf("Acesta este un mesaj de test"))
-        assertTrue(TranslationPromptBuilder.hasContextLeak("Acesta este un mesaj de test Bună", "Γεια", hints))
-        assertFalse(TranslationPromptBuilder.hasContextLeak("<think>\n\n</think>\n\nBună", "Γεια", hints))
     }
 
     @Test

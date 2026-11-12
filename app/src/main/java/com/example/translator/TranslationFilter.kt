@@ -99,16 +99,6 @@ object TranslationFilter {
         }
 
         val lower = trimmed.lowercase()
-        // Por qué: Ignorar mensajes de error, negativas conversacionales o ecos de prompts de IA
-        // para no reenviarlos a traducir ni mostrarlos nunca como globos en la pantalla del usuario.
-        if (trimmed.startsWith("[Error", ignoreCase = true) ||
-            trimmed.startsWith("Error:", ignoreCase = true) ||
-            lower.contains("no message was provided") ||
-            lower.contains("please provide the") ||
-            lower.contains("expert chat translator") ||
-            lower.contains("translate this informal")) {
-            return false
-        }
         if (COMMON_UI_TOKENS.contains(lower) || MESSAGE_STATUS_TOKENS.contains(lower)) {
             return false
         }
@@ -158,7 +148,7 @@ object TranslationFilter {
      * and WhatsApp delivery status markers commonly grouped into chat bubble metadata.
      */
     fun cleanMessageText(text: String): String {
-        var cleaned = TranslationPromptBuilder.sanitizeSpecialCharacters(text)
+        var cleaned = TextSanitizer.sanitizeSpecialCharacters(text)
         // Strip trailing WhatsApp status markers (e.g. ", Delivered", ", Παραδόθηκε")
         cleaned = cleaned.replace(WHATSAPP_STATUS_REGEX, "").trim()
         // Strip trailing timestamps (e.g. ", 7:27 μ.μ.")

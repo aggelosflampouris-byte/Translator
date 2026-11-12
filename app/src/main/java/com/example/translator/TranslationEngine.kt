@@ -37,24 +37,7 @@ class IndexTranslationEngine(private val context: Context) : TranslationEngine {
             val trimmed = output.trim()
             if (trimmed.isBlank()) return false
             if (trimmed.equals(cleanInput.trim(), ignoreCase = true)) return false
-            if (TranslationPromptBuilder.hasSpecialCharacterCorruption(trimmed, cleanInput)) return false
-
-            val lower = trimmed.lowercase()
-            if (trimmed.startsWith("[Error", ignoreCase = true) ||
-                trimmed.startsWith("Error:", ignoreCase = true) ||
-                lower.contains("<think") ||
-                lower.contains("</think") ||
-                lower.contains("no message was provided") ||
-                lower.contains("please provide the") ||
-                lower.contains("i cannot translate") ||
-                lower.contains("as an ai") ||
-                lower.contains("i am unable to") ||
-                lower.contains("i'm sorry, but") ||
-                lower.startsWith("sure, here is") ||
-                lower.startsWith("here is the translation")
-            ) {
-                return false
-            }
+            if (TextSanitizer.hasSpecialCharacterCorruption(trimmed, cleanInput)) return false
 
             if (targetLang == "el" || targetLang == TranslateLanguage.GREEK) {
                 val hasGreek = trimmed.any { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }
@@ -66,10 +49,6 @@ class IndexTranslationEngine(private val context: Context) : TranslationEngine {
 
             return true
         }
-    }
-
-    fun isReady(): Boolean {
-        return ModelAssetManager.isModelReady(context)
     }
 
     suspend fun preload() {
@@ -90,11 +69,11 @@ class IndexTranslationEngine(private val context: Context) : TranslationEngine {
         targetLang: String,
         hints: TranslationHints
     ): String? {
-        val cleanInput = TranslationPromptBuilder.sanitizeSpecialCharacters(text)
+        val cleanInput = TextSanitizer.sanitizeSpecialCharacters(text)
         if (cleanInput.isBlank() || !cleanInput.any { it.isLetter() }) return null
 
         val raw = neuralBackend.translate(cleanInput, sourceLang, targetLang, hints) ?: return null
-        val cleaned = TranslationPromptBuilder.stripThink(raw, cleanInput)
+        val cleaned = TextSanitizer.stripWrappingQuotes(raw, cleanInput)
         val withGlossary = if (hints.preferredTerms.isNotEmpty()) {
             CorrectionApplier.apply(cleaned, hints.preferredTerms)
         } else {
@@ -106,10 +85,6 @@ class IndexTranslationEngine(private val context: Context) : TranslationEngine {
         } else {
             cleaned.takeIf { it.isNotBlank() } ?: raw
         }
-    }
-
-    fun release() {
-        // Sin descriptores pesados de C++ que liberar
     }
 }
 
@@ -224,9 +199,5 @@ class HybridTranslationEngine(private val context: Context) : TranslationEngine 
         }
 
         return mlKitEngine.translate(text, sourceLang, targetLang, hints)
-    }
-
-    fun release() {
-        indexEngine.release()
     }
 }

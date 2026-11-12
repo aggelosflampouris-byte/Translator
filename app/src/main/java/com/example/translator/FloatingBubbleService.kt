@@ -4,7 +4,6 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
-import android.graphics.Rect
 import android.os.IBinder
 import android.util.Log
 import android.view.Gravity
@@ -50,23 +49,6 @@ class FloatingBubbleService : Service() {
             }
         }
         return START_STICKY
-    }
-
-    /**
-     * Recomputes the floating sphere's bounding rect from the current layout params
-     * and publishes it to [ServiceBridge]. Called after every position change so that
-     * [OverlayManager] can avoid drawing translation bubbles on top of the sphere.
-     */
-    private fun updateBridgeBounds() {
-        val p = layoutParams ?: run {
-            ServiceBridge.currentBubbleBounds = null
-            return
-        }
-        val density = resources.displayMetrics.density
-        val defaultSize = (52 * density).toInt()
-        val w = sphereView?.width?.takeIf { it > 0 } ?: p.width.takeIf { it > 0 } ?: defaultSize
-        val h = sphereView?.height?.takeIf { it > 0 } ?: p.height.takeIf { it > 0 } ?: defaultSize
-        ServiceBridge.currentBubbleBounds = Rect(p.x, p.y, p.x + w, p.y + h)
     }
 
     private fun createFloatingSphere() {
@@ -118,7 +100,6 @@ class FloatingBubbleService : Service() {
                         p.x = initialX + dx
                         p.y = initialY + dy
                         windowManager?.updateViewLayout(view, p)
-                        updateBridgeBounds()
                     }
                     true
                 }
@@ -136,7 +117,6 @@ class FloatingBubbleService : Service() {
                             screenWidth - sphereSize - margin
                         }
                         windowManager?.updateViewLayout(view, p)
-                        updateBridgeBounds()
                     }
                     true
                 }
@@ -146,7 +126,6 @@ class FloatingBubbleService : Service() {
 
         try {
             windowManager?.addView(view, params)
-            updateBridgeBounds()
         } catch (e: Exception) {
             Log.e("Translator", "FloatingBubbleService: failed to add overlay view", e)
             stopSelf()
@@ -168,9 +147,7 @@ class FloatingBubbleService : Service() {
             }
             ServiceBridge.isTranslatingActive = true
             root?.setBackgroundResource(R.drawable.bg_floating_sphere_active)
-            // Por qué: Notifica de forma visible al usuario qué motor está activo (el modelo neuronal Index-Translate 2B o el respaldo ML Kit)
-            val engineName = if (ModelAssetManager.isModelReady(this)) "Index-Translate 2B Neural" else "ML Kit Local"
-            Toast.makeText(this, "Translation Active ($engineName)", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Translation Active", Toast.LENGTH_SHORT).show()
             ServiceBridge.onTranslationStateChanged?.invoke(true)
             ServiceBridge.notifyUiStateChanged()
         } else {
@@ -186,7 +163,6 @@ class FloatingBubbleService : Service() {
         super.onDestroy()
         ServiceBridge.isBubbleRunning = false
         ServiceBridge.isTranslatingActive = false
-        ServiceBridge.currentBubbleBounds = null
         // Notify the accessibility service that translation stopped
         ServiceBridge.onTranslationStateChanged?.invoke(false)
         ServiceBridge.notifyUiStateChanged()

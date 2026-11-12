@@ -16,9 +16,12 @@ object AppDefaults {
     const val KEY_TARGET_LANGUAGE = "target_language"
     const val KEY_KEYBOARD_ENABLED = "keyboard_translator_enabled"
     
-    // Por qué: Bandera para activar o desactivar la traducción neuronal avanzada en el dispositivo
+    // Por qué: Bandera para activar o desactivar la aplicación del glosario aprendido y validación contextual
     const val KEY_AI_ENABLED = "ai_translation_enabled"
-    const val KEY_CUSTOM_MODEL_PATH = "custom_model_path"
+
+    // Por qué: Límites de contexto conversacional y términos aprendidos por inferencia
+    const val MAX_CONTEXT_MESSAGES = 3
+    const val MAX_PREFERRED_TERMS = 8
 
     // Por qué: Permite al usuario activar o desactivar el aprendizaje local a partir de sus correcciones
     const val KEY_LEARNING_ENABLED = "adaptive_learning_enabled"

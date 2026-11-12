@@ -30,7 +30,6 @@ import com.example.translator.AppUpdater
 import com.example.translator.BuildConfig
 import com.example.translator.FloatingBubbleService
 import com.example.translator.LearningStore
-import com.example.translator.ModelAssetManager
 import com.example.translator.ServiceBridge
 import com.example.translator.TranslationNotificationManager
 import com.example.translator.TranslatorApplication
@@ -61,38 +60,6 @@ fun MainScreen(
   var downloadedApkFile by remember { mutableStateOf<File?>(null) }
   var downloadErrorMessage by remember { mutableStateOf<String?>(null) }
   var downloadJob by remember { mutableStateOf<Job?>(null) }
-
-  // ── Gestor del modelo neuronal local (Index-Translate-2B GGUF) ──────────────
-  var isModelReady by remember { mutableStateOf(ModelAssetManager.isModelReady(context)) }
-  var modelDownloadState by remember { mutableStateOf<ModelAssetManager.DownloadState>(ModelAssetManager.DownloadState.Idle) }
-
-  DisposableEffect(Unit) {
-      ModelAssetManager.currentListener = { state ->
-          modelDownloadState = state
-          if (state is ModelAssetManager.DownloadState.Completed) {
-              isModelReady = true
-          }
-      }
-      onDispose {
-          ModelAssetManager.currentListener = null
-      }
-  }
-
-  val modelPickerLauncher = rememberLauncherForActivityResult(
-      contract = ActivityResultContracts.GetContent()
-  ) { uri ->
-      if (uri != null) {
-          coroutineScope.launch {
-              val success = ModelAssetManager.importModelFromUri(context, uri)
-              isModelReady = ModelAssetManager.isModelReady(context)
-              if (success) {
-                  android.widget.Toast.makeText(context, "Neural model imported successfully", android.widget.Toast.LENGTH_SHORT).show()
-              } else {
-                  android.widget.Toast.makeText(context, "Failed to import model", android.widget.Toast.LENGTH_SHORT).show()
-              }
-          }
-      }
-  }
 
   // Por qué: Verifica silenciosamente al iniciar si existe una versión más reciente en GitHub
   LaunchedEffect(Unit) {

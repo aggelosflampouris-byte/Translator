@@ -17,6 +17,7 @@ class TranslatorApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        purgeLegacyModelFilesAsync()
 
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
@@ -62,6 +63,20 @@ class TranslatorApplication : Application() {
         } catch (e: Exception) {
             Log.e("Translator", "Failed to relaunch after crash", e)
         }
+    }
+
+    // Por qué: Elimina en segundo plano cualquier archivo .gguf/.tmp residual (~1.3 GB) de versiones anteriores
+    private fun purgeLegacyModelFilesAsync() {
+        Thread {
+            try {
+                val legacyDir = java.io.File(getExternalFilesDir(null), "models")
+                if (legacyDir.exists()) {
+                    legacyDir.deleteRecursively()
+                }
+            } catch (e: Exception) {
+                Log.w("Translator", "Failed to purge legacy model directory", e)
+            }
+        }.start()
     }
 
     private fun terminateProcess() {
