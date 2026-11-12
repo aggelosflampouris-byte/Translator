@@ -152,6 +152,10 @@ class TranslationAccessibilityService : AccessibilityService() {
     @Volatile private var cachedTargetRootNode: AccessibilityNodeInfo? = null
     @Volatile private var lastRootExtractAttemptMs: Long = 0L
     @Volatile private var lastRootOrigin: String = "none"
+    @Volatile private var acceptedScrollCount: Int = 0
+    @Volatile private var ignoredScrollCount: Int = 0
+    @Volatile private var lastScrollDiag: String = "none"
+    @Volatile private var lastScrollPositionSig: ScrollPositionSignature? = null
     @Volatile private var lastExternalWindowsSummary: String = "none"
     @Volatile private var lastResolveReason: String = "init"
     @Volatile private var lastTraceUpdateMs: Long = 0L
@@ -183,7 +187,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         val loopAlive = activeScanLoopJob?.isActive == true
         ServiceBridge.lastRuntimeTrace =
             "$tag | c=$connectCount s=$stateChangeCount l=$scanLoopTicks(alive=$loopAlive) e=$eventCount " +
-            "svcPkgs=${enabledTargetPackages.size}(msg=$msgEnabled) scr=$isScreenScrolling " +
+            "svcPkgs=${enabledTargetPackages.size}(msg=$msgEnabled) scr=$isScreenScrolling($acceptedScrollCount/$ignoredScrollCount:$lastScrollDiag) " +
             "fg=${lastForegroundTargetPackage ?: "null"} root=$lastRootOrigin res=$lastResolveReason " +
             "tgtEvt=${lastTargetEventPkg ?: "none"} lastEvt=${lastEventPkg ?: "none"}(${lastEventType}) seen=[${formatSeenPackages()}] " +
             "ext=[$lastExternalWindowsSummary]"
@@ -449,6 +453,9 @@ class TranslationAccessibilityService : AccessibilityService() {
             cachedTargetRootPkg = null
             cachedTargetRootNode = null
         }
+        scrollSettleJob?.cancel()
+        isScreenScrolling = false
+        lastScrollPositionSig = null
         scanGeneration.incrementAndGet()
         inFlightKeys.clear()
         typingJob?.cancel()
@@ -565,6 +572,53 @@ class TranslationAccessibilityService : AccessibilityService() {
         return result.targetPackage
     }
 
+    // Por qué: Centraliza la comprobación de reposo de desplazamiento y libera bloqueos expirados (> 450ms).
+    private fun isScrollQuieted(nowMs: Long = android.os.SystemClock.uptimeMillis()): Boolean {
+        if (isScreenScrolling && (nowMs - lastScrollTimestamp >= 450L)) {
+            isScreenScrolling = false
+        }
+        return !isScreenScrolling && (nowMs - lastScrollTimestamp >= 350L)
+    }
+
+    private fun evaluateVerticalScrollEvent(event: AccessibilityEvent, sourceNode: AccessibilityNodeInfo?): Boolean {
+        val sourceHeight = if (sourceNode != null) {
+            val rect = Rect()
+            try {
+                sourceNode.getBoundsInScreen(rect)
+                rect.height()
+            } catch (_: Exception) {
+                0
+            }
+        } else {
+            0
+        }
+        val hasDeltaApi = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P
+        val dx = if (hasDeltaApi) event.scrollDeltaX else 0
+        val dy = if (hasDeltaApi) event.scrollDeltaY else 0
+        val decision = ScrollEventClassifier.classify(
+            hasDeltaApi = hasDeltaApi,
+            scrollDeltaX = dx,
+            scrollDeltaY = dy,
+            sourceHeightPx = sourceHeight,
+            screenHeightPx = getScreenHeightPx(),
+            windowId = event.windowId,
+            scrollY = event.scrollY,
+            maxScrollY = if (hasDeltaApi) event.maxScrollY else -1,
+            fromIndex = event.fromIndex,
+            toIndex = event.toIndex,
+            itemCount = event.itemCount,
+            prevSignature = lastScrollPositionSig
+        )
+        lastScrollPositionSig = decision.nextSignature
+        lastScrollDiag = decision.reason
+        if (decision.isRelevantVerticalScroll) {
+            acceptedScrollCount++
+        } else {
+            ignoredScrollCount++
+        }
+        return decision.isRelevantVerticalScroll
+    }
+
     private fun isTargetAppInForeground(): Boolean = resolveForegroundTargetPackage() != null
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -657,6 +711,9 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         when (event.eventType) {
             AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
+                if (!evaluateVerticalScrollEvent(event, capturedSourceNode ?: event.source)) {
+                    return
+                }
                 scanGeneration.incrementAndGet()
                 lastScrollTimestamp = android.os.SystemClock.uptimeMillis()
                 isScreenScrolling = true
@@ -694,7 +751,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                 }
                 // Por qué: Ignora cambios de contenido si la lista aún se encuentra en movimiento por desplazamiento
                 val now = android.os.SystemClock.uptimeMillis()
-                if (!isScreenScrolling && (now - lastScrollTimestamp >= 350L)) {
+                if (isScrollQuieted(now)) {
                     scheduleScan(360L, capturedSourceNode ?: event.source)
                 }
             }
@@ -723,14 +780,14 @@ class TranslationAccessibilityService : AccessibilityService() {
             return
         }
         val now = android.os.SystemClock.uptimeMillis()
-        if (isScreenScrolling || (now - lastScrollTimestamp < 350L)) {
+        if (!isScrollQuieted(now)) {
             return
         }
         scanDebounceJob?.cancel()
         scanDebounceJob = serviceScope.launch {
             delay(delayMs)
-            val elapsed = android.os.SystemClock.uptimeMillis() - lastScrollTimestamp
-            if (ServiceBridge.isTranslatingActive && isTargetAppInForeground() && !isScreenScrolling && elapsed >= 350L) {
+            val nowAfterDelay = android.os.SystemClock.uptimeMillis()
+            if (ServiceBridge.isTranslatingActive && isTargetAppInForeground() && isScrollQuieted(nowAfterDelay)) {
                 scanAndTranslateVisibleMessages(eventSource)
             }
         }
@@ -770,8 +827,8 @@ class TranslationAccessibilityService : AccessibilityService() {
             scanLoopTicks++
             val initFg = resolveForegroundTargetPackage(captureExternalSnapshot = true)
             updateRuntimeTrace("loopInit")
-            val elapsedInit = android.os.SystemClock.uptimeMillis() - lastScrollTimestamp
-            if (initFg != null && !isScreenScrolling && elapsedInit >= 350L) {
+            val nowInit = android.os.SystemClock.uptimeMillis()
+            if (initFg != null && isScrollQuieted(nowInit)) {
                 scanAndTranslateVisibleMessages()
             } else if (initFg == null && isEnabledTargetPackage(lastTargetEventPkg)) {
                 ServiceBridge.lastScanDebug = "abort=loopInit_no_fg | $lastResolveReason | $lastExternalWindowsSummary"
@@ -783,11 +840,13 @@ class TranslationAccessibilityService : AccessibilityService() {
                 scanLoopTicks++
                 val loopFg = resolveForegroundTargetPackage(captureExternalSnapshot = true)
                 updateRuntimeTrace("loop")
-                val timeSinceScroll = android.os.SystemClock.uptimeMillis() - lastScrollTimestamp
-                if (loopFg != null && !isScreenScrolling && timeSinceScroll >= 350L) {
+                val nowLoop = android.os.SystemClock.uptimeMillis()
+                if (loopFg != null && isScrollQuieted(nowLoop)) {
                     scanAndTranslateVisibleMessages()
                 } else {
-                    if (loopFg == null && isEnabledTargetPackage(lastTargetEventPkg)) {
+                    if (loopFg != null && ServiceBridge.lastScanDebug == "No scan executed yet.") {
+                        ServiceBridge.lastScanDebug = "abort=loop_scrolling($acceptedScrollCount/$ignoredScrollCount,$lastScrollDiag,age=${nowLoop - lastScrollTimestamp}) | fg=$loopFg"
+                    } else if (loopFg == null && isEnabledTargetPackage(lastTargetEventPkg)) {
                         ServiceBridge.lastScanDebug = "abort=loop_no_fg | $lastResolveReason | $lastExternalWindowsSummary"
                     }
                     if (loopFg == null && overlayManager.hasOverlays()) {
@@ -935,8 +994,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
 
         // Por qué: Valida que la pantalla esté completamente quieta y no en pleno desplazamiento antes de escanear
-        val timeSinceScroll = android.os.SystemClock.uptimeMillis() - lastScrollTimestamp
-        if (isScreenScrolling || timeSinceScroll < 350L) {
+        if (!isScrollQuieted()) {
             return 0
         }
 
@@ -966,8 +1024,8 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         // When the soft keyboard is open, hide chat message bubbles so the screen is not overflooded.
         // When the soft keyboard is closed, still evaluate the input bar in case a draft is present.
-        if (isKeyboardVisible()) {
-            val edit = findCurrentEditableNode()
+        if (isKeyboardVisible(preferredRoot = rootNode)) {
+            val edit = findCurrentEditableNode(preferredRoot = rootNode)
             val editRect = Rect().also { edit?.getBoundsInScreen(it) }
             ServiceBridge.lastScanDebug = "abort=kb_visible | fg=$fgPkg (${activeProfile.id}) | scr=${screenWidth}x$screenHeight | editRect=${editRect.flattenToString()}"
             overlayManager.removeAllMessageOverlays()
@@ -986,7 +1044,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         val bottomInset = (activeProfile.bottomInsetDp * density).toInt()
 
         // When keyboard is closed, scan all messages up to the top of the input bar (with 5dp tolerance)
-        val inputNode = findCurrentEditableNode()
+        val inputNode = findCurrentEditableNode(preferredRoot = rootNode)
         val effectiveBottom = if (inputNode != null) {
             val inputBounds = Rect()
             inputNode.getBoundsInScreen(inputBounds)
@@ -1342,7 +1400,10 @@ class TranslationAccessibilityService : AccessibilityService() {
 
     // Por qué: Verifica la elevación del campo de composición inferior visible sobre la barra de navegación
     // para confirmar si el teclado está abierto, ignorando campos de búsqueda o vistas ocultas fuera de pantalla.
-    private fun isKeyboardVisible(candidateNode: AccessibilityNodeInfo? = null): Boolean {
+    private fun isKeyboardVisible(
+        candidateNode: AccessibilityNodeInfo? = null,
+        preferredRoot: AccessibilityNodeInfo? = null
+    ): Boolean {
         val screenHeight = getScreenHeightPx()
         val screenWidth = getScreenWidthPx()
         val density = resources.displayMetrics.density
@@ -1368,7 +1429,7 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         // 2. Verificación por posición vertical del compositor inferior visible dentro de la pantalla
         try {
-            val input = candidateNode ?: findCurrentEditableNode()
+            val input = candidateNode ?: findCurrentEditableNode(preferredRoot)
             if (input != null && isEditableNodeOnScreen(input, screenWidth, screenHeight)) {
                 val inputRect = Rect()
                 input.getBoundsInScreen(inputRect)
@@ -1410,7 +1471,7 @@ class TranslationAccessibilityService : AccessibilityService() {
     private var lastRenderedDraftTop: Int = 0
     private var lastRenderedDraftManualLang: String? = null
 
-    private fun findCurrentEditableNode(): AccessibilityNodeInfo? {
+    private fun findCurrentEditableNode(preferredRoot: AccessibilityNodeInfo? = null): AccessibilityNodeInfo? {
         val screenWidth = getScreenWidthPx()
         val screenHeight = getScreenHeightPx()
 
@@ -1435,7 +1496,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             // Ignore
         }
 
-        val root = findActiveTargetRootNode() ?: return null
+        val root = preferredRoot ?: findActiveTargetRootNode() ?: return null
         return findBottomMostVisibleEditableChild(root, screenWidth, screenHeight)
     }
 
