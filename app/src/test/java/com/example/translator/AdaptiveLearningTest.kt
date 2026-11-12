@@ -157,10 +157,10 @@ class AdaptiveLearningTest {
             TextNormalizer.restoreRomanianDiacritics("Buna seara Giannis Acesta este un test")
         )
         assertEquals(
-            "Προσπαθώντας να καταλάβω πώς θα κάνω την εφαρμογή να δουλέψει για τον ηλίθιο της παρέας",
+            "Πώς είσαι φίλε μου Γιάννη;",
             TranslationSenseEngine.applyPostTranslationSenseLogic(
-                originalText = "Încercând să dau seama că voi face cererea de a lucra pentru stupidul companiei",
-                translatedText = "Προσπαθώντας να καταλάβω ότι θα κάνω το αίτημα να εργαστεί για το ηλίθιο",
+                originalText = "Cum ești prietenul meu Giannis?",
+                translatedText = "Πώς είσαι ο φίλος μου Γιάννης?",
                 sourceLang = "ro",
                 targetLang = "el"
             )

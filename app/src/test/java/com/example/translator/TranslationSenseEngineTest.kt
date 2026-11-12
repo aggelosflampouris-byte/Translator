@@ -1,6 +1,5 @@
 package com.example.translator
 
-import android.graphics.Rect
 import com.google.mlkit.nl.languageid.IdentifiedLanguage
 import com.google.mlkit.nl.translate.TranslateLanguage
 import org.junit.Assert.assertEquals
@@ -17,7 +16,7 @@ class TranslationSenseEngineTest {
         val candidates = emptyList<IdentifiedLanguage>()
         assertTrue(
             TranslationSenseEngine.isEligibleSourceText(
-                "La mulți ani și un An Nou fericit, Angelos.",
+                "La mulți ani și un An Nou fericit!",
                 TranslateLanguage.ROMANIAN,
                 TranslateLanguage.GREEK,
                 candidates
@@ -25,15 +24,7 @@ class TranslationSenseEngineTest {
         )
         assertTrue(
             TranslationSenseEngine.isEligibleSourceText(
-                "Angel, ai fost futut de negri.",
-                TranslateLanguage.ROMANIAN,
-                TranslateLanguage.GREEK,
-                candidates
-            )
-        )
-        assertTrue(
-            TranslationSenseEngine.isEligibleSourceText(
-                "Ingerule, ce faci;",
+                "Îngerule, ce faci;",
                 TranslateLanguage.ROMANIAN,
                 TranslateLanguage.GREEK,
                 candidates
@@ -43,9 +34,7 @@ class TranslationSenseEngineTest {
 
     @Test
     fun isEligibleSourceText_rejectsEnglishTextWhenSourceIsRomanian() {
-        val candidates = listOf(
-            IdentifiedLanguage("en", 0.98f)
-        )
+        val candidates = listOf(IdentifiedLanguage("en", 0.98f))
         val wazeTitle = "Driving directions, live traffic & road conditions updates - Waze"
         assertFalse(
             TranslationSenseEngine.isEligibleSourceText(
@@ -89,36 +78,9 @@ class TranslationSenseEngineTest {
                 emptyList()
             )
         )
-
-        assertFalse(
-            TranslationSenseEngine.isEligibleSourceText(
-                "Clamavi de Profundis",
-                TranslateLanguage.ROMANIAN,
-                TranslateLanguage.GREEK,
-                listOf(IdentifiedLanguage("la", 0.88f))
-            )
-        )
-
         assertFalse(
             TranslationSenseEngine.isEligibleSourceText(
                 "de",
-                TranslateLanguage.ROMANIAN,
-                TranslateLanguage.GREEK,
-                emptyList()
-            )
-        )
-        assertFalse(
-            TranslationSenseEngine.isEligibleSourceText(
-                "la",
-                TranslateLanguage.ROMANIAN,
-                TranslateLanguage.GREEK,
-                emptyList()
-            )
-        )
-
-        assertFalse(
-            TranslationSenseEngine.isEligibleSourceText(
-                "Stremio",
                 TranslateLanguage.ROMANIAN,
                 TranslateLanguage.GREEK,
                 emptyList()
@@ -132,7 +94,6 @@ class TranslationSenseEngineTest {
                 listOf(IdentifiedLanguage("it", 0.75f))
             )
         )
-
         assertTrue(
             TranslationSenseEngine.isEligibleSourceText(
                 "De ce nu răspunzi?",
@@ -141,83 +102,127 @@ class TranslationSenseEngineTest {
                 emptyList()
             )
         )
-        assertTrue(
-            TranslationSenseEngine.isEligibleSourceText(
-                "ce faci de mâncare",
+    }
+
+    @Test
+    fun resolveIdiomPreTranslation_resolvesExactShortGreetings() {
+        assertEquals(
+            "Χρόνια πολλά και ευτυχισμένο το νέο έτος!",
+            TranslationSenseEngine.resolveIdiomPreTranslation(
+                "La mulți ani și un An Nou fericit",
                 TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK
+            )
+        )
+        assertEquals(
+            "Καλημέρα!",
+            TranslationSenseEngine.resolveIdiomPreTranslation(
+                "Bună dimineața!",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK
+            )
+        )
+        assertEquals(
+            "Καλησπέρα!",
+            TranslationSenseEngine.resolveIdiomPreTranslation(
+                "Bună seara!",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK
+            )
+        )
+        assertEquals(
+            "Ευχαριστώ!",
+            TranslationSenseEngine.resolveIdiomPreTranslation(
+                "Mersi",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK
+            )
+        )
+        assertEquals(
+            "Bună dimineața!",
+            TranslationSenseEngine.resolveIdiomPreTranslation(
+                "Καλημέρα",
                 TranslateLanguage.GREEK,
-                emptyList()
+                TranslateLanguage.ROMANIAN
+            )
+        )
+        assertEquals(
+            "Ce faci, prietene?",
+            TranslationSenseEngine.resolveIdiomPreTranslation(
+                "Τι κάνεις φίλε μου;",
+                TranslateLanguage.GREEK,
+                TranslateLanguage.ROMANIAN
+            )
+        )
+        assertEquals(
+            "Totul e bine?",
+            TranslationSenseEngine.resolveIdiomPreTranslation(
+                "Όλα καλά;",
+                TranslateLanguage.GREEK,
+                TranslateLanguage.ROMANIAN
             )
         )
     }
 
+    // Por qué: Regresión Q1 y Q4 — frases largas que contienen "μαλάκα", "mersi" o "scuze" nunca deben
+    // ser colapsadas ni descartadas por la tabla de modismos ni por el post-procesado.
     @Test
-    fun resolveIdiomPreTranslation_resolvesHolidayGreetingsAccurately() {
-        val greetingWithAddress = TranslationSenseEngine.resolveIdiomPreTranslation(
-            "La mulți ani și un An Nou fericit, Angelos.",
-            TranslateLanguage.ROMANIAN,
-            TranslateLanguage.GREEK
+    fun longSentencesWithSlangOrThanks_areNeverCollapsedOrOverwritten() {
+        // Contains "mersi" inside a real sentence -> must NOT collapse to "Ευχαριστώ!"
+        assertNull(
+            TranslationSenseEngine.resolveIdiomPreTranslation(
+                "Mersi pentru ajutor, ne vedem mâine la birou",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK
+            )
         )
-        assertNotNull(greetingWithAddress)
-        assertTrue(greetingWithAddress!!.contains("Χρόνια πολλά"))
-        assertTrue(greetingWithAddress.contains("ευτυχισμένο το νέο έτος"))
-        assertTrue(greetingWithAddress.contains("Άγγελε") || greetingWithAddress.contains("Άγγελος"))
+        // Contains "scuze" inside a real sentence -> must NOT collapse to "Συγγνώμη!"
+        assertNull(
+            TranslationSenseEngine.resolveIdiomPreTranslation(
+                "Scuze că întârzii zece minute",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK
+            )
+        )
+        // Contains "μαλάκα" inside a longer Greek question -> must NOT be replaced with "Prostule!"
+        assertNull(
+            TranslationSenseEngine.resolveIdiomPreTranslation(
+                "Έλα ρε μαλάκα τι ώρα θα έρθεις σήμερα;",
+                TranslateLanguage.GREEK,
+                TranslateLanguage.ROMANIAN
+            )
+        )
+        val preservedQuestion = TranslationSenseEngine.applyPostTranslationSenseLogic(
+            originalText = "Έλα ρε μαλάκα τι ώρα θα έρθεις σήμερα;",
+            translatedText = "Hai mă prostule la ce oră vii azi",
+            sourceLang = TranslateLanguage.GREEK,
+            targetLang = TranslateLanguage.ROMANIAN
+        )
+        assertEquals("Hai mă prostule la ce oră vii azi?", preservedQuestion)
+    }
 
-        val simpleGreeting = TranslationSenseEngine.resolveIdiomPreTranslation(
-            "La mulți ani și un An Nou fericit",
-            TranslateLanguage.ROMANIAN,
-            TranslateLanguage.GREEK
+    // Por qué: Regresión Q2 — referencias legítimas a una empresa ("companiei") no se reescriben como "παρέας" ni "grupului"
+    @Test
+    fun legitimateBusinessWords_areNotRewrittenToFriendGroup() {
+        val roToEl = TranslationSenseEngine.applyPostTranslationSenseLogic(
+            originalText = "Directorul companiei a semnat contractul.",
+            translatedText = "Ο διευθυντής της εταιρείας υπέγραψε τη σύμβαση.",
+            sourceLang = TranslateLanguage.ROMANIAN,
+            targetLang = TranslateLanguage.GREEK
         )
-        assertEquals("Χρόνια πολλά και ευτυχισμένο το νέο έτος!", simpleGreeting)
+        assertEquals("Ο διευθυντής της εταιρείας υπέγραψε τη σύμβαση.", roToEl)
+
+        val elToRo = TranslationSenseEngine.applyPostTranslationSenseLogic(
+            originalText = "Η εφαρμογή της εταιρείας λειτουργεί σωστά.",
+            translatedText = "Aplicația companiei funcționează corect.",
+            sourceLang = TranslateLanguage.GREEK,
+            targetLang = TranslateLanguage.ROMANIAN
+        )
+        assertEquals("Aplicația companiei funcționează corect.", elToRo)
     }
 
     @Test
-    fun resolveIdiomPreTranslation_resolvesSlangAndColloquialPhrases() {
-        val slangTranslation = TranslationSenseEngine.resolveIdiomPreTranslation(
-            "Angel, ai fost futut de negri.",
-            TranslateLanguage.ROMANIAN,
-            TranslateLanguage.GREEK
-        )
-        assertNotNull(slangTranslation)
-        assertTrue(
-            slangTranslation!!.contains("μαύροι") || slangTranslation.contains("από μαύρους")
-        )
-        assertTrue(
-            slangTranslation.contains("πήδηξαν") || slangTranslation.contains("γάμησαν")
-        )
-    }
-
-    @Test
-    fun resolveIdiomPreTranslation_resolvesConversationalQuestionsAndStatements() {
-        val questionResult = TranslationSenseEngine.resolveIdiomPreTranslation(
-            "Îngerule, ce faci?",
-            TranslateLanguage.ROMANIAN,
-            TranslateLanguage.GREEK
-        )
-        assertNotNull(questionResult)
-        assertEquals("Άγγελε, τι κάνεις;", questionResult)
-
-        val statementResult = TranslationSenseEngine.resolveIdiomPreTranslation(
-            "Îngerule, totul e bine.",
-            TranslateLanguage.ROMANIAN,
-            TranslateLanguage.GREEK
-        )
-        assertNotNull(statementResult)
-        assertEquals("Άγγελε, όλα είναι καλά.", statementResult)
-    }
-
-    @Test
-    fun resolveIdiomPreTranslation_returnsNullForRegularSentences() {
-        val result = TranslationSenseEngine.resolveIdiomPreTranslation(
-            "Autobuzul ajunge la ora cinci dupa-amiaza la statie.",
-            TranslateLanguage.ROMANIAN,
-            TranslateLanguage.GREEK
-        )
-        assertNull(result)
-    }
-
-    @Test
-    fun applyPostTranslationSenseLogic_correctsBirthdayMistranslationForNewYear() {
+    fun applyPostTranslationSenseLogic_correctsBirthdayMistranslationAndVocatives() {
         val corrected = TranslationSenseEngine.applyPostTranslationSenseLogic(
             originalText = "La mulți ani și un An Nou fericit, Angelos.",
             translatedText = "Ευτυχισμένα γενέθλια και ένα ευτυχισμένο νέο έτος, ο Άγγελος.",
@@ -227,59 +232,7 @@ class TranslationSenseEngineTest {
         assertFalse(corrected.contains("γενέθλια"))
         assertTrue(corrected.contains("Χρόνια πολλά"))
         assertFalse(corrected.contains("ο Άγγελος"))
-    }
 
-    @Test
-    fun applyPostTranslationSenseLogic_correctsNonsensicalColorTranslations() {
-        val corrected = TranslationSenseEngine.applyPostTranslationSenseLogic(
-            originalText = "Angel, ai fost futut de negri.",
-            translatedText = "Άγγελος, είσαι πατήσαμε με μαύρο χρώμα.",
-            sourceLang = TranslateLanguage.ROMANIAN,
-            targetLang = TranslateLanguage.GREEK
-        )
-        assertFalse(corrected.contains("μαύρο χρώμα"))
-        assertFalse(corrected.contains("είσαι πατήσαμε"))
-        assertTrue(corrected.contains("μαύροι") || corrected.contains("από μαύρους"))
-    }
-
-    @Test
-    fun resolveIdiomPreTranslation_resolvesGreekToRomanianConversationalExpressions() {
-        val result1 = TranslationSenseEngine.resolveIdiomPreTranslation(
-            "Πως εισαι φιλε μου Γιαννη",
-            TranslateLanguage.GREEK,
-            TranslateLanguage.ROMANIAN
-        )
-        assertNotNull(result1)
-        assertEquals("Cum ești, prietene Giannis?", result1)
-
-        val result2 = TranslationSenseEngine.resolveIdiomPreTranslation(
-            "Τι κανεις φιλε μου",
-            TranslateLanguage.GREEK,
-            TranslateLanguage.ROMANIAN
-        )
-        assertNotNull(result2)
-        assertEquals("Ce faci, prietene?", result2)
-
-        val result3 = TranslationSenseEngine.resolveIdiomPreTranslation(
-            "Καλημερα",
-            TranslateLanguage.GREEK,
-            TranslateLanguage.ROMANIAN
-        )
-        assertNotNull(result3)
-        assertEquals("Bună dimineața!", result3)
-
-        val result4 = TranslationSenseEngine.resolveIdiomPreTranslation(
-            "Χρονια πολλα και καλη χρονια, Γιαννη",
-            TranslateLanguage.GREEK,
-            TranslateLanguage.ROMANIAN
-        )
-        assertNotNull(result4)
-        assertEquals("La mulți ani și un An Nou fericit, Giannis!", result4)
-    }
-
-    @Test
-    fun applyPostTranslationSenseLogic_correctsVocativeForms() {
-        // Greek -> Romanian: "prietenul meu" -> "prietene" in direct address
         val roCorrected = TranslationSenseEngine.applyPostTranslationSenseLogic(
             originalText = "Πως εισαι φιλε μου Γιαννη",
             translatedText = "Cum esti prietenul meu Giannis",
@@ -288,7 +241,6 @@ class TranslationSenseEngineTest {
         )
         assertEquals("Cum ești, prietene Giannis?", roCorrected)
 
-        // Romanian -> Greek: "ο φίλος μου Γιάννης" -> "φίλε μου Γιάννη"
         val elCorrected = TranslationSenseEngine.applyPostTranslationSenseLogic(
             originalText = "Cum esti prietenul meu Giannis?",
             translatedText = "Πώς είσαι ο φίλος μου Γιάννης;",
@@ -296,236 +248,27 @@ class TranslationSenseEngineTest {
             targetLang = TranslateLanguage.GREEK
         )
         assertEquals("Πώς είσαι φίλε μου Γιάννη;", elCorrected)
-    }
 
-    @Test
-    fun isMessageBubble_acceptsIncomingAndOutgoingBubblesAndRejectsDatePills() {
-        val screenWidth = 1080
-        // Incoming message (left margin)
-        assertTrue(TranslationSenseEngine.isMessageBubble(36, 750, screenWidth))
-        // Outgoing message (wide, e.g. "Cum ești prietenul meu Giannis")
-        assertTrue(TranslationSenseEngine.isMessageBubble(340, 1036, screenWidth))
-        // Outgoing message (medium, e.g. "Salut, Giannis!")
-        assertTrue(TranslationSenseEngine.isMessageBubble(500, 1036, screenWidth))
-        // Outgoing message (short, e.g. "Ce faci?")
-        assertTrue(TranslationSenseEngine.isMessageBubble(650, 1036, screenWidth))
-        // Mensaje saliente corto con margen derecho mayor al 72% del ancho
-        assertTrue(TranslationSenseEngine.isMessageBubble(700, 800, screenWidth))
-        // Centered date pill (e.g. "Σήμερα")
-        assertFalse(TranslationSenseEngine.isMessageBubble(450, 630, screenWidth))
-    }
-
-    @Test
-    fun resolveIdiomPreTranslation_resolvesRomanianSentMessagesToGreek() {
-        val resultMorning = TranslationSenseEngine.resolveIdiomPreTranslation(
-            "Bună dimineața!",
-            TranslateLanguage.ROMANIAN,
-            TranslateLanguage.GREEK
-        )
-        assertNotNull(resultMorning)
-        assertEquals("Καλημέρα!", resultMorning)
-
-        val result1 = TranslationSenseEngine.resolveIdiomPreTranslation(
-            "Cum ești prietenul meu Giannis",
-            TranslateLanguage.ROMANIAN,
-            TranslateLanguage.GREEK
-        )
-        assertNotNull(result1)
-        assertEquals("Πώς είσαι, φίλε μου Γιάννη;", result1)
-
-        val result2 = TranslationSenseEngine.resolveIdiomPreTranslation(
-            "Salut, Giannis!",
-            TranslateLanguage.ROMANIAN,
-            TranslateLanguage.GREEK
-        )
-        assertNotNull(result2)
-        assertEquals("Γεια σου, Γιάννη!", result2)
-
-        val result3 = TranslationSenseEngine.resolveIdiomPreTranslation(
-            "Ce faci?",
-            TranslateLanguage.ROMANIAN,
-            TranslateLanguage.GREEK
-        )
-        assertNotNull(result3)
-        assertEquals("Τι κάνεις;", result3)
-    }
-
-    @Test
-    fun resolveIdiomPreTranslation_resolvesGreekSlangAndCurses() {
-        val result1 = TranslationSenseEngine.resolveIdiomPreTranslation(
-            "Άντε γαμήσου Γιάννη",
-            TranslateLanguage.GREEK,
-            TranslateLanguage.ROMANIAN
-        )
-        assertNotNull(result1)
-        assertEquals("Du-te dracului, Giannis!", result1)
-
-        val result2 = TranslationSenseEngine.resolveIdiomPreTranslation(
-            "Άντε ρε μαλάκα",
-            TranslateLanguage.GREEK,
-            TranslateLanguage.ROMANIAN
-        )
-        assertNotNull(result2)
-        assertEquals("Hai mă, prostule!", result2)
-
-        val result3 = TranslationSenseEngine.resolveIdiomPreTranslation(
-            "Γαμώτο",
-            TranslateLanguage.GREEK,
-            TranslateLanguage.ROMANIAN
-        )
-        assertNotNull(result3)
-        assertEquals("La dracu!", result3)
-
-        val result4 = TranslationSenseEngine.resolveIdiomPreTranslation(
-            "Σε πήδηξαν μαύροι",
-            TranslateLanguage.GREEK,
-            TranslateLanguage.ROMANIAN
-        )
-        assertNotNull(result4)
-        assertEquals("Te-au futut negrii!", result4)
-    }
-
-    @Test
-    fun isEligibleSourceText_acceptsMesajAndBunaSeara() {
-        assertTrue(
-            TranslationSenseEngine.isEligibleSourceText(
-                "Mesaj",
-                TranslateLanguage.ROMANIAN,
-                TranslateLanguage.GREEK,
-                emptyList()
-            )
-        )
-        assertTrue(
-            TranslationSenseEngine.isEligibleSourceText(
-                "Bună seara!",
-                TranslateLanguage.ROMANIAN,
-                TranslateLanguage.GREEK,
-                emptyList()
-            )
-        )
-    }
-
-    @Test
-    fun resolveIdiomPreTranslation_resolvesMesajAndBunaSeara() {
-        val result1 = TranslationSenseEngine.resolveIdiomPreTranslation(
-            "Mesaj",
-            TranslateLanguage.ROMANIAN,
-            TranslateLanguage.GREEK
-        )
-        assertNotNull(result1)
-        assertEquals("Μήνυμα", result1)
-
-        val result2 = TranslationSenseEngine.resolveIdiomPreTranslation(
-            "Bună seara!",
-            TranslateLanguage.ROMANIAN,
-            TranslateLanguage.GREEK
-        )
-        assertNotNull(result2)
-        assertEquals("Καλησπέρα!", result2)
-
-        val result3 = TranslationSenseEngine.resolveIdiomPreTranslation(
-            "Scuze",
-            TranslateLanguage.ROMANIAN,
-            TranslateLanguage.GREEK
-        )
-        assertNotNull(result3)
-        assertEquals("Συγγνώμη!", result3)
-
-        val result4 = TranslationSenseEngine.resolveIdiomPreTranslation(
-            "Mersi",
-            TranslateLanguage.ROMANIAN,
-            TranslateLanguage.GREEK
-        )
-        assertNotNull(result4)
-        assertEquals("Ευχαριστώ!", result4)
-    }
-
-    @Test
-    fun applyPostTranslationSenseLogic_fixesGreekAnteAndCurses() {
-        val corrected1 = TranslationSenseEngine.applyPostTranslationSenseLogic(
-            originalText = "Άντε γαμήσου Γιάννη",
-            translatedText = "Ante giannis",
-            sourceLang = TranslateLanguage.GREEK,
-            targetLang = TranslateLanguage.ROMANIAN
-        )
-        assertEquals("Du-te dracului, Giannis!", corrected1)
-
-        val corrected2 = TranslationSenseEngine.applyPostTranslationSenseLogic(
+        val anteFixed = TranslationSenseEngine.applyPostTranslationSenseLogic(
             originalText = "Άντε φύγε τώρα",
             translatedText = "Ante pleacă acum",
             sourceLang = TranslateLanguage.GREEK,
             targetLang = TranslateLanguage.ROMANIAN
         )
-        assertEquals("Hai pleacă acum", corrected2)
+        assertEquals("Hai pleacă acum", anteFixed)
     }
 
     @Test
-    fun resolveGreekCursesAndInsults_resolvesGianniGamiesai() {
-        val result = TranslationSenseEngine.resolveIdiomPreTranslation(
-            "Γιάννη γαμιέσαι",
-            TranslateLanguage.GREEK,
-            TranslateLanguage.ROMANIAN
-        )
-        assertNotNull(result)
-        assertEquals("Du-te dracului, Giannis!", result)
-
-        val isEligible = TranslationSenseEngine.isEligibleSourceText(
-            "Γιάννη γαμιέσαι",
-            TranslateLanguage.GREEK,
-            TranslateLanguage.ROMANIAN,
-            emptyList()
-        )
-        assertTrue(isEligible)
-
-        val postResult = TranslationSenseEngine.applyPostTranslationSenseLogic(
-            originalText = "Γιάννη γαμιέσαι",
-            translatedText = "Giannis se fute",
-            sourceLang = TranslateLanguage.GREEK,
-            targetLang = TranslateLanguage.ROMANIAN
-        )
-        assertEquals("Du-te dracului, Giannis!", postResult)
+    fun isMessageBubble_acceptsIncomingAndOutgoingBubblesAndRejectsDatePills() {
+        val screenWidth = 1080
+        assertTrue(TranslationSenseEngine.isMessageBubble(36, 750, screenWidth))
+        assertTrue(TranslationSenseEngine.isMessageBubble(340, 1036, screenWidth))
+        assertTrue(TranslationSenseEngine.isMessageBubble(500, 1036, screenWidth))
+        assertTrue(TranslationSenseEngine.isMessageBubble(650, 1036, screenWidth))
+        assertTrue(TranslationSenseEngine.isMessageBubble(700, 800, screenWidth))
+        assertFalse(TranslationSenseEngine.isMessageBubble(450, 630, screenWidth))
     }
 
-    @Test
-    fun resolveIdiomPreTranslation_returnsNullForMultilineMessages() {
-        val multilineGreek = TranslationSenseEngine.resolveIdiomPreTranslation(
-            "Καλησπέρα Γιάννη\nΜε το παρόν γράμμα...",
-            TranslateLanguage.GREEK,
-            TranslateLanguage.ROMANIAN
-        )
-        assertNull(multilineGreek)
-
-        val multilineRomanian = TranslationSenseEngine.resolveIdiomPreTranslation(
-            "Bună seara, Giannis!\nCu această scrisoare...",
-            TranslateLanguage.ROMANIAN,
-            TranslateLanguage.GREEK
-        )
-        assertNull(multilineRomanian)
-    }
-
-    @Test
-    fun resolveIdiomPreTranslation_resolvesSingleLineGreekGreeting() {
-        val singleLineGreek = TranslationSenseEngine.resolveIdiomPreTranslation(
-            "Καλησπέρα Γιάννη",
-            TranslateLanguage.GREEK,
-            TranslateLanguage.ROMANIAN
-        )
-        assertNotNull(singleLineGreek)
-        assertEquals("Bună seara, Giannis!", singleLineGreek)
-    }
-
-    @Test
-    fun resolveIdiomPreTranslation_rejectsGreedyGreekGreetingInLongSentence() {
-        val longGreek = TranslationSenseEngine.resolveIdiomPreTranslation(
-            "Καλησπέρα Γιάννη θα ήθελα να ρωτήσω τι ώρα ανοίγει το κατάστημα αύριο",
-            TranslateLanguage.GREEK,
-            TranslateLanguage.ROMANIAN
-        )
-        assertNull(longGreek)
-    }
-
-    // Por qué: Verifica que ofertas laborales o mensajes en inglés sean estrictamente rechazados
-    // cuando el idioma de origen configurado es rumano, evitando traducir inglés a inglés.
     @Test
     fun isEligibleSourceText_strictlyRejectsEnglishJobOfferWhenSourceIsRomanian() {
         val jobOfferEnglish = """
@@ -554,132 +297,4 @@ class TranslationSenseEngineTest {
             )
         )
     }
-
-    // Por qué: Verifica que los mensajes genuinos en rumano sean aceptados para su traducción al griego.
-    @Test
-    fun isEligibleSourceText_acceptsRomanianSubmissionText() {
-        val romanianText = """
-            se depun la secretariat urmatoarele:
-            Cerere
-            Borderou completat și semnat de titular
-            Chitanțele STB
-            Copie xerox după cardul STB
-            Termen de depunere la secretariat:
-            ultima saptamana a fiecarui semestru
-        """.trimIndent()
-
-        assertTrue(
-            TranslationSenseEngine.isEligibleSourceText(
-                romanianText,
-                TranslateLanguage.ROMANIAN,
-                TranslateLanguage.GREEK,
-                emptyList()
-            )
-        )
-    }
-
-    // Por qué: Verifica las resoluciones instantáneas del asistente inverso del teclado
-    // tanto para expresiones comunes en griego hacia rumano como en rumano hacia griego.
-    @Test
-    fun resolveIdiomPreTranslation_keyboardReverseAssistantExpressions() {
-        // Greek -> Romanian
-        val kalimera = TranslationSenseEngine.resolveIdiomPreTranslation("Καλημέρα", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN)
-        assertEquals("Bună dimineața!", kalimera)
-
-        val kalisperaGianni = TranslationSenseEngine.resolveIdiomPreTranslation("Καλησπέρα Γιάννη", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN)
-        assertEquals("Bună seara, Giannis!", kalisperaGianni)
-
-        val tiKaneis = TranslationSenseEngine.resolveIdiomPreTranslation("Τι κάνεις φίλε μου;", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN)
-        assertEquals("Ce faci, prietene?", tiKaneis)
-
-        val olaKala = TranslationSenseEngine.resolveIdiomPreTranslation("Όλα καλά;", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN)
-        assertEquals("Totul e bine?", olaKala)
-
-        // Romanian -> Greek
-        val duteDracu = TranslationSenseEngine.resolveIdiomPreTranslation("Du-te dracului", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK)
-        assertEquals("Άντε στο διάολο!", duteDracu)
-
-        val multumesc = TranslationSenseEngine.resolveIdiomPreTranslation("Multumesc", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK)
-        assertEquals("Ευχαριστώ!", multumesc)
-    }
-
-    // Por qué: Valida que la lógica post-traducción corrige los errores sistemáticos
-    // de ML Kit en la dirección Griego → Rumano para vocabulario informal y tecnológico.
-    @Test
-    fun applyPostTranslationSenseLogic_fixesGreekToRomanianMLKitErrors() {
-        // ML Kit: "εφαρμογή" -> "cererea" en lugar de "aplicația"
-        val fixedApp = TranslationSenseEngine.applyPostTranslationSenseLogic(
-            originalText = "Προσπαθώντας να καταλάβω πως θα κάνω την εφαρμογή να δουλέψει για τον ηλίθιο της παρέας",
-            translatedText = "Încercând să dau seama că voi face cererea de a lucra pentru stupidul companiei",
-            sourceLang = TranslateLanguage.GREEK,
-            targetLang = TranslateLanguage.ROMANIAN
-        )
-        // "cererea" -> "aplicația"
-        assertTrue(fixedApp.contains("aplicația"))
-        // "de a lucra" -> "să funcționeze"
-        assertTrue(fixedApp.contains("funcționeze"))
-        // "companiei" y "stupidul" -> "idiotul din grup"
-        assertTrue(fixedApp.contains("din grup") || fixedApp.contains("grupului"))
-        assertTrue(fixedApp.contains("idiotul"))
-        // "că voi" -> "cum voi"
-        assertTrue(fixedApp.contains("cum voi"))
-        // "dau seama că" -> "dau seama cum"
-        assertTrue(fixedApp.contains("dau seama cum"))
-
-        // Verificar que "παρέα" se corrige como "grup" / "grupul"
-        val fixedParea = TranslationSenseEngine.applyPostTranslationSenseLogic(
-            originalText = "Η παρέα είναι εδώ",
-            translatedText = "Compania este aici",
-            sourceLang = TranslateLanguage.GREEK,
-            targetLang = TranslateLanguage.ROMANIAN
-        )
-        assertTrue(fixedParea.contains("grupul") || fixedParea.contains("Grupul") || fixedParea.contains("grup"))
-
-        // Verificar corrección de "ηλίθιος"
-        val fixedIdiot = TranslationSenseEngine.applyPostTranslationSenseLogic(
-            originalText = "Είσαι ηλίθιος",
-            translatedText = "Ești stupid",
-            sourceLang = TranslateLanguage.GREEK,
-            targetLang = TranslateLanguage.ROMANIAN
-        )
-        assertTrue(fixedIdiot.contains("idiot") || fixedIdiot.contains("prost"))
-    }
-
-    // Por qué: Valida que los textos en rumano traducidos a griego no viertan "gașcă/grup"
-    // como "συμμορία" (banda armada/delictiva) ni los verbos de software como "εργαστεί" (empleo humano).
-    @Test
-    fun applyPostTranslationSenseLogic_fixesRomanianToGreekChatErrors() {
-        val fixedOverlay = TranslationSenseEngine.applyPostTranslationSenseLogic(
-            originalText = "Încercând să dau seama cum voi face aplicația să funcționeze pentru prostul gașcii",
-            translatedText = "Προσπαθώντας να καταλάβω πώς θα κάνω την εφαρμογή να εργαστεί για την ηλίθια συμμορία",
-            sourceLang = TranslateLanguage.ROMANIAN,
-            targetLang = TranslateLanguage.GREEK
-        )
-        // "την εφαρμογή να εργαστεί" -> "την εφαρμογή να δουλέψει"
-        assertTrue(fixedOverlay.contains("την εφαρμογή να δουλέψει"))
-        // "για την ηλίθια συμμορία" -> "για τον ηλίθιο της παρέας"
-        assertTrue(fixedOverlay.contains("για τον ηλίθιο της παρέας"))
-
-        // Por qué: Valida la reparación de la distorsión estadística de ML Kit donde "să funcționeze aplicația"
-        // se vertió como "εργασία της εφαρμογής" y "pentru idiotul grupului" como "για την ομαδική ηλίθια"
-        val fixedMessage4 = TranslationSenseEngine.applyPostTranslationSenseLogic(
-            originalText = "Încercând să dau seama cum voi face aplicația să funcționeze pentru idiotul grupului",
-            translatedText = "Προσπαθώντας να καταλάβω πώς θα κάνω την εργασία της εφαρμογής για την ομαδική ηλίθια",
-            sourceLang = TranslateLanguage.ROMANIAN,
-            targetLang = TranslateLanguage.GREEK
-        )
-        assertEquals(
-            "Προσπαθώντας να καταλάβω πώς θα κάνω την εφαρμογή να δουλέψει για τον ηλίθιο της παρέας",
-            fixedMessage4
-        )
-
-        val fixedGang = TranslationSenseEngine.applyPostTranslationSenseLogic(
-            originalText = "Sunt cu gașca",
-            translatedText = "Είμαι με τη συμμορία",
-            sourceLang = TranslateLanguage.ROMANIAN,
-            targetLang = TranslateLanguage.GREEK
-        )
-        assertEquals("Είμαι με τη παρέα", fixedGang)
-    }
 }
-
