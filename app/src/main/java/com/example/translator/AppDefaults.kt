@@ -5,6 +5,12 @@ import com.google.mlkit.nl.translate.TranslateLanguage
 object AppDefaults {
     const val SOURCE_LANGUAGE = TranslateLanguage.ROMANIAN
     const val TARGET_LANGUAGE = TranslateLanguage.GREEK
+    // Por qué: Lista estricta de idiomas disponibles y soportados por el motor de traducción bidireccional
+    val AVAILABLE_LANGUAGES = listOf(
+        TranslateLanguage.ROMANIAN,
+        TranslateLanguage.GREEK,
+        TranslateLanguage.ENGLISH
+    )
     const val PREFS_NAME = "translator_prefs"
     const val KEY_SOURCE_LANGUAGE = "source_language"
     const val KEY_TARGET_LANGUAGE = "target_language"

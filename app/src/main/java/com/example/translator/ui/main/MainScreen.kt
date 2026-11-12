@@ -308,11 +308,14 @@ fun MainScreen(
   }
 
   val prefs = remember { context.getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE) }
+  val availableLanguages = AppDefaults.AVAILABLE_LANGUAGES
   var sourceLanguage by remember {
-      mutableStateOf(prefs.getString(AppDefaults.KEY_SOURCE_LANGUAGE, AppDefaults.SOURCE_LANGUAGE) ?: AppDefaults.SOURCE_LANGUAGE)
+      val saved = prefs.getString(AppDefaults.KEY_SOURCE_LANGUAGE, AppDefaults.SOURCE_LANGUAGE) ?: AppDefaults.SOURCE_LANGUAGE
+      mutableStateOf(if (availableLanguages.contains(saved)) saved else AppDefaults.SOURCE_LANGUAGE)
   }
   var targetLanguage by remember {
-      mutableStateOf(prefs.getString(AppDefaults.KEY_TARGET_LANGUAGE, AppDefaults.TARGET_LANGUAGE) ?: AppDefaults.TARGET_LANGUAGE)
+      val saved = prefs.getString(AppDefaults.KEY_TARGET_LANGUAGE, AppDefaults.TARGET_LANGUAGE) ?: AppDefaults.TARGET_LANGUAGE
+      mutableStateOf(if (availableLanguages.contains(saved)) saved else AppDefaults.TARGET_LANGUAGE)
   }
   var keyboardTranslatorEnabled by remember {
       mutableStateOf(prefs.getBoolean(AppDefaults.KEY_KEYBOARD_ENABLED, true))
@@ -351,7 +354,6 @@ fun MainScreen(
       isNotificationPermissionGranted = granted
   }
 
-  val supportedLanguages = remember { com.google.mlkit.nl.translate.TranslateLanguage.getAllLanguages() }
   var modelStatus by remember { mutableStateOf("Checking language models...") }
 
   // Por qué: Descarga de forma bidireccional los modelos locales (rumano a griego y griego a rumano)
@@ -465,14 +467,6 @@ fun MainScreen(
       }
   }
 
-  val prioritizedLanguages = remember(supportedLanguages) {
-      val top = listOf("ro", "el", "en")
-      val rest = supportedLanguages.filter { !top.contains(it) }.sortedBy {
-          Locale.forLanguageTag(it).displayLanguage
-      }
-      top + rest
-  }
-
   val isNotificationRequired = controlInterface == AppDefaults.INTERFACE_NOTIFICATION && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
   val allPermissionsGranted = canDrawOverlays && isAccessibilityEnabled && (!isNotificationRequired || isNotificationPermissionGranted)
   var isServiceActive by remember { mutableStateOf(ServiceBridge.isAnyServiceActive()) }
@@ -567,44 +561,49 @@ fun MainScreen(
               )
               Spacer(modifier = Modifier.height(12.dp))
 
-              // Selector de pares lingüísticos con botón de intercambio simétrico
+              // Selector de pares lingüísticos restringido a los idiomas disponibles
               Row(
                   modifier = Modifier.fillMaxWidth(),
                   verticalAlignment = Alignment.CenterVertically
               ) {
                   Box(modifier = Modifier.weight(1f)) {
-                      LanguageDropdown("From", sourceLanguage, listOf("AUTO") + prioritizedLanguages) {
-                          sourceLanguage = it
-                          prefs.edit().putString(AppDefaults.KEY_SOURCE_LANGUAGE, it).apply()
+                      LanguageDropdown("From", sourceLanguage, availableLanguages) { selected ->
+                          if (selected == targetLanguage) {
+                              targetLanguage = sourceLanguage
+                              prefs.edit().putString(AppDefaults.KEY_TARGET_LANGUAGE, targetLanguage).apply()
+                          }
+                          sourceLanguage = selected
+                          prefs.edit().putString(AppDefaults.KEY_SOURCE_LANGUAGE, selected).apply()
                       }
                   }
 
                   IconButton(
                       onClick = {
-                          if (sourceLanguage != "AUTO") {
-                              val temp = sourceLanguage
-                              sourceLanguage = targetLanguage
-                              targetLanguage = temp
-                              prefs.edit()
-                                  .putString(AppDefaults.KEY_SOURCE_LANGUAGE, sourceLanguage)
-                                  .putString(AppDefaults.KEY_TARGET_LANGUAGE, targetLanguage)
-                                  .apply()
-                          }
+                          val temp = sourceLanguage
+                          sourceLanguage = targetLanguage
+                          targetLanguage = temp
+                          prefs.edit()
+                              .putString(AppDefaults.KEY_SOURCE_LANGUAGE, sourceLanguage)
+                              .putString(AppDefaults.KEY_TARGET_LANGUAGE, targetLanguage)
+                              .apply()
                       },
-                      enabled = sourceLanguage != "AUTO",
                       modifier = Modifier.padding(horizontal = 4.dp)
                   ) {
                       Text(
                           text = "⇄",
                           style = MaterialTheme.typography.titleMedium,
-                          color = if (sourceLanguage != "AUTO") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                          color = MaterialTheme.colorScheme.primary
                       )
                   }
 
                   Box(modifier = Modifier.weight(1f)) {
-                      LanguageDropdown("To", targetLanguage, prioritizedLanguages) {
-                          targetLanguage = it
-                          prefs.edit().putString(AppDefaults.KEY_TARGET_LANGUAGE, it).apply()
+                      LanguageDropdown("To", targetLanguage, availableLanguages) { selected ->
+                          if (selected == sourceLanguage) {
+                              sourceLanguage = targetLanguage
+                              prefs.edit().putString(AppDefaults.KEY_SOURCE_LANGUAGE, sourceLanguage).apply()
+                          }
+                          targetLanguage = selected
+                          prefs.edit().putString(AppDefaults.KEY_TARGET_LANGUAGE, selected).apply()
                       }
                   }
               }
