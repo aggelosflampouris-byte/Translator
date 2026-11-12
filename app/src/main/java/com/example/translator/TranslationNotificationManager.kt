@@ -27,7 +27,7 @@ object TranslationNotificationManager {
     fun createNotificationChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val name = "OverChat Translation Controls"
-            val descriptionText = "Controles rápidos para traducir mensajes en WhatsApp"
+            val descriptionText = "Controles rápidos para traducir mensajes en tus apps de chat"
             val importance = NotificationManager.IMPORTANCE_LOW
             val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
                 description = descriptionText
@@ -117,7 +117,7 @@ object TranslationNotificationManager {
             .addAction(R.drawable.ic_translate_sphere, "Stop", stopPendingIntent)
             .setStyle(
                 NotificationCompat.BigTextStyle()
-                    .bigText("$subtitle\nUse 'Translate Screen' to translate visible WhatsApp messages.")
+                    .bigText("$subtitle\nUse 'Translate Screen' to translate visible chat messages.")
             )
 
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager

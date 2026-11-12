@@ -5,6 +5,7 @@ import androidx.compose.ui.Modifier
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
+import com.example.translator.ui.apps.TargetAppsScreen
 import com.example.translator.ui.main.MainScreen
 
 @Composable
@@ -19,6 +20,9 @@ fun MainNavigation() {
         entry<Main> {
           // Por qué: Evita duplicar safeDrawingPadding y padding(16.dp) ya que MainScreen gestiona su propio Scaffold
           MainScreen(onItemClick = { navKey -> backStack.add(navKey) }, modifier = Modifier)
+        }
+        entry<TargetApps> {
+          TargetAppsScreen(onBack = { backStack.removeLastOrNull() }, modifier = Modifier)
         }
       },
   )

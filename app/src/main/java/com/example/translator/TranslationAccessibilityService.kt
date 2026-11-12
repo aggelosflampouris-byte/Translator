@@ -128,6 +128,12 @@ class TranslationAccessibilityService : AccessibilityService() {
                     overlayManager.removeAllMessageOverlays()
                 }
             }
+            AppDefaults.KEY_OVERLAY_THEME -> {
+                val theme = prefs.getString(key, AppDefaults.OVERLAY_THEME_AUTO) ?: AppDefaults.OVERLAY_THEME_AUTO
+                overlayManager.setOverlayTheme(theme)
+                mainHandler.post { overlayManager.removeAllMessageOverlays() }
+                scheduleScan(100L)
+            }
         }
     }
 
@@ -162,6 +168,9 @@ class TranslationAccessibilityService : AccessibilityService() {
         isLearningEnabled = prefs.getBoolean(AppDefaults.KEY_LEARNING_ENABLED, true)
         translationMode = prefs.getString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_ALL) ?: AppDefaults.MODE_ALL
         enabledTargetPackages = TargetAppCatalog.getEnabledPackages(prefs, packageName)
+        overlayManager.setOverlayTheme(
+            prefs.getString(AppDefaults.KEY_OVERLAY_THEME, AppDefaults.OVERLAY_THEME_AUTO) ?: AppDefaults.OVERLAY_THEME_AUTO
+        )
         prefs.registerOnSharedPreferenceChangeListener(prefListener)
 
         // Publish to ServiceBridge — no static Service reference stored.
@@ -641,7 +650,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         if (immediateResults.isNotEmpty()) {
             mainHandler.post {
                 if (ServiceBridge.isTranslatingActive && isTargetAppInForeground() && currentGeneration == scanGeneration.get() && !isScreenScrolling) {
-                    overlayManager.updateOverlays(immediateResults, isFullSync = pendingCandidates.isEmpty())
+                    overlayManager.updateOverlays(immediateResults, isFullSync = pendingCandidates.isEmpty(), profile = activeProfile)
                 }
             }
         }
@@ -699,7 +708,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                                 isTargetAppInForeground() &&
                                 !isScreenScrolling
                             ) {
-                                overlayManager.addOrUpdateOverlay(rect, senseCorrected)
+                                overlayManager.addOrUpdateOverlay(rect, senseCorrected, profile = activeProfile)
                             }
                         }
                     }

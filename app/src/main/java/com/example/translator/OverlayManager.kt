@@ -18,6 +18,48 @@ class OverlayManager(private val context: Context) {
     private val inflater = LayoutInflater.from(context)
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val bubbleIdCounter = AtomicLong(0)
+    @Volatile private var overlayTheme: String = AppDefaults.OVERLAY_THEME_AUTO
+
+    data class BubbleStyle(
+        val backgroundRes: Int,
+        val textColor: Int
+    )
+
+    companion object {
+        private const val TEXT_COLOR_DARK_SURFACE = 0xFFE9EDEF.toInt()
+        private const val TEXT_COLOR_LIGHT_SURFACE = 0xFF0F172A.toInt()
+
+        /**
+         * Resuelve el fondo y color de texto de la burbuja según el tema elegido y la app activa.
+         */
+        fun resolveBubbleStyle(
+            overlayTheme: String,
+            alignmentMode: ChatAlignmentMode,
+            isRightSide: Boolean,
+            isWhatsAppApp: Boolean
+        ): BubbleStyle {
+            val isOutgoing = alignmentMode == ChatAlignmentMode.LEFT_RIGHT_CHAT && isRightSide
+            return when {
+                overlayTheme == AppDefaults.OVERLAY_THEME_LIGHT -> BubbleStyle(
+                    backgroundRes = if (isOutgoing) R.drawable.bg_translation_bubble_light_outgoing else R.drawable.bg_translation_bubble_light_incoming,
+                    textColor = TEXT_COLOR_LIGHT_SURFACE
+                )
+                overlayTheme == AppDefaults.OVERLAY_THEME_WHATSAPP ||
+                    (overlayTheme == AppDefaults.OVERLAY_THEME_AUTO && isWhatsAppApp) -> BubbleStyle(
+                    backgroundRes = if (isOutgoing) R.drawable.bg_translation_bubble_outgoing else R.drawable.bg_translation_bubble_incoming,
+                    textColor = TEXT_COLOR_DARK_SURFACE
+                )
+                else -> BubbleStyle(
+                    backgroundRes = if (isOutgoing) R.drawable.bg_translation_bubble_neutral_outgoing else R.drawable.bg_translation_bubble_neutral_incoming,
+                    textColor = TEXT_COLOR_DARK_SURFACE
+                )
+            }
+        }
+    }
+
+    fun setOverlayTheme(theme: String) {
+        overlayTheme = theme
+    }
 
     private data class ActiveBubble(
         val view: View,
@@ -36,7 +78,11 @@ class OverlayManager(private val context: Context) {
 
     // Called on Main Thread
     @Synchronized
-    fun addOrUpdateOverlay(rect: Rect, translatedText: String) {
+    fun addOrUpdateOverlay(
+        rect: Rect,
+        translatedText: String,
+        profile: ChatAppProfile = TargetAppCatalog.GENERIC_DEFAULT_PROFILE
+    ) {
         if (translatedText.isBlank()) return
         val draftBounds = currentDraftOverlayBounds
         if (draftBounds != null && Rect.intersects(draftBounds, rect)) return
@@ -45,20 +91,24 @@ class OverlayManager(private val context: Context) {
         if (matchedId != null) {
             val bubble = activeBubbles[matchedId]
             if (bubble != null) {
-                updateBubble(bubble, rect, translatedText)
+                updateBubble(bubble, rect, translatedText, profile)
                 return
             }
         }
 
         val view = inflater.inflate(R.layout.bubble_overlay, null)
-        val (params, overlayBounds) = calculateBubbleLayout(rect, view, translatedText)
+        val (params, overlayBounds) = calculateBubbleLayout(rect, view, translatedText, profile)
         val newId = "bubble_${bubbleIdCounter.incrementAndGet()}"
-        addBubble(rect, translatedText, newId, view, params, overlayBounds)
+        addBubble(rect, translatedText, newId, view, params, overlayBounds, profile)
     }
 
     // Called on Main Thread
     @Synchronized
-    fun updateOverlays(results: List<Pair<Rect?, String>>, isFullSync: Boolean = true) {
+    fun updateOverlays(
+        results: List<Pair<Rect?, String>>,
+        isFullSync: Boolean = true,
+        profile: ChatAppProfile = TargetAppCatalog.GENERIC_DEFAULT_PROFILE
+    ) {
         val updatedIds = mutableSetOf<String>()
 
         val draftBounds = currentDraftOverlayBounds
@@ -104,20 +154,20 @@ class OverlayManager(private val context: Context) {
                     if (draftBounds != null && Rect.intersects(draftBounds, bubble.overlayBounds)) {
                         continue
                     }
-                    updateBubble(bubble, rect, translatedText)
+                    updateBubble(bubble, rect, translatedText, profile)
                     acceptedBoundsInBatch.add(bubble.overlayBounds)
                 }
                 updatedIds.add(matchedId)
             } else {
                 val view = inflater.inflate(R.layout.bubble_overlay, null)
-                val (params, overlayBounds) = calculateBubbleLayout(rect, view, translatedText)
+                val (params, overlayBounds) = calculateBubbleLayout(rect, view, translatedText, profile)
                 if (draftBounds != null && Rect.intersects(draftBounds, overlayBounds)) {
                     continue
                 }
                 acceptedBoundsInBatch.add(overlayBounds)
                 // Por qué: Reutilizamos la vista ya inflada y las dimensiones calculadas para evitar doble inflación
                 val newId = "bubble_${bubbleIdCounter.incrementAndGet()}"
-                addBubble(rect, translatedText, newId, view, params, overlayBounds)
+                addBubble(rect, translatedText, newId, view, params, overlayBounds, profile)
                 updatedIds.add(newId)
             }
         }
@@ -199,13 +249,14 @@ class OverlayManager(private val context: Context) {
         id: String,
         preInflatedView: View? = null,
         preCalculatedParams: WindowManager.LayoutParams? = null,
-        preCalculatedBounds: Rect? = null
+        preCalculatedBounds: Rect? = null,
+        profile: ChatAppProfile = TargetAppCatalog.GENERIC_DEFAULT_PROFILE
     ) {
         val view = preInflatedView ?: inflater.inflate(R.layout.bubble_overlay, null)
         val (params, overlayBounds) = if (preCalculatedParams != null && preCalculatedBounds != null) {
             Pair(preCalculatedParams, preCalculatedBounds)
         } else {
-            calculateBubbleLayout(targetRect, view, text)
+            calculateBubbleLayout(targetRect, view, text, profile)
         }
 
         view.alpha = 0f
@@ -227,8 +278,13 @@ class OverlayManager(private val context: Context) {
         }
     }
 
-    private fun updateBubble(bubble: ActiveBubble, targetRect: Rect, text: String) {
-        val (params, overlayBounds) = calculateBubbleLayout(targetRect, bubble.view, text)
+    private fun updateBubble(
+        bubble: ActiveBubble,
+        targetRect: Rect,
+        text: String,
+        profile: ChatAppProfile = TargetAppCatalog.GENERIC_DEFAULT_PROFILE
+    ) {
+        val (params, overlayBounds) = calculateBubbleLayout(targetRect, bubble.view, text, profile)
         bubble.overlayBounds = overlayBounds
         // Por qué: Mantener targetRect y text actualizados para que las comparaciones de proximidad en frames subsiguientes sean precisas
         bubble.targetRect = targetRect
@@ -244,25 +300,30 @@ class OverlayManager(private val context: Context) {
         }
     }
 
-    private fun calculateBubbleLayout(targetRect: Rect, view: View, text: String): Pair<WindowManager.LayoutParams, Rect> {
+    private fun calculateBubbleLayout(
+        targetRect: Rect,
+        view: View,
+        text: String,
+        profile: ChatAppProfile = TargetAppCatalog.GENERIC_DEFAULT_PROFILE
+    ): Pair<WindowManager.LayoutParams, Rect> {
         val screenWidth = context.resources.displayMetrics.widthPixels
 
-        // Por qué: Diferencia entre mensajes salientes (lado derecho) y entrantes (lado izquierdo)
-        // para aplicar los colores nativos opacos de WhatsApp (verde esmeralda vs gris pizarra)
-        // cubriendo 100% el fondo original sin distorsiones ni bordes extraños.
-        val isOutgoing = targetRect.right > (screenWidth * 0.65f)
-        val bgRes = if (isOutgoing) {
-            R.drawable.bg_translation_bubble_outgoing
-        } else {
-            R.drawable.bg_translation_bubble_incoming
-        }
-        view.setBackgroundResource(bgRes)
+        // Por qué: Adapta el color y contraste de la burbuja al tema seleccionado y al modo de alineación de la app
+        val isRightSide = targetRect.right > (screenWidth * 0.65f)
+        val style = resolveBubbleStyle(
+            overlayTheme = overlayTheme,
+            alignmentMode = profile.alignmentMode,
+            isRightSide = isRightSide,
+            isWhatsAppApp = profile.id == "whatsapp"
+        )
+        view.setBackgroundResource(style.backgroundRes)
 
         val posX = targetRect.left
         val posY = targetRect.top
         val bubbleWidth = targetRect.width()
 
         val textView = view.findViewById<TextView>(R.id.translated_text)
+        textView.setTextColor(style.textColor)
         textView.text = text
 
         view.measure(

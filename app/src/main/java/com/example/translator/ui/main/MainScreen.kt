@@ -36,6 +36,8 @@ import com.example.translator.FloatingBubbleService
 import com.example.translator.LearningStore
 import com.example.translator.R
 import com.example.translator.ServiceBridge
+import com.example.translator.TargetAppCatalog
+import com.example.translator.TargetApps
 import com.example.translator.TranslationNotificationManager
 import com.example.translator.TranslatorApplication
 import com.example.translator.TranslatorPool
@@ -297,6 +299,28 @@ fun MainScreen(
   var controlInterface by remember {
       mutableStateOf(prefs.getString(AppDefaults.KEY_CONTROL_INTERFACE, AppDefaults.INTERFACE_NOTIFICATION) ?: AppDefaults.INTERFACE_NOTIFICATION)
   }
+  var enabledPackages by remember {
+      mutableStateOf(TargetAppCatalog.getEnabledPackages(prefs, context.packageName))
+  }
+  var overlayTheme by remember {
+      mutableStateOf(
+          prefs.getString(AppDefaults.KEY_OVERLAY_THEME, AppDefaults.OVERLAY_THEME_AUTO)
+              ?: AppDefaults.OVERLAY_THEME_AUTO
+      )
+  }
+  // Por qué: Mantiene sincronizado el resumen de apps activas cuando el usuario vuelve desde TargetAppsScreen
+  DisposableEffect(prefs) {
+      val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+          if (key == AppDefaults.KEY_ENABLED_PACKAGES) {
+              enabledPackages = TargetAppCatalog.getEnabledPackages(prefs, context.packageName)
+          } else if (key == AppDefaults.KEY_OVERLAY_THEME) {
+              overlayTheme = prefs.getString(AppDefaults.KEY_OVERLAY_THEME, AppDefaults.OVERLAY_THEME_AUTO)
+                  ?: AppDefaults.OVERLAY_THEME_AUTO
+          }
+      }
+      prefs.registerOnSharedPreferenceChangeListener(listener)
+      onDispose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+  }
   var isNotificationPermissionGranted by remember {
       mutableStateOf(
           if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -404,6 +428,7 @@ fun MainScreen(
           if (event == Lifecycle.Event.ON_RESUME) {
               canDrawOverlays = Settings.canDrawOverlays(context)
               isAccessibilityEnabled = checkAccessibilityEnabled(context)
+              enabledPackages = TargetAppCatalog.getEnabledPackages(prefs, context.packageName)
               ServiceBridge.notifyUiStateChanged()
               if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                   isNotificationPermissionGranted = ContextCompat.checkSelfPermission(
@@ -593,7 +618,7 @@ fun MainScreen(
                       }
                   }
                   Text(
-                      text = "WhatsApp Bilingual Assistant",
+                      text = "Real-Time Chat Translator",
                       style = MaterialTheme.typography.bodySmall,
                       color = MaterialTheme.colorScheme.onSurfaceVariant,
                       maxLines = 1,
@@ -1002,6 +1027,103 @@ fun MainScreen(
                   TextButton(onClick = { showResetLearningDialog = false }) { Text("Cancel") }
               }
           )
+      }
+
+      // ── Sección 2B: Apps Compatibles y Tema de Burbujas ────────────────────
+      val activeCuratedNames = remember(enabledPackages) {
+          TargetAppCatalog.CURATED_PROFILES
+              .filter { profile -> profile.packageNames.any { it in enabledPackages } }
+              .map { it.displayName }
+      }
+      val extraCustomCount = remember(enabledPackages) {
+          val knownPackages = TargetAppCatalog.CURATED_PROFILES.flatMapTo(HashSet()) { it.packageNames }
+          enabledPackages.count { it !in knownPackages }
+      }
+      val enabledAppsSummary = remember(enabledPackages, activeCuratedNames, extraCustomCount) {
+          when {
+              enabledPackages.isEmpty() -> "No apps selected — tap Manage to enable chat apps."
+              else -> {
+                  val preview = activeCuratedNames.take(3).joinToString(", ")
+                  val remaining = (activeCuratedNames.size - 3).coerceAtLeast(0) + extraCustomCount
+                  val suffix = if (remaining > 0) " +$remaining more" else ""
+                  if (preview.isNotEmpty()) "$preview$suffix (${enabledPackages.size} pkgs)"
+                  else "${enabledPackages.size} custom apps enabled"
+              }
+          }
+      }
+
+      OutlinedCard(
+          modifier = Modifier.fillMaxWidth(),
+          shape = RoundedCornerShape(14.dp),
+          colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+      ) {
+          Column(modifier = Modifier.padding(14.dp)) {
+              Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.SpaceBetween,
+                  verticalAlignment = Alignment.CenterVertically
+              ) {
+                  Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                      Text(
+                          text = "Supported Apps & Theme",
+                          style = MaterialTheme.typography.titleSmall,
+                          color = MaterialTheme.colorScheme.onSurface
+                      )
+                      Spacer(modifier = Modifier.height(2.dp))
+                      Text(
+                          text = enabledAppsSummary,
+                          style = MaterialTheme.typography.bodySmall,
+                          color = MaterialTheme.colorScheme.onSurfaceVariant,
+                          maxLines = 2,
+                          overflow = TextOverflow.Ellipsis
+                      )
+                  }
+                  FilledTonalButton(
+                      onClick = { onItemClick(TargetApps) },
+                      enabled = settingsEnabled,
+                      contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                  ) {
+                      Text("Manage")
+                  }
+              }
+
+              Spacer(modifier = Modifier.height(10.dp))
+
+              Text(
+                  text = "Overlay Bubble Theme",
+                  style = MaterialTheme.typography.labelMedium,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant
+              )
+              Spacer(modifier = Modifier.height(6.dp))
+              Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.spacedBy(8.dp)
+              ) {
+                  val themeOptions = listOf(
+                      AppDefaults.OVERLAY_THEME_AUTO to "Auto",
+                      AppDefaults.OVERLAY_THEME_LIGHT to "Light",
+                      AppDefaults.OVERLAY_THEME_WHATSAPP to "Classic"
+                  )
+                  themeOptions.forEach { (value, label) ->
+                      FilterChip(
+                          selected = overlayTheme == value,
+                          onClick = {
+                              overlayTheme = value
+                              prefs.edit().putString(AppDefaults.KEY_OVERLAY_THEME, value).apply()
+                          },
+                          enabled = settingsEnabled,
+                          label = {
+                              Text(
+                                  text = label,
+                                  maxLines = 1,
+                                  overflow = TextOverflow.Ellipsis
+                              )
+                          },
+                          modifier = Modifier.weight(1f)
+                      )
+                  }
+              }
+          }
       }
 
       // ── Sección 3: Permisos del Sistema ────────────────────────────────────
