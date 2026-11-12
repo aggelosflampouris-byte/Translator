@@ -118,7 +118,7 @@ class AdaptiveLearningTest {
     @Test
     fun isValidTranslation_enforcesTargetScriptAndRejectsNonTargetOutput() {
         assertTrue(
-            IndexTranslationEngine.isValidTranslation(
+            TranslationPipeline.isValidTranslation(
                 output = "Προσπαθώντας να καταλάβω πώς θα κάνω την εφαρμογή να δουλέψει",
                 cleanInput = "Încercând să dau seama cum voi face aplicația să funcționeze",
                 targetLang = "el"
@@ -126,7 +126,7 @@ class AdaptiveLearningTest {
         )
         assertFalse(
             "English text must be rejected when target is Greek",
-            IndexTranslationEngine.isValidTranslation(
+            TranslationPipeline.isValidTranslation(
                 output = "Thinking Process: Translate Romanian to Greek",
                 cleanInput = "Încercând să dau seama",
                 targetLang = "el"
@@ -134,7 +134,7 @@ class AdaptiveLearningTest {
         )
         assertFalse(
             "Unchanged source text must be rejected",
-            IndexTranslationEngine.isValidTranslation(
+            TranslationPipeline.isValidTranslation(
                 output = "Încercând să dau seama",
                 cleanInput = "Încercând să dau seama",
                 targetLang = "ro"

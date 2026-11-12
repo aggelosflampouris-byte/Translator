@@ -19,80 +19,10 @@ interface TranslationEngine {
 }
 
 /**
- * Motor neuronal contextual en el dispositivo.
- *
- * Por qué: Combina el transformador neuronal nativo en el dispositivo con el contexto de la
- * conversación (`TranslationHints.contextMessages`) y el glosario aprendido del usuario
- * (`TranslationHints.preferredTerms`), logrando traducciones instantáneas (< 30 ms) sin
- * saturar la CPU ni bloquear el hilo de interfaz.
- */
-class IndexTranslationEngine(private val context: Context) : TranslationEngine {
-
-    private val neuralBackend = MLKitTranslationEngine()
-
-    companion object {
-        // Por qué: Valida que la salida del modelo sea una traducción genuina en el alfabeto de destino
-        // y no un bloque de razonamiento sin cerrar ni una repetición literal del texto original.
-        internal fun isValidTranslation(output: String, cleanInput: String, targetLang: String): Boolean {
-            val trimmed = output.trim()
-            if (trimmed.isBlank()) return false
-            if (trimmed.equals(cleanInput.trim(), ignoreCase = true)) return false
-            if (TextSanitizer.hasSpecialCharacterCorruption(trimmed, cleanInput)) return false
-
-            if (targetLang == "el" || targetLang == TranslateLanguage.GREEK) {
-                val hasGreek = trimmed.any { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }
-                if (!hasGreek) return false
-            } else if (targetLang == "ro" || targetLang == TranslateLanguage.ROMANIAN) {
-                val hasLatin = trimmed.any { it in 'a'..'z' || it in 'A'..'Z' || it in "ăâîșțĂÂÎȘȚ" }
-                if (!hasLatin) return false
-            }
-
-            return true
-        }
-    }
-
-    suspend fun preload() {
-        // Por qué: Precalienta los clientes neuronales del par de idiomas seleccionado en el menú
-        val prefs = context.getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
-        val src = prefs.getString(AppDefaults.KEY_SOURCE_LANGUAGE, AppDefaults.SOURCE_LANGUAGE)
-            ?.takeIf { it != "AUTO" } ?: AppDefaults.SOURCE_LANGUAGE
-        val tgt = prefs.getString(AppDefaults.KEY_TARGET_LANGUAGE, AppDefaults.TARGET_LANGUAGE)
-            ?: AppDefaults.TARGET_LANGUAGE
-        val conditions = com.google.mlkit.common.model.DownloadConditions.Builder().build()
-        TranslatorPool.get(src, tgt).downloadModelIfNeeded(conditions)
-        TranslatorPool.get(tgt, src).downloadModelIfNeeded(conditions)
-    }
-
-    override suspend fun translate(
-        text: String,
-        sourceLang: String,
-        targetLang: String,
-        hints: TranslationHints
-    ): String? {
-        val cleanInput = TextSanitizer.sanitizeSpecialCharacters(text)
-        if (cleanInput.isBlank() || !cleanInput.any { it.isLetter() }) return null
-
-        val raw = neuralBackend.translate(cleanInput, sourceLang, targetLang, hints) ?: return null
-        val cleaned = TextSanitizer.stripWrappingQuotes(raw, cleanInput)
-        val withGlossary = if (hints.preferredTerms.isNotEmpty()) {
-            CorrectionApplier.apply(cleaned, hints.preferredTerms)
-        } else {
-            cleaned
-        }
-
-        return if (isValidTranslation(withGlossary, cleanInput, targetLang)) {
-            withGlossary
-        } else {
-            cleaned.takeIf { it.isNotBlank() } ?: raw
-        }
-    }
-}
-
-/**
  * Motor de traducción neuronal local basado en Google ML Kit NMT.
  *
- * Por qué: Proporciona traducción neuronal 100% offline, gratuita y en menos de 30 ms,
- * ejecutándose directamente en el dispositivo sin bloquear la CPU ni causar tirones.
+ * Por qué: Proporciona traducción neuronal 100% offline en menos de 30 ms y consulta la caché
+ * de preparación de [TranslatorPool] para evitar verificar la descarga en cada línea.
  */
 class MLKitTranslationEngine : TranslationEngine {
 
@@ -100,9 +30,7 @@ class MLKitTranslationEngine : TranslationEngine {
 
     private fun isLineAlreadyInTargetScript(line: String, targetLang: String): Boolean {
         if (targetLang == "el" || targetLang == TranslateLanguage.GREEK) {
-            val greekCount = line.count { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }
-            val latinCount = line.count { it in 'a'..'z' || it in 'A'..'Z' || it in "ăâîșțĂÂÎȘȚ" }
-            return greekCount > 0 && latinCount == 0
+            return ScriptDetector.countGreek(line) > 0 && ScriptDetector.countLatin(line) == 0
         }
         return false
     }
@@ -113,8 +41,22 @@ class MLKitTranslationEngine : TranslationEngine {
         targetLang: String
     ): String? = suspendCancellableCoroutine { continuation ->
         val client = TranslatorPool.get(sourceLang, targetLang)
+        // Por qué: Si el modelo del par ya fue verificado, traduce directamente sin sobrecarga de IPC
+        if (TranslatorPool.isPairReady(sourceLang, targetLang)) {
+            client.translate(line)
+                .addOnSuccessListener { result ->
+                    if (continuation.isActive) continuation.resume(result)
+                }
+                .addOnFailureListener { error ->
+                    Log.w("MLKitEngine", "ML Kit line translation failed", error)
+                    if (continuation.isActive) continuation.resume(null)
+                }
+            return@suspendCancellableCoroutine
+        }
+
         client.downloadModelIfNeeded(downloadConditions)
             .addOnSuccessListener {
+                TranslatorPool.markPairReady(sourceLang, targetLang)
                 client.translate(line)
                     .addOnSuccessListener { result ->
                         if (continuation.isActive) continuation.resume(result)
@@ -168,36 +110,129 @@ class MLKitTranslationEngine : TranslationEngine {
 }
 
 /**
- * Motor híbrido inteligente y 100% offline.
+ * Tubería unificada de traducción para escaneo automático, toque en burbuja y borrador de teclado.
  *
- * Por qué: Ejecuta la traducción neuronal local aplicando el glosario aprendido y el contexto
- * conversacional en tiempo real (< 30 ms) sin sobrecargar la memoria ni la CPU del teléfono.
+ * Por qué: Reúne en un solo flujo determinista la memoria aprendida, la caché en memoria,
+ * la pre-traducción idiomática, la protección de emojis, el motor NMT, el post-procesado
+ * de sentido, el glosario del usuario y la validación de alfabeto.
  */
-class HybridTranslationEngine(private val context: Context) : TranslationEngine {
+class TranslationPipeline(
+    private val engine: TranslationEngine = MLKitTranslationEngine(),
+    private val isGlossaryAndValidationEnabled: () -> Boolean = { true },
+    private val memoryLookup: (sourceLang: String, targetLang: String, text: String) -> String? = { _, _, _ -> null },
+    private val cacheLookup: (sourceLang: String, targetLang: String, text: String) -> String? = { _, _, _ -> null },
+    private val cacheStore: (sourceLang: String, targetLang: String, text: String, translation: String) -> Unit = { _, _, _, _ -> },
+    private val learnedCorrectionsApplier: (sourceLang: String, targetLang: String, text: String) -> String = { _, _, t -> t }
+) {
 
-    private val mlKitEngine = MLKitTranslationEngine()
-    val indexEngine = IndexTranslationEngine(context)
+    companion object {
+        // Por qué: Valida que la salida sea una traducción genuina en el alfabeto de destino y sin corrupción de símbolos
+        fun isValidTranslation(output: String, cleanInput: String, targetLang: String): Boolean {
+            val trimmed = output.trim()
+            if (trimmed.isBlank()) return false
+            if (trimmed.equals(cleanInput.trim(), ignoreCase = true)) return false
+            if (TextSanitizer.hasSpecialCharacterCorruption(trimmed, cleanInput)) return false
 
-    suspend fun preload() {
-        indexEngine.preload()
+            if (targetLang == "el" || targetLang == TranslateLanguage.GREEK) {
+                if (!ScriptDetector.hasGreek(trimmed)) return false
+            } else if (targetLang == "ro" || targetLang == TranslateLanguage.ROMANIAN || targetLang == "en" || targetLang == TranslateLanguage.ENGLISH) {
+                if (!ScriptDetector.hasLatin(trimmed)) return false
+            }
+
+            return true
+        }
+
+        fun preloadModels(context: Context) {
+            val prefs = context.getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
+            val src = prefs.getString(AppDefaults.KEY_SOURCE_LANGUAGE, AppDefaults.SOURCE_LANGUAGE)
+                ?.takeIf { it != "AUTO" } ?: AppDefaults.SOURCE_LANGUAGE
+            val tgt = prefs.getString(AppDefaults.KEY_TARGET_LANGUAGE, AppDefaults.TARGET_LANGUAGE)
+                ?: AppDefaults.TARGET_LANGUAGE
+            val conditions = com.google.mlkit.common.model.DownloadConditions.Builder().build()
+            TranslatorPool.get(src, tgt).downloadModelIfNeeded(conditions)
+                .addOnSuccessListener { TranslatorPool.markPairReady(src, tgt) }
+            TranslatorPool.get(tgt, src).downloadModelIfNeeded(conditions)
+                .addOnSuccessListener { TranslatorPool.markPairReady(tgt, src) }
+        }
     }
 
-    override suspend fun translate(
+    /**
+     * Resuelve de forma síncrona e instantánea (< 1 ms) si el texto ya está en la memoria aprendida,
+     * en la caché LRU o coincide con una expresión idiomática conocida.
+     */
+    fun resolveFast(text: String, sourceLang: String, targetLang: String): String? {
+        val clean = TextSanitizer.sanitizeSpecialCharacters(text)
+        if (clean.isBlank()) return null
+
+        memoryLookup(sourceLang, targetLang, clean)?.let { return it }
+        cacheLookup(sourceLang, targetLang, clean)?.let { return it }
+
+        val normalized = if (sourceLang == TranslateLanguage.ROMANIAN) {
+            TextNormalizer.restoreRomanianDiacritics(clean)
+        } else {
+            clean
+        }
+        if (normalized != clean) {
+            memoryLookup(sourceLang, targetLang, normalized)?.let { return it }
+            cacheLookup(sourceLang, targetLang, normalized)?.let { return it }
+        }
+
+        val idiom = TranslationSenseEngine.resolveIdiomPreTranslation(normalized, sourceLang, targetLang)
+        if (idiom != null) {
+            cacheStore(sourceLang, targetLang, clean, idiom)
+            return idiom
+        }
+        return null
+    }
+
+    /**
+     * Ejecuta la traducción completa (incluyendo la vía rápida síncrona y el motor neuronal si es necesario).
+     */
+    suspend fun translate(
         text: String,
         sourceLang: String,
         targetLang: String,
-        hints: TranslationHints
+        hints: TranslationHints = TranslationHints.NONE
     ): String? {
-        val prefs = context.getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
-        val isAiEnabled = prefs.getBoolean(AppDefaults.KEY_AI_ENABLED, true)
+        val cleanInput = TextSanitizer.sanitizeSpecialCharacters(text)
+        if (cleanInput.isBlank() || !cleanInput.any { it.isLetter() }) return null
 
-        if (isAiEnabled) {
-            val result = indexEngine.translate(text, sourceLang, targetLang, hints)
-            if (!result.isNullOrBlank()) {
-                return result
+        resolveFast(cleanInput, sourceLang, targetLang)?.let { return it }
+
+        val normalized = if (sourceLang == TranslateLanguage.ROMANIAN) {
+            TextNormalizer.restoreRomanianDiacritics(cleanInput)
+        } else {
+            cleanInput
+        }
+        val protected = TextNormalizer.protectEmojis(normalized)
+        val raw = engine.translate(protected.text, sourceLang, targetLang, hints) ?: return null
+        val restored = TextNormalizer.restoreEmojis(raw, protected.tokens)
+        val unwrapped = TextSanitizer.stripWrappingQuotes(restored, cleanInput)
+
+        val senseAdjusted = TranslationSenseEngine.applyPostTranslationSenseLogic(
+            originalText = normalized,
+            translatedText = unwrapped,
+            sourceLang = sourceLang,
+            targetLang = targetLang
+        )
+
+        val applyExtras = isGlossaryAndValidationEnabled()
+        val withGlossary = if (applyExtras) {
+            val fromHints = if (hints.preferredTerms.isNotEmpty()) {
+                CorrectionApplier.apply(senseAdjusted, hints.preferredTerms)
+            } else {
+                senseAdjusted
             }
+            learnedCorrectionsApplier(sourceLang, targetLang, fromHints)
+        } else {
+            senseAdjusted
         }
 
-        return mlKitEngine.translate(text, sourceLang, targetLang, hints)
+        if (!isValidTranslation(withGlossary, cleanInput, targetLang)) {
+            return null
+        }
+
+        cacheStore(sourceLang, targetLang, cleanInput, withGlossary)
+        return withGlossary
     }
 }

@@ -66,9 +66,11 @@ class TranslationAccessibilityService : AccessibilityService() {
     private var configuredSource: String = AppDefaults.SOURCE_LANGUAGE
     private var configuredTarget: String = AppDefaults.TARGET_LANGUAGE
     private var isKeyboardTranslatorEnabled: Boolean = true
+    private var isGlossaryAndValidationEnabled: Boolean = true
     private var translationMode: String = AppDefaults.MODE_ALL
-    private lateinit var hybridEngine: HybridTranslationEngine
+    private lateinit var pipeline: TranslationPipeline
     private var manualDraftTargetLang: String? = null
+    private val resourcesReleased = java.util.concurrent.atomic.AtomicBoolean(false)
 
     // Por qué: Memoria local de aprendizaje (frases enviadas y correcciones del usuario) y estado del bucle de retroalimentación
     private lateinit var learningStore: LearningStore
@@ -86,7 +88,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                 if (ServiceBridge.isNotificationActive) {
                     TranslationNotificationManager.showNotification(this, ServiceBridge.isTranslatingActive)
                 }
-                serviceScope.launch(Dispatchers.Default) { hybridEngine.preload() }
+                serviceScope.launch(Dispatchers.Default) { TranslationPipeline.preloadModels(this@TranslationAccessibilityService) }
                 scheduleScan(100L)
             }
             AppDefaults.KEY_TARGET_LANGUAGE -> {
@@ -97,11 +99,14 @@ class TranslationAccessibilityService : AccessibilityService() {
                 if (ServiceBridge.isNotificationActive) {
                     TranslationNotificationManager.showNotification(this, ServiceBridge.isTranslatingActive)
                 }
-                serviceScope.launch(Dispatchers.Default) { hybridEngine.preload() }
+                serviceScope.launch(Dispatchers.Default) { TranslationPipeline.preloadModels(this@TranslationAccessibilityService) }
                 scheduleScan(100L)
             }
             AppDefaults.KEY_KEYBOARD_ENABLED -> {
                 isKeyboardTranslatorEnabled = prefs.getBoolean(key, true)
+            }
+            AppDefaults.KEY_AI_ENABLED -> {
+                isGlossaryAndValidationEnabled = prefs.getBoolean(key, true)
             }
             AppDefaults.KEY_LEARNING_ENABLED -> {
                 isLearningEnabled = prefs.getBoolean(key, true)
@@ -126,14 +131,23 @@ class TranslationAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        resourcesReleased.set(false)
         overlayManager = OverlayManager(this)
-        hybridEngine = HybridTranslationEngine(this)
         learningStore = LearningStore.get(this)
+        pipeline = TranslationPipeline(
+            engine = MLKitTranslationEngine(),
+            isGlossaryAndValidationEnabled = { isGlossaryAndValidationEnabled },
+            memoryLookup = ::lookupLearnedMemory,
+            cacheLookup = ::getCachedTranslation,
+            cacheStore = ::putCachedTranslation,
+            learnedCorrectionsApplier = ::applyLearnedCorrections
+        )
 
         val prefs = getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
         configuredSource = prefs.getString(AppDefaults.KEY_SOURCE_LANGUAGE, AppDefaults.SOURCE_LANGUAGE) ?: AppDefaults.SOURCE_LANGUAGE
         configuredTarget = prefs.getString(AppDefaults.KEY_TARGET_LANGUAGE, AppDefaults.TARGET_LANGUAGE) ?: AppDefaults.TARGET_LANGUAGE
         isKeyboardTranslatorEnabled = prefs.getBoolean(AppDefaults.KEY_KEYBOARD_ENABLED, true)
+        isGlossaryAndValidationEnabled = prefs.getBoolean(AppDefaults.KEY_AI_ENABLED, true)
         isLearningEnabled = prefs.getBoolean(AppDefaults.KEY_LEARNING_ENABLED, true)
         translationMode = prefs.getString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_ALL) ?: AppDefaults.MODE_ALL
         prefs.registerOnSharedPreferenceChangeListener(prefListener)
@@ -164,7 +178,7 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         // Por qué: Precarga el modelo neuronal en memoria en segundo plano para eliminar la latencia inicial al abrir un chat
         serviceScope.launch(Dispatchers.Default) {
-            hybridEngine.preload()
+            TranslationPipeline.preloadModels(this@TranslationAccessibilityService)
         }
 
         // Por qué: Callback ejecutado cuando el usuario pulsa "Translate Screen" en la notificación o mosaico
@@ -587,29 +601,9 @@ class TranslationAccessibilityService : AccessibilityService() {
             val msgSource = if (configuredSource != "AUTO") configuredSource else AppDefaults.SOURCE_LANGUAGE
             val msgTarget = configuredTarget
 
-            // Por qué: Las frases verificadas por el usuario tienen prioridad absoluta sobre cualquier motor
-            val rememberedTranslation = lookupLearnedMemory(msgSource, msgTarget, cleanText)
-            if (rememberedTranslation != null) {
-                immediateResults.add(Pair(rect, rememberedTranslation))
-                continue
-            }
-
-            // Check cache first (in-memory + persistent) for instantaneous rendering
-            val cachedTranslation = getCachedTranslation(msgSource, msgTarget, cleanText)
-            if (cachedTranslation != null) {
-                immediateResults.add(Pair(rect, cachedTranslation))
-                continue
-            }
-
-            // Pre-translation idiom and sense resolution (e.g. holidays, slang, common questions)
-            val idiomaticTranslation = TranslationSenseEngine.resolveIdiomPreTranslation(
-                cleanText,
-                msgSource,
-                msgTarget
-            )
-            if (idiomaticTranslation != null) {
-                putCachedTranslation(msgSource, msgTarget, cleanText, idiomaticTranslation)
-                immediateResults.add(Pair(rect, idiomaticTranslation))
+            val fastTranslation = pipeline.resolveFast(cleanText, msgSource, msgTarget)
+            if (fastTranslation != null) {
+                immediateResults.add(Pair(rect, fastTranslation))
                 continue
             }
 
@@ -654,48 +648,9 @@ class TranslationAccessibilityService : AccessibilityService() {
                         return@launch
                     }
 
-                    val normalizedText = if (msgSource == TranslateLanguage.ROMANIAN) {
-                        TextNormalizer.restoreRomanianDiacritics(cleanText)
-                    } else {
-                        cleanText
-                    }
-                    val protected = TextNormalizer.protectEmojis(normalizedText)
-
                     val hints = buildHints(msgSource, msgTarget, contextAbove(conversation, rect))
-                    val rawTranslated = hybridEngine.translate(protected.text, msgSource, msgTarget, hints)
-                    if (rawTranslated != null && rawTranslated.isNotBlank()) {
-                        val restoredEmojis = TextNormalizer.restoreEmojis(rawTranslated, protected.tokens)
-                        val senseCorrected = applyLearnedCorrections(
-                            msgSource,
-                            msgTarget,
-                            TranslationSenseEngine.applyPostTranslationSenseLogic(
-                                originalText = normalizedText,
-                                translatedText = restoredEmojis,
-                                sourceLang = msgSource,
-                                targetLang = msgTarget
-                            )
-                        )
-
-                        // Por qué: Descartar respuestas de error o negativas generadas por la IA
-                        if (senseCorrected.startsWith("[Error", ignoreCase = true) ||
-                            senseCorrected.startsWith("Error:", ignoreCase = true) ||
-                            senseCorrected.contains("no message was provided", ignoreCase = true) ||
-                            senseCorrected.contains("please provide the", ignoreCase = true)
-                        ) {
-                            return@launch
-                        }
-
-                        // Por qué: Si la traducción resultante es idéntica al texto original (ej. inglés a inglés)
-                        // o no contiene caracteres en el idioma de destino (ej. griego), se descarta el globo.
-                        if (senseCorrected.trim().equals(cleanText.trim(), ignoreCase = true)) {
-                            return@launch
-                        }
-                        if (msgTarget == TranslateLanguage.GREEK && senseCorrected.none { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }) {
-                            return@launch
-                        }
-
-                        putCachedTranslation(msgSource, msgTarget, cleanText, senseCorrected)
-
+                    val senseCorrected = pipeline.translate(cleanText, msgSource, msgTarget, hints)
+                    if (!senseCorrected.isNullOrBlank()) {
                         // Por qué: Si la pantalla se desplazó durante la traducción asíncrona,
                         // las coordenadas 'rect' capturadas antes del scroll son obsoletas; se programa
                         // un escaneo rápido para pintar la traducción recién cacheada en su nueva posición.
@@ -1075,8 +1030,9 @@ class TranslationAccessibilityService : AccessibilityService() {
                 ?.map { it.text }
                 ?.takeLast(AppDefaults.MAX_CONTEXT_MESSAGES)
                 ?: emptyList()
+            val hints = buildHints(effectiveSourceLang, effectiveTargetLang, draftContext)
 
-            // Process message line-by-line to preserve paragraphs, line breaks, and mixed lines
+            // Process message line-by-line through the unified pipeline to preserve paragraphs and mixed lines
             val lines = liveText.split("\n")
             val translatedLines = mutableListOf<String>()
 
@@ -1086,61 +1042,8 @@ class TranslationAccessibilityService : AccessibilityService() {
                     translatedLines.add(line)
                     continue
                 }
-
-                val normalizedLine = if (effectiveSourceLang == com.google.mlkit.nl.translate.TranslateLanguage.ROMANIAN) {
-                    TextNormalizer.restoreRomanianDiacritics(trimmedLine)
-                } else {
-                    trimmedLine
-                }
-
-                // 1. Pre-traducción idiomática instantánea
-                val lineIdiom = TranslationSenseEngine.resolveIdiomPreTranslation(
-                    normalizedLine,
-                    effectiveSourceLang,
-                    effectiveTargetLang
-                )
-                if (lineIdiom != null) {
-                    putCachedTranslation(effectiveSourceLang, effectiveTargetLang, normalizedLine, lineIdiom)
-                    translatedLines.add(lineIdiom)
-                    continue
-                }
-
-                // 2. Memoria de frases verificadas por el usuario (aprendizaje local)
-                val remembered = lookupLearnedMemory(effectiveSourceLang, effectiveTargetLang, normalizedLine)
-                if (remembered != null) {
-                    translatedLines.add(remembered)
-                    continue
-                }
-
-                // 3. Caché local instantánea con espacio de nombres por par de idiomas
-                val cached = getCachedTranslation(effectiveSourceLang, effectiveTargetLang, normalizedLine)
-                if (cached != null) {
-                    translatedLines.add(cached)
-                    continue
-                }
-
-                // 4. Traducción unificada utilizando hybridEngine (el mismo motor que traduce los mensajes en pantalla)
-                val protected = TextNormalizer.protectEmojis(normalizedLine)
-                val hints = buildHints(effectiveSourceLang, effectiveTargetLang, draftContext)
-                val rawTranslated = hybridEngine.translate(protected.text, effectiveSourceLang, effectiveTargetLang, hints)
-
-                if (rawTranslated != null && rawTranslated.isNotBlank() && rawTranslated != protected.text) {
-                    val restoredEmojis = TextNormalizer.restoreEmojis(rawTranslated, protected.tokens)
-                    val senseCorrected = applyLearnedCorrections(
-                        effectiveSourceLang,
-                        effectiveTargetLang,
-                        TranslationSenseEngine.applyPostTranslationSenseLogic(
-                            originalText = normalizedLine,
-                            translatedText = restoredEmojis,
-                            sourceLang = effectiveSourceLang,
-                            targetLang = effectiveTargetLang
-                        )
-                    )
-                    putCachedTranslation(effectiveSourceLang, effectiveTargetLang, normalizedLine, senseCorrected)
-                    translatedLines.add(senseCorrected)
-                } else {
-                    translatedLines.add(trimmedLine)
-                }
+                val translated = pipeline.translate(trimmedLine, effectiveSourceLang, effectiveTargetLang, hints)
+                translatedLines.add(translated ?: trimmedLine)
             }
 
             val finalTranslatedDraft = translatedLines.joinToString("\n")
@@ -1386,13 +1289,6 @@ class TranslationAccessibilityService : AccessibilityService() {
             val msgTarget = configuredTarget
             val targetCode = msgTarget.uppercase()
 
-            val normalizedText = if (msgSource == TranslateLanguage.ROMANIAN) {
-                TextNormalizer.restoreRomanianDiacritics(cleanText)
-            } else {
-                cleanText
-            }
-            val protected = TextNormalizer.protectEmojis(normalizedText)
-
             serviceScope.launch {
                 val detectedLang = identifyLanguageAsync(cleanText)
                 val isEligible = TranslationSenseEngine.isEligibleSourceText(
@@ -1405,42 +1301,12 @@ class TranslationAccessibilityService : AccessibilityService() {
                     return@launch
                 }
 
-                val remembered = lookupLearnedMemory(msgSource, msgTarget, cleanText)
-                if (remembered != null) {
-                    mainHandler.post { overlayManager.showSingleMessagePill(rect, remembered, targetCode) }
-                    return@launch
-                }
-
-                val cached = getCachedTranslation(msgSource, msgTarget, cleanText)
-                if (cached != null) {
-                    mainHandler.post { overlayManager.showSingleMessagePill(rect, cached, targetCode) }
-                    return@launch
-                }
-
                 val context = findWhatsAppRootNode()
                     ?.let { root -> contextAbove(collectVisibleConversation(root, rect.top), rect) }
                     ?: emptyList()
                 val hints = buildHints(msgSource, msgTarget, context)
-                val translated = hybridEngine.translate(protected.text, msgSource, msgTarget, hints)
-                if (!translated.isNullOrBlank()) {
-                    val restored = TextNormalizer.restoreEmojis(translated, protected.tokens)
-                    val corrected = applyLearnedCorrections(
-                        msgSource,
-                        msgTarget,
-                        TranslationSenseEngine.applyPostTranslationSenseLogic(
-                            originalText = normalizedText,
-                            translatedText = restored,
-                            sourceLang = msgSource,
-                            targetLang = msgTarget
-                        )
-                    )
-                    if (corrected.trim().equals(cleanText.trim(), ignoreCase = true)) {
-                        return@launch
-                    }
-                    if (msgTarget == TranslateLanguage.GREEK && corrected.none { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }) {
-                        return@launch
-                    }
-                    putCachedTranslation(msgSource, msgTarget, cleanText, corrected)
+                val corrected = pipeline.translate(cleanText, msgSource, msgTarget, hints)
+                if (!corrected.isNullOrBlank()) {
                     mainHandler.post {
                         overlayManager.showSingleMessagePill(rect, corrected, targetCode)
                     }
@@ -1451,42 +1317,39 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
     }
 
-    override fun onUnbind(intent: android.content.Intent?): Boolean {
+    // Por qué: Rutina única de liberación de recursos compartida por onUnbind y onDestroy
+    private fun releaseServiceResources() {
         ServiceBridge.isAccessibilityActive = false
         ServiceBridge.onTranslationStateChanged = null
         ServiceBridge.onScanRequested = null
+        typingJob?.cancel()
+        scanDebounceJob?.cancel()
+        activeScanLoopJob?.cancel()
         scrollSettleJob?.cancel()
         overlayWatchdogJob?.cancel()
         isScreenScrolling = false
         TranslationNotificationManager.cancelNotification(this)
         overlayManager.removeAllOverlays()
-        try {
-            val prefs = getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
-            prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
-        } catch (e: Exception) {
-            Log.w("Translator", "Error unregistering prefListener in onUnbind", e)
+        if (resourcesReleased.compareAndSet(false, true)) {
+            try {
+                val prefs = getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
+                prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
+            } catch (e: Exception) {
+                Log.w("Translator", "Error unregistering prefListener", e)
+            }
+            TranslatorPool.releaseAll()
+            translationCache.evictAll()
         }
-        TranslatorPool.releaseAll()
-        translationCache.evictAll()
+    }
+
+    override fun onUnbind(intent: android.content.Intent?): Boolean {
+        releaseServiceResources()
         return super.onUnbind(intent)
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        ServiceBridge.isAccessibilityActive = false
-        ServiceBridge.onTranslationStateChanged = null
-        ServiceBridge.onScanRequested = null
-        scrollSettleJob?.cancel()
-        overlayWatchdogJob?.cancel()
-        isScreenScrolling = false
-        TranslationNotificationManager.cancelNotification(this)
-        overlayManager.removeAllOverlays()
-        try {
-            val prefs = getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
-            prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
-        } catch (e: Exception) {
-            Log.w("Translator", "Error unregistering prefListener in onDestroy", e)
-        }
+        releaseServiceResources()
     }
 
     override fun onInterrupt() {

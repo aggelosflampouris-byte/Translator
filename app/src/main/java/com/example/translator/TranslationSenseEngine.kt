@@ -13,11 +13,6 @@ import com.google.mlkit.nl.translate.TranslateLanguage
  */
 object TranslationSenseEngine {
 
-    private val URL_OR_DOMAIN_REGEX = Regex(
-        """(https?://|www\.|\.com|\.org|\.net|\.ly/|bit\.ly|waze\.com|facebook\.com|instagram\.com|tiktok\.com|twitter\.com|youtube\.com|/share/)""",
-        RegexOption.IGNORE_CASE
-    )
-
     private val COMMON_ENGLISH_TOKENS = setOf(
         "the", "be", "to", "of", "and", "a", "in", "that", "have", "i",
         "it", "for", "not", "on", "with", "he", "as", "you", "do", "at",
@@ -104,12 +99,12 @@ object TranslationSenseEngine {
         if (clean.length < 2) return false
 
         // Discard URLs, domains, and preview parameters
-        if (clean.contains(URL_OR_DOMAIN_REGEX)) {
+        if (ScriptDetector.containsUrlOrDomain(clean)) {
             return false
         }
 
-        val greekLetters = clean.count { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }
-        val latinLetters = clean.count { it in 'a'..'z' || it in 'A'..'Z' || it in "ăâîșțĂÂÎȘȚ" }
+        val greekLetters = ScriptDetector.countGreek(clean)
+        val latinLetters = ScriptDetector.countLatin(clean)
 
         // If target is Greek, discard text that is purely Greek or predominantly Greek
         if (targetLang == TranslateLanguage.GREEK) {
@@ -122,22 +117,23 @@ object TranslationSenseEngine {
         val words = clean.lowercase().split(Regex("""[^a-zăâîșț]+""")).filter { it.isNotBlank() }
         val englishTokenCount = words.count { COMMON_ENGLISH_TOKENS.contains(it) }
         val romanianTokenCount = words.count { COMMON_ROMANIAN_WORDS.contains(it) }
+        val hasRoDiacritics = ScriptDetector.hasRomanianDiacritics(clean)
 
         if (sourceLang == TranslateLanguage.ROMANIAN) {
             // Reject if identified language from ML Kit is explicitly non-Romanian (e.g. English "en", Spanish "es")
             if (identifiedLang != null && identifiedLang != "und" && identifiedLang != TranslateLanguage.ROMANIAN && identifiedLang != "ron") {
-                if (!clean.any { it in "ăâîșțĂÂÎȘȚ" }) {
+                if (!hasRoDiacritics) {
                     return false
                 }
             }
 
             // Reject if English tokens are dominant and there are no Romanian diacritics
-            if (englishTokenCount >= 2 && romanianTokenCount == 0 && !clean.any { it in "ăâîșțĂÂÎȘȚ" }) {
+            if (englishTokenCount >= 2 && romanianTokenCount == 0 && !hasRoDiacritics) {
                 return false
             }
 
             // 1. Definite Romanian diacritics (unmistakably Romanian)
-            if (clean.any { it in "ăâîșțĂÂÎȘȚ" }) return true
+            if (hasRoDiacritics) return true
 
             // 2. Specific Romanian vocabulary (excluding generic Romance prepositions)
             val specificRomanianTokens = words.count { COMMON_ROMANIAN_WORDS.contains(it) && !GENERIC_ROMANCE_PREPOSITIONS.contains(it) }
@@ -171,7 +167,7 @@ object TranslationSenseEngine {
             if (latinLetters < 2) return false
             if (englishTokenCount > 0) return true
             if (identifiedLang == TranslateLanguage.ENGLISH || identifiedLang == "eng") return true
-            if (clean.any { it in "ăâîșțĂÂÎȘȚ" } || romanianTokenCount > 0) return false
+            if (hasRoDiacritics || romanianTokenCount > 0) return false
             if (identifiedLang != null &&
                 identifiedLang != "und" &&
                 identifiedLang != TranslateLanguage.ENGLISH &&

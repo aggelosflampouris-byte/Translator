@@ -77,17 +77,8 @@ object TranslationFilter {
         if (!trimmed.any { it.isLetter() }) return false
 
         // Filter out URLs, schemes, domain extensions, and URL path fragments
-        if (trimmed.startsWith("http://", ignoreCase = true) ||
-            trimmed.startsWith("https://", ignoreCase = true) ||
-            trimmed.startsWith("www.", ignoreCase = true) ||
+        if (ScriptDetector.containsUrlOrDomain(trimmed) ||
             trimmed.contains("://") ||
-            trimmed.contains(".com", ignoreCase = true) ||
-            trimmed.contains(".org", ignoreCase = true) ||
-            trimmed.contains(".net", ignoreCase = true) ||
-            trimmed.contains(".ly/", ignoreCase = true) ||
-            trimmed.contains("bit.ly", ignoreCase = true) ||
-            trimmed.contains("waze.com", ignoreCase = true) ||
-            trimmed.contains("facebook.com", ignoreCase = true) ||
             (trimmed.startsWith("/") && !trimmed.contains(" ")) ||
             (trimmed.matches(URL_PATH_REGEX) && (trimmed.contains("/") || (trimmed.length > 8 && !trimmed.contains(" "))))) {
             return false
@@ -125,8 +116,8 @@ object TranslationFilter {
 
         // If target is Greek, skip any block that is purely or predominantly Greek text
         if (configuredTarget == TranslateLanguage.GREEK) {
-            val greekCharCount = trimmed.count { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }
-            val latinCharCount = trimmed.count { it in 'a'..'z' || it in 'A'..'Z' || it in "ăâîșțĂÂÎȘȚ" }
+            val greekCharCount = ScriptDetector.countGreek(trimmed)
+            val latinCharCount = ScriptDetector.countLatin(trimmed)
             if (greekCharCount > 0 && (latinCharCount == 0 || greekCharCount > latinCharCount)) {
                 return false
             }
@@ -166,8 +157,8 @@ object TranslationFilter {
      */
     fun isTargetLanguage(text: String, targetLang: String, candidates: List<IdentifiedLanguage>): Boolean {
         if (targetLang == TranslateLanguage.GREEK) {
-            val greekLetters = text.count { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }
-            val latinLetters = text.count { it in 'a'..'z' || it in 'A'..'Z' || it in "ăâîșțĂÂÎȘȚ" }
+            val greekLetters = ScriptDetector.countGreek(text)
+            val latinLetters = ScriptDetector.countLatin(text)
             if (greekLetters > 0 && greekLetters >= latinLetters) return true
         }
         val targetCandidate = candidates.firstOrNull { it.languageTag == targetLang }
@@ -184,14 +175,12 @@ object TranslationFilter {
     fun isMatchingSourceLanguage(text: String, sourceLang: String, candidates: List<IdentifiedLanguage>): Boolean {
         // Romanian specific check: diacritics, common vocabulary, or Latin script without strong conflict
         if (sourceLang == TranslateLanguage.ROMANIAN) {
-            val hasRomanianDiacritics = text.any { it in "ăâîșțĂÂÎȘȚ" }
-            if (hasRomanianDiacritics) return true
+            if (ScriptDetector.hasRomanianDiacritics(text)) return true
 
             val words = text.lowercase().split(Regex("""[^a-zăâîșț]+""")).filter { it.isNotBlank() }
             if (words.any { TranslationSenseEngine.COMMON_ROMANIAN_WORDS.contains(it) }) return true
 
-            val latinCharCount = text.count { it in 'a'..'z' || it in 'A'..'Z' || it in "ăâîșțĂÂÎȘȚ" }
-            if (latinCharCount >= 2) {
+            if (ScriptDetector.countLatin(text) >= 2) {
                 val conflictingHighConfidence = candidates.firstOrNull {
                     it.languageTag != TranslateLanguage.ROMANIAN && it.languageTag != "und" && it.confidence >= 0.65f
                 }

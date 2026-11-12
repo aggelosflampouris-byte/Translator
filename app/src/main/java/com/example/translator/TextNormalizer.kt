@@ -20,15 +20,8 @@ object TextNormalizer {
      * el usuario escribe en el teclado, sin requerir configuración manual constante.
      */
     fun detectScriptType(text: String): ScriptType {
-        var greekCount = 0
-        var latinCount = 0
-        for (ch in text) {
-            if ((ch in '\u0370'..'\u03FF') || (ch in '\u1F00'..'\u1FFF')) {
-                greekCount++
-            } else if ((ch in 'a'..'z') || (ch in 'A'..'Z') || (ch in "ăâîșțĂÂÎȘȚ")) {
-                latinCount++
-            }
-        }
+        val greekCount = ScriptDetector.countGreek(text)
+        val latinCount = ScriptDetector.countLatin(text)
         return when {
             greekCount > 0 && greekCount >= latinCount -> ScriptType.GREEK
             latinCount > greekCount -> ScriptType.LATIN

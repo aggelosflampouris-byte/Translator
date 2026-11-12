@@ -322,8 +322,10 @@ fun MainScreen(
       modelStatus = "Downloading language models..."
       clientForward.downloadModelIfNeeded(conditions)
           .addOnSuccessListener {
+              TranslatorPool.markPairReady(sourceCode, target)
               clientReverse.downloadModelIfNeeded(conditions)
                   .addOnSuccessListener {
+                      TranslatorPool.markPairReady(target, sourceCode)
                       modelStatus = "Language models ready (offline)"
                   }
                   .addOnFailureListener {
@@ -764,7 +766,7 @@ fun MainScreen(
                   color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
               )
 
-              // Por qué: Motor neuronal contextual en el dispositivo sin requerir el archivo obsoleto de 1.3 GB
+              // Por qué: Activa o desactiva la aplicación del glosario aprendido y la validación de alfabeto
               Row(
                   modifier = Modifier.fillMaxWidth(),
                   verticalAlignment = Alignment.CenterVertically,
@@ -773,7 +775,7 @@ fun MainScreen(
                   Column(modifier = Modifier.weight(1f)) {
                       Row(verticalAlignment = Alignment.CenterVertically) {
                           Text(
-                              text = "Neural MT Engine",
+                              text = "Apply Glossary & Validation",
                               style = MaterialTheme.typography.bodyMedium,
                               color = MaterialTheme.colorScheme.onSurface
                           )
@@ -783,7 +785,7 @@ fun MainScreen(
                               color = if (aiTranslationEnabled) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
                           ) {
                               Text(
-                                  text = if (aiTranslationEnabled) "Contextual" else "Standard",
+                                  text = if (aiTranslationEnabled) "Active" else "Raw NMT",
                                   style = MaterialTheme.typography.labelSmall,
                                   color = if (aiTranslationEnabled) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
                                   modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -792,7 +794,7 @@ fun MainScreen(
                       }
                       Spacer(modifier = Modifier.height(2.dp))
                       Text(
-                          text = "On-device neural refinement with slang, idiom & sense disambiguation.",
+                          text = "Applies your learned vocabulary fixes and verifies target script output.",
                           style = MaterialTheme.typography.bodySmall,
                           color = MaterialTheme.colorScheme.onSurfaceVariant,
                           maxLines = 2,
