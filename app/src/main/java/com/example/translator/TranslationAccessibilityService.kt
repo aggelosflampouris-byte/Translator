@@ -189,6 +189,9 @@ class TranslationAccessibilityService : AccessibilityService() {
                 activeScanLoopJob?.cancel()
                 isScreenScrolling = false
             } else {
+                val latestPrefs = getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
+                enabledTargetPackages = TargetAppCatalog.getEnabledPackages(latestPrefs, packageName)
+                syncAccessibilityPackageScope()
                 startActiveScanning()
             }
         }
@@ -207,7 +210,12 @@ class TranslationAccessibilityService : AccessibilityService() {
             serviceScope.launch {
                 isScreenScrolling = false
                 lastScrollTimestamp = 0L
-                val activeTarget = resolveForegroundTargetPackage()
+                var activeTarget = resolveForegroundTargetPackage()
+                if (activeTarget == null) {
+                    // Por qué: Al pulsar la acción desde la barra de notificaciones, SystemUI tarda ~300ms en cerrarse
+                    delay(350L)
+                    activeTarget = resolveForegroundTargetPackage()
+                }
                 handleForegroundTargetTransition(activeTarget)
                 if (activeTarget == null) {
                     mainHandler.post {
@@ -229,11 +237,13 @@ class TranslationAccessibilityService : AccessibilityService() {
         try {
             val info = serviceInfo ?: android.accessibilityservice.AccessibilityServiceInfo()
             val scope = enabledTargetPackages
-            // Por qué: Nunca asignar null a packageNames porque en Android significa escuchar todas las apps del dispositivo
+            // Por qué: Cuando hay apps habilitadas dejamos packageNames en null a nivel de sistema para recibir
+            // transiciones de ventana (lanzador, teclado, Messenger/Litho) sin bloqueos de caché de OEM,
+            // aplicando el filtrado estricto de paquetes en isEnabledTargetPackage().
             info.packageNames = if (scope.isEmpty()) {
                 arrayOf("${applicationContext.packageName}.none")
             } else {
-                scope.toTypedArray()
+                null
             }
             info.flags = info.flags or
                 android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
@@ -260,6 +270,15 @@ class TranslationAccessibilityService : AccessibilityService() {
 
     private fun isBlockedNonTargetPackage(pkg: String?): Boolean {
         return TargetAppCatalog.isBlockedSensitivePackage(pkg, applicationContext.packageName)
+    }
+
+    // Por qué: Distingue superficies superpuestas transitorias (teclado IME, barra del sistema o burbuja propia)
+    // para que resolveForegroundTargetPackage inspeccione la ventana TYPE_APPLICATION subyacente en lugar de abortar.
+    private fun isTransientOverlayOrInputPackage(pkg: String?): Boolean {
+        if (pkg.isNullOrBlank()) return true
+        if (pkg == applicationContext.packageName) return true
+        if (pkg == "com.android.systemui") return true
+        return isKeyboardPackage(pkg)
     }
 
     private fun isKeyboardPackage(pkg: String?): Boolean {
@@ -290,11 +309,11 @@ class TranslationAccessibilityService : AccessibilityService() {
             val active = rootInActiveWindow
             if (active != null) {
                 val pkg = active.packageName?.toString() ?: ""
-                if (isBlockedNonTargetPackage(pkg)) {
-                    return null
-                }
                 if (isEnabledTargetPackage(pkg)) {
                     return pkg
+                }
+                if (!isTransientOverlayOrInputPackage(pkg) && isBlockedNonTargetPackage(pkg)) {
+                    return null
                 }
             }
         } catch (e: Exception) {
@@ -308,16 +327,16 @@ class TranslationAccessibilityService : AccessibilityService() {
                     if (window.type == AccessibilityWindowInfo.TYPE_APPLICATION && window.isActive) {
                         val root = window.root ?: continue
                         val pkg = root.packageName?.toString() ?: ""
-                        if (isBlockedNonTargetPackage(pkg)) {
-                            return null
-                        }
                         if (isEnabledTargetPackage(pkg)) {
                             return pkg
+                        }
+                        if (!isTransientOverlayOrInputPackage(pkg) && isBlockedNonTargetPackage(pkg)) {
+                            return null
                         }
                     }
                 }
 
-                // Por qué: Si el teclado IME tiene el foco activo, inspecciona la ventana de app subyacente
+                // Por qué: Si el teclado IME o barra del sistema tiene el foco activo, inspecciona la ventana de app subyacente
                 val appWindows = windowList.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
                 if (appWindows.isNotEmpty()) {
                     val activeApp = appWindows.firstOrNull { it.isActive } ?: appWindows.firstOrNull()
@@ -494,21 +513,8 @@ class TranslationAccessibilityService : AccessibilityService() {
         val activePkg = resolveForegroundTargetPackage() ?: return null
         handleForegroundTargetTransition(activePkg)
 
-        if (eventSource != null) {
-            try {
-                var current: AccessibilityNodeInfo = eventSource
-                while (true) {
-                    val parent = current.parent ?: break
-                    current = parent
-                }
-                if (current.packageName?.toString() == activePkg) {
-                    return current
-                }
-            } catch (e: Exception) {
-                // Ignore recycled node
-            }
-        }
-
+        // Por qué: Prioriza siempre la raíz real de la ventana (rootInActiveWindow / windows) sobre eventSource,
+        // ya que en frameworks como Litho (Messenger) eventSource.parent puede detenerse en un subnodo parcial.
         try {
             val active = rootInActiveWindow
             if (active != null && active.packageName?.toString() == activePkg) {
@@ -532,6 +538,25 @@ class TranslationAccessibilityService : AccessibilityService() {
             }
         } catch (e: Exception) {
             Log.w("Translator", "Error querying windows in accessibility service", e)
+        }
+
+        if (eventSource != null) {
+            try {
+                var current: AccessibilityNodeInfo = eventSource
+                while (true) {
+                    val parent = current.parent ?: break
+                    current = parent
+                }
+                if (current.packageName?.toString() == activePkg) {
+                    val bounds = Rect()
+                    current.getBoundsInScreen(bounds)
+                    if (bounds.height() >= resources.displayMetrics.heightPixels / 2) {
+                        return current
+                    }
+                }
+            } catch (e: Exception) {
+                // Ignore recycled node
+            }
         }
 
         return null
@@ -765,16 +790,32 @@ class TranslationAccessibilityService : AccessibilityService() {
             return true
         }
 
-        // Por qué: Descarta controles interactivos e imágenes para extraer únicamente texto de mensajes
+        // Por qué: Descarta controles no textuales e imágenes sin bloquear burbujas clicables de Litho (Messenger/Instagram)
+        // que exponen AccessibilityRole.BUTTON ("android.widget.Button").
         val className = node.className?.toString() ?: ""
         if (className.contains("Image", ignoreCase = true) ||
-            className.contains("Button", ignoreCase = true) ||
             className.contains("CheckBox", ignoreCase = true) ||
-            className.contains("Switch", ignoreCase = true)) {
+            className.contains("Switch", ignoreCase = true) ||
+            className.contains("SeekBar", ignoreCase = true) ||
+            className.contains("ProgressBar", ignoreCase = true) ||
+            className.contains("EditText", ignoreCase = true)) {
             return false
         }
 
-        val rawText = node.text?.toString()
+        // Por qué: Frameworks como Litho (Messenger/Instagram) y celdas personalizadas suelen exponer el texto
+        // del mensaje en contentDescription cuando no emplean TextView nativos.
+        val isScrollableContainer = node.isScrollable ||
+            className.contains("RecyclerView", ignoreCase = true) ||
+            className.contains("ListView", ignoreCase = true) ||
+            className.contains("ScrollView", ignoreCase = true) ||
+            className.contains("ViewPager", ignoreCase = true) ||
+            className.contains("Toolbar", ignoreCase = true)
+        val directText = node.text?.toString()?.takeIf { it.isNotBlank() }
+        val rawText = directText ?: if (!isScrollableContainer) {
+            node.contentDescription?.toString()?.takeIf { it.isNotBlank() }
+        } else {
+            null
+        }
         if (rawText.isNullOrBlank()) {
             return false
         }
@@ -788,6 +829,11 @@ class TranslationAccessibilityService : AccessibilityService() {
             val screenWidth = resources.displayMetrics.widthPixels
             val screenHeight = resources.displayMetrics.heightPixels
             val density = resources.displayMetrics.density
+
+            // Por qué: Si el texto provino de contentDescription, descarta iconos cuadrados pequeños (botones de llamada/cámara)
+            if (directText == null && rect.width() < (48 * density).toInt() && rect.height() < (48 * density).toInt()) {
+                return false
+            }
 
             // Por qué: Solo expande al contenedor padre en apps con burbujas aisladas; en filas anchas
             // (como Discord o Messenger) limita la expansión para no cubrir avatares ni cabeceras de usuario.
@@ -813,11 +859,19 @@ class TranslationAccessibilityService : AccessibilityService() {
                 }
             }
 
+            // Por qué: Cuando Litho (Messenger) o ChatMessageCell (Telegram) aplana la fila del mensaje a todo el ancho
+            // de la pantalla, aplica un margen horizontal limpio para pasar la validación de burbuja y no tocar bordes.
+            if (rect.width() >= (screenWidth * 0.94f).toInt() && rect.height() <= (screenHeight * 0.45f).toInt()) {
+                val horizontalMargin = (16 * density).toInt()
+                rect.left = (rect.left + horizontalMargin).coerceAtMost(rect.right - 24)
+                rect.right = (rect.right - horizontalMargin).coerceAtLeast(rect.left + 24)
+            }
+
             // Validate chat message bubble based on active app alignment layout
             val isBubble = TranslationSenseEngine.isMessageBubble(rect.left, rect.right, screenWidth, profile.alignmentMode)
             val visibleMargin = (20 * density).toInt()
 
-            if (isBubble && rect.width() > (30 * density).toInt() && rect.height() > (16 * density).toInt() &&
+            if (isBubble && rect.width() > (22 * density).toInt() && rect.height() > (16 * density).toInt() &&
                 rect.bottom > minY + visibleMargin && rect.top < maxY - visibleMargin) {
                 val clampedRect = Rect(
                     rect.left,
@@ -1338,9 +1392,12 @@ class TranslationAccessibilityService : AccessibilityService() {
     }
 
     private fun findFirstTextChild(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        if (!node.isEditable && !node.text.isNullOrBlank()) {
+        val hasDirectOrDescText = !node.text.isNullOrBlank() || (node.childCount <= 3 && !node.contentDescription.isNullOrBlank())
+        if (!node.isEditable && hasDirectOrDescText) {
             val cls = node.className?.toString() ?: ""
-            if (!cls.contains("Image", ignoreCase = true) && !cls.contains("Button", ignoreCase = true)) {
+            if (!cls.contains("Image", ignoreCase = true) &&
+                !cls.contains("CheckBox", ignoreCase = true) &&
+                !cls.contains("Switch", ignoreCase = true)) {
                 return node
             }
         }
@@ -1367,7 +1424,9 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         try {
             val nodeWithText = findFirstTextChild(sourceNode) ?: sourceNode
-            val text = nodeWithText.text?.toString() ?: ""
+            val text = nodeWithText.text?.toString()?.takeIf { it.isNotBlank() }
+                ?: nodeWithText.contentDescription?.toString()
+                ?: ""
 
             if (text.isBlank()) return
             val cleanText = TranslationFilter.cleanMessageText(text).trim()
@@ -1377,6 +1436,13 @@ class TranslationAccessibilityService : AccessibilityService() {
             val rect = Rect()
             nodeWithText.getBoundsInScreen(rect)
             val screenWidth = resources.displayMetrics.widthPixels
+            val screenHeight = resources.displayMetrics.heightPixels
+            val density = resources.displayMetrics.density
+            if (rect.width() >= (screenWidth * 0.94f).toInt() && rect.height() <= (screenHeight * 0.45f).toInt()) {
+                val horizontalMargin = (16 * density).toInt()
+                rect.left = (rect.left + horizontalMargin).coerceAtMost(rect.right - 24)
+                rect.right = (rect.right - horizontalMargin).coerceAtLeast(rect.left + 24)
+            }
             if (!TranslationSenseEngine.isMessageBubble(rect, screenWidth, activeProfile.alignmentMode)) return
 
             // Por qué: Usa estrictamente el par de idiomas configurado por el usuario en el menú

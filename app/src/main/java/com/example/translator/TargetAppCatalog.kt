@@ -58,8 +58,8 @@ object TargetAppCatalog {
             displayName = "Messenger",
             packageNames = setOf("com.facebook.orca", "com.facebook.mlite"),
             alignmentMode = ChatAlignmentMode.LEFT_RIGHT_CHAT,
-            topInsetDp = 52,
-            bottomInsetDp = 44,
+            topInsetDp = 74,
+            bottomInsetDp = 48,
             expandContainerToParent = false,
             defaultEnabled = true
         ),

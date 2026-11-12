@@ -233,8 +233,25 @@ class TranslationFilterTest {
         assertEquals("Ne vedem diseară", TranslationFilter.cleanMessageText("Ne vedem diseară, 14:32, edited"))
         assertEquals("Salutare tuturor", TranslationFilter.cleanMessageText("Salutare tuturor (edited)"))
         assertEquals("Ajung imediat", TranslationFilter.cleanMessageText("Ajung imediat, Seen"))
+        assertEquals(
+            "Bună ziua mâine am o lecție în orele de dimineață. Apoi vom merge cu tovarășul la cafenea de lângă Mojo și apoi vom mânca în piață. Care va veni?",
+            TranslationFilter.cleanMessageText(
+                "Εσείς στείλατε: Bună ziua mâine am o lecție în orele de dimineață. Apoi vom merge cu tovarășul la cafenea de lângă Mojo și apoi vom mânca în piață. Care va veni?, Εστάλη"
+            )
+        )
+        assertTrue(
+            TranslationFilter.shouldTranslate(
+                "Εσείς στείλατε: Bună ziua mâine am o lecție în orele de dimineață. Apoi vom merge cu tovarășul la cafenea de lângă Mojo și apoi vom mânca în piață. Care va veni?, Εστάλη",
+                TranslateLanguage.GREEK,
+                TranslateLanguage.ROMANIAN
+            )
+        )
 
         assertFalse(TranslationFilter.shouldTranslate("Today at 2:30 PM", TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.shouldTranslate("ΤΕΤ ΣΤΙΣ 6:02 Μ.Μ.", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.shouldTranslate("Ενεργός/ή τώρα", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.shouldTranslate("Απαντήσατε στο χρήστη Λευτέρης", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.shouldTranslate("Εστάλη", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK))
         assertFalse(TranslationFilter.shouldTranslate("Seen", TranslateLanguage.GREEK))
         assertFalse(TranslationFilter.shouldTranslate("Liked a message", TranslateLanguage.GREEK))
         assertFalse(TranslationFilter.shouldTranslate("BOT", TranslateLanguage.GREEK))

@@ -12,15 +12,19 @@ object TranslationFilter {
     private val URL_PATH_REGEX = Regex("""^/?[a-zA-Z0-9_\-/%?&=.]+$""")
     private val TIMESTAMP_REGEX = Regex("""^\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?$""", RegexOption.IGNORE_CASE)
     private val CHAT_RELATIVE_TIMESTAMP_REGEX = Regex(
-        """^(today|yesterday|σήμερα|χθες|astăzi|ieri)\s+at\s+\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?$""",
+        """^([a-zA-Zα-ωΑ-ΩάέήίόύώϊϋΐΰăâîșțĂÂÎȘȚ.]+\s+)?(today|yesterday|σήμερα|σημερα|χθες|astăzi|astazi|ieri|mon|tue|wed|thu|fri|sat|sun|δευ|τρι|τετ|πεμ|παρ|σαβ|κυρ|lun|mar|mie|joi|vin|sâm|sam|dum)?\s*(at|στις|στὶς|la)\s+\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?$""",
+        RegexOption.IGNORE_CASE
+    )
+    private val LEADING_SENDER_PREFIX_REGEX = Regex(
+        """^(you sent|you replied|εσείς στείλατε|εσεις στειλατε|στείλατε|στειλατε|απαντήσατε|απαντησατε|ai trimis|ai răspuns|ai raspuns)\s*:\s*""",
         RegexOption.IGNORE_CASE
     )
     private val CHAT_STATUS_REGEX = Regex(
-        """[,.\s\n]+(delivered|read|sent|seen|pending|unread|edited|\(edited\)|επεξεργάστηκε|\(επεξεργάστηκε\)|editat|παραδόθηκε|διαβάστηκε|στάλθηκε|σε εκκρεμότητα|trimis|citit|citiți|cititi|livrat|în așteptare|[✓✔\u2713\u2714\u2705]+)\s*$""",
+        """[,.\s\n]+(delivered|read|sent|seen|pending|unread|edited|\(edited\)|επεξεργάστηκε|\(επεξεργάστηκε\)|editat|παραδόθηκε|διαβάστηκε|στάλθηκε|εστάλη|εσταλη|το είδε|το ειδε|σε εκκρεμότητα|trimis|citit|citiți|cititi|livrat|în așteptare|[✓✔\u2713\u2714\u2705]+)\s*$""",
         RegexOption.IGNORE_CASE
     )
     private val STANDALONE_STATUS_REGEX = Regex(
-        """^([,.:\s\n]*(\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?)?[,.:\s\n]*(delivered|read|sent|seen|pending|unread|edited|\(edited\)|επεξεργάστηκε|\(επεξεργάστηκε\)|editat|παραδόθηκε|παραδοθηκε|διαβάστηκε|διαβαστηκε|στάλθηκε|σταλθηκε|σε εκκρεμότητα|σε εκκρεμοτητα|εκκρεμεί|εκκρεμει|trimis|citit|citiți|cititi|livrat|în așteptare|in asteptare|[✓✔\u2713\u2714\u2705]+)[,.:\s\n]*)+$""",
+        """^([,.:\s\n]*(\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?)?[,.:\s\n]*(delivered|read|sent|seen|pending|unread|edited|\(edited\)|επεξεργάστηκε|\(επεξεργάστηκε\)|editat|παραδόθηκε|παραδοθηκε|διαβάστηκε|διαβαστηκε|στάλθηκε|σταλθηκε|εστάλη|εσταλη|το είδε|το ειδε|σε εκκρεμότητα|σε εκκρεμοτητα|εκκρεμεί|εκκρεμει|trimis|citit|citiți|cititi|livrat|în așteptare|in asteptare|[✓✔\u2713\u2714\u2705]+)[,.:\s\n]*)+$""",
         RegexOption.IGNORE_CASE
     )
     private val TRAILING_TIMESTAMP_REGEX = Regex("""[\s\n]+\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?(\s*[✓✔\u2713\u2714\u2705]+)?\s*$""", RegexOption.IGNORE_CASE)
@@ -29,7 +33,8 @@ object TranslationFilter {
     private val COMMON_UI_TOKENS = setOf(
         "μήνυμα", "type a message", "type a message...", "message", "aa", "signal message",
         "search", "αναζήτηση", "χθες", "σήμερα", "yesterday", "today", "online", "συνδέθηκε",
-        "active now", "typing...", "συνομιλίες", "ενημερώσεις", "κλήσεις",
+        "active now", "ενεργός τώρα", "ενεργή τώρα", "ενεργός/ή τώρα", "ενεργος/η τωρα",
+        "typing...", "συνομιλίες", "ενημερώσεις", "κλήσεις",
         "chats", "updates", "calls", "channels", "stories", "reels", "bot", "app"
     )
 
@@ -56,11 +61,15 @@ object TranslationFilter {
         "αυτοκαταστρεφόμενα μηνύματα",
         "mesaje temporare",
         "liked a message",
-        "reacted to your message"
+        "reacted to your message",
+        "απαντήσατε στο χρήστη",
+        "απαντησατε στο χρηστη",
+        "you replied to"
     )
 
     private val MESSAGE_STATUS_TOKENS = setOf(
         "διαβάστηκε", "διαβαστηκε", "παραδόθηκε", "παραδοθηκε", "στάλθηκε", "σταλθηκε",
+        "εστάλη", "εσταλη", "το είδε", "το ειδε",
         "σε εκκρεμότητα", "σε εκκρεμοτητα", "εκκρεμεί", "εκκρεμει", "μη αναγνωσμένο", "μη αναγνωσμενο",
         "επεξεργάστηκε", "επεξεργαστηκε",
         "read", "delivered", "sent", "seen", "pending", "unread", "edited", "(edited)",
@@ -147,8 +156,15 @@ object TranslationFilter {
      * edited tags, and delivery status markers across supported messaging apps.
      */
     fun cleanMessageText(text: String): String {
-        var cleaned = TextSanitizer.sanitizeSpecialCharacters(text)
-        // Por qué: Elimina marcadores de estado/edición y horas adjuntas en cualquier orden al final de la burbuja
+        var cleaned = TextSanitizer.sanitizeSpecialCharacters(text).trim()
+        // Por qué: Si el nodo completo es únicamente un separador de fecha/hora (ej. "ΤΕΤ ΣΤΙΣ 6:02 Μ.Μ."),
+        // se descarta por completo antes de recortar la hora final para no dejar fragmentos sueltos ("ΤΕΤ ΣΤΙΣ").
+        if (cleaned.matches(TIMESTAMP_REGEX) || cleaned.matches(CHAT_RELATIVE_TIMESTAMP_REGEX)) {
+            return ""
+        }
+        // Por qué: Elimina prefijos de accesibilidad de Messenger/Instagram ("Εσείς στείλατε: ", "You sent: ")
+        // y marcadores de estado/edición u horas adjuntas al final de la burbuja
+        cleaned = cleaned.replace(LEADING_SENDER_PREFIX_REGEX, "").trim()
         cleaned = cleaned.replace(CHAT_STATUS_REGEX, "").trim()
         cleaned = cleaned.replace(TRAILING_TIMESTAMP_REGEX, "").trim()
         cleaned = cleaned.replace(CHAT_STATUS_REGEX, "").trim()
