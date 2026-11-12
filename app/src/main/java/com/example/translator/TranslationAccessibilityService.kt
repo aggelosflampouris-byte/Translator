@@ -150,8 +150,12 @@ class TranslationAccessibilityService : AccessibilityService() {
     @Volatile private var lastTargetEventTimeMs: Long = 0L
     @Volatile private var cachedTargetRootPkg: String? = null
     @Volatile private var cachedTargetRootNode: AccessibilityNodeInfo? = null
+    @Volatile private var lastPartialTargetRootPkg: String? = null
+    @Volatile private var lastPartialTargetRootNode: AccessibilityNodeInfo? = null
     @Volatile private var lastRootExtractAttemptMs: Long = 0L
+    @Volatile private var lastRootExtractDiag: String = "init"
     @Volatile private var lastRootOrigin: String = "none"
+    @Volatile private var pendingScanWindowStartMs: Long = 0L
     @Volatile private var acceptedScrollCount: Int = 0
     @Volatile private var ignoredScrollCount: Int = 0
     @Volatile private var lastScrollDiag: String = "none"
@@ -188,7 +192,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         ServiceBridge.lastRuntimeTrace =
             "$tag | c=$connectCount s=$stateChangeCount l=$scanLoopTicks(alive=$loopAlive) e=$eventCount " +
             "svcPkgs=${enabledTargetPackages.size}(msg=$msgEnabled) scr=$isScreenScrolling($acceptedScrollCount/$ignoredScrollCount:$lastScrollDiag) " +
-            "fg=${lastForegroundTargetPackage ?: "null"} root=$lastRootOrigin res=$lastResolveReason " +
+            "fg=${lastForegroundTargetPackage ?: "null"} root=$lastRootOrigin($lastRootExtractDiag) res=$lastResolveReason " +
             "tgtEvt=${lastTargetEventPkg ?: "none"} lastEvt=${lastEventPkg ?: "none"}(${lastEventType}) seen=[${formatSeenPackages()}] " +
             "ext=[$lastExternalWindowsSummary]"
     }
@@ -452,7 +456,11 @@ class TranslationAccessibilityService : AccessibilityService() {
         if (activeTargetPkg == null || cachedTargetRootPkg != activeTargetPkg) {
             cachedTargetRootPkg = null
             cachedTargetRootNode = null
+            lastPartialTargetRootPkg = null
+            lastPartialTargetRootNode = null
         }
+        pendingScanWindowStartMs = 0L
+        pendingScanEventSource = null
         scrollSettleJob?.cancel()
         isScreenScrolling = false
         lastScrollPositionSig = null
@@ -663,12 +671,22 @@ class TranslationAccessibilityService : AccessibilityService() {
         var capturedSourceNode: AccessibilityNodeInfo? = null
         if (isTargetEvt && ServiceBridge.isTranslatingActive) {
             capturedSourceNode = event.source
-            if (capturedSourceNode != null &&
-                (nowMs - lastRootExtractAttemptMs >= 250L || cachedTargetRootPkg != packageName || cachedTargetRootNode == null)
-            ) {
+            // Por qué: si aún no tenemos root en caché, reintentamos cada 100ms (en vez de cada evento sin límite o 250ms)
+            // para capturar rápido un nodo válido de Messenger sin saturar el hilo con 200+ eventos/seg.
+            val minExtractIntervalMs = when {
+                cachedTargetRootPkg != packageName -> 0L
+                cachedTargetRootNode == null -> 100L
+                else -> 250L
+            }
+            if (capturedSourceNode != null) {
+                if (nowMs - lastRootExtractAttemptMs >= minExtractIntervalMs) {
+                    lastRootExtractAttemptMs = nowMs
+                    capturedSourceNode = extractTargetRootFromEventSource(capturedSourceNode, packageName, allowPartial = true)
+                        ?: capturedSourceNode
+                }
+            } else if (cachedTargetRootNode == null && lastPartialTargetRootNode == null && nowMs - lastRootExtractAttemptMs >= 1000L) {
                 lastRootExtractAttemptMs = nowMs
-                capturedSourceNode = extractTargetRootFromEventSource(capturedSourceNode, packageName, allowPartial = false)
-                    ?: capturedSourceNode
+                lastRootExtractDiag = "srcNull(t=${event.eventType})"
             }
         }
 
@@ -711,12 +729,17 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         when (event.eventType) {
             AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
-                if (!evaluateVerticalScrollEvent(event, capturedSourceNode ?: event.source)) {
+                val settleSource = capturedSourceNode ?: event.source
+                if (!evaluateVerticalScrollEvent(event, settleSource)) {
                     return
                 }
                 scanGeneration.incrementAndGet()
                 lastScrollTimestamp = android.os.SystemClock.uptimeMillis()
                 isScreenScrolling = true
+                pendingScanWindowStartMs = 0L
+                if (settleSource != null) {
+                    pendingScanEventSource = settleSource
+                }
                 scanDebounceJob?.cancel()
                 scrollSettleJob?.cancel()
 
@@ -734,8 +757,10 @@ class TranslationAccessibilityService : AccessibilityService() {
                     // antes de traducir, garantizando que la pantalla esté 100% estable.
                     delay(360L)
                     isScreenScrolling = false
+                    val sourceForSettle = settleSource ?: pendingScanEventSource
+                    pendingScanEventSource = null
                     if (isTargetAppInForeground() && ServiceBridge.isTranslatingActive) {
-                        scanAndTranslateVisibleMessages()
+                        scanAndTranslateVisibleMessages(sourceForSettle)
                     }
                 }
             }
@@ -767,6 +792,7 @@ class TranslationAccessibilityService : AccessibilityService() {
     }
 
     private var scanDebounceJob: Job? = null
+    @Volatile private var pendingScanEventSource: AccessibilityNodeInfo? = null
     // Por qué: Aplica un retraso controlado para no saturar con cancelaciones constantes en cada fotograma de desplazamiento
     private fun scheduleScan(delayMs: Long, eventSource: AccessibilityNodeInfo? = null) {
         if (!ServiceBridge.isTranslatingActive) return
@@ -783,12 +809,28 @@ class TranslationAccessibilityService : AccessibilityService() {
         if (!isScrollQuieted(now)) {
             return
         }
+        if (eventSource != null) {
+            pendingScanEventSource = eventSource
+        }
+        if (pendingScanWindowStartMs == 0L || scanDebounceJob?.isActive != true) {
+            pendingScanWindowStartMs = now
+        }
+        val elapsedSinceWindowStart = now - pendingScanWindowStartMs
+        // Por qué: Si una app como Messenger emite cambios continuos sin pausa de 360ms, limitar el aplazamiento a 750ms
+        // evita postergar el escaneo indefinidamente por cancelaciones consecutivas del debounce.
+        if (scanDebounceJob?.isActive == true && elapsedSinceWindowStart >= 750L) {
+            return
+        }
         scanDebounceJob?.cancel()
+        val effectiveDelayMs = minOf(delayMs, (750L - elapsedSinceWindowStart).coerceAtLeast(80L))
         scanDebounceJob = serviceScope.launch {
-            delay(delayMs)
+            delay(effectiveDelayMs)
+            pendingScanWindowStartMs = 0L
+            val sourceForScan = pendingScanEventSource ?: eventSource
+            pendingScanEventSource = null
             val nowAfterDelay = android.os.SystemClock.uptimeMillis()
             if (ServiceBridge.isTranslatingActive && isTargetAppInForeground() && isScrollQuieted(nowAfterDelay)) {
-                scanAndTranslateVisibleMessages(eventSource)
+                scanAndTranslateVisibleMessages(sourceForScan)
             }
         }
     }
@@ -863,28 +905,52 @@ class TranslationAccessibilityService : AccessibilityService() {
         allowPartial: Boolean
     ): AccessibilityNodeInfo? {
         if (source == null) return null
+        val minFullHeight = (getScreenHeightPx() / 4).coerceAtLeast(200)
         try {
             val winRoot = source.window?.root
-            if (winRoot != null && winRoot.packageName?.toString() == expectedPkg) {
-                val rect = Rect()
-                winRoot.getBoundsInScreen(rect)
-                if (rect.height() >= getScreenHeightPx() / 3) {
-                    cachedTargetRootPkg = expectedPkg
-                    cachedTargetRootNode = winRoot
-                    lastRootOrigin = "evtWin:${rect.height()}"
-                    return winRoot
+            if (winRoot != null) {
+                val winPkg = winRoot.packageName?.toString()
+                if (winPkg == expectedPkg) {
+                    val rect = Rect()
+                    winRoot.getBoundsInScreen(rect)
+                    if (rect.height() >= minFullHeight) {
+                        cachedTargetRootPkg = expectedPkg
+                        cachedTargetRootNode = winRoot
+                        lastRootOrigin = "evtWin:${rect.height()}"
+                        lastRootExtractDiag = "winOk:${rect.height()}"
+                        return winRoot
+                    } else if (rect.height() >= 150) {
+                        lastPartialTargetRootPkg = expectedPkg
+                        lastPartialTargetRootNode = winRoot
+                        lastRootExtractDiag = "winPart:${rect.height()}"
+                        if (allowPartial) {
+                            lastRootOrigin = "evtWinPart:${rect.height()}"
+                            return winRoot
+                        }
+                    } else {
+                        lastRootExtractDiag = "winSmall:${rect.height()}"
+                    }
+                } else {
+                    lastRootExtractDiag = "winPkg:${winPkg ?: "null"}"
                 }
             }
         } catch (_: Exception) {
-            // Ignore recycled source window
+            // Ignora ventana del nodo fuente ya reciclada
         }
 
         try {
             var current: AccessibilityNodeInfo = source
             var topTargetNode: AccessibilityNodeInfo? = if (current.packageName?.toString() == expectedPkg) current else null
             var hops = 0
-            while (hops < 40) {
-                val parent = current.parent ?: break
+            var stoppedReason = "cap120"
+            // Por qué: Jerarquías Litho/React/Compose profundas (como Messenger) superan 40 niveles;
+            // subir hasta 120 ancestros evita quedar atrapados en un subnodo pequeño cuando window.root es null.
+            while (hops < 120) {
+                val parent = current.parent
+                if (parent == null) {
+                    stoppedReason = "top"
+                    break
+                }
                 hops++
                 current = parent
                 if (current.packageName?.toString() == expectedPkg) {
@@ -892,22 +958,36 @@ class TranslationAccessibilityService : AccessibilityService() {
                 }
             }
             val candidate = topTargetNode ?: current
-            if (candidate.packageName?.toString() == expectedPkg) {
+            val candPkg = candidate.packageName?.toString()
+            if (candPkg == expectedPkg) {
                 val bounds = Rect()
                 candidate.getBoundsInScreen(bounds)
-                if (bounds.height() >= getScreenHeightPx() / 3) {
+                val cls = candidate.className?.toString()?.substringAfterLast('.') ?: "?"
+                if (bounds.height() >= minFullHeight) {
                     cachedTargetRootPkg = expectedPkg
                     cachedTargetRootNode = candidate
                     lastRootOrigin = "evtTree:${bounds.height()}(h=$hops)"
+                    lastRootExtractDiag = "treeOk:${bounds.height()}(h=$hops,$stoppedReason)"
                     return candidate
                 }
-                if (allowPartial && bounds.height() >= 150) {
-                    lastRootOrigin = "evtPartial:${bounds.height()}(h=$hops)"
-                    return candidate
+                if (bounds.height() >= 150) {
+                    // Por qué: Conserva subárboles útiles (>=150px) aunque sean menores a un cuarto de pantalla
+                    // para que el bucle periódico tenga un contenedor traducible si window.root sigue siendo null.
+                    lastPartialTargetRootPkg = expectedPkg
+                    lastPartialTargetRootNode = candidate
+                    lastRootExtractDiag = "part:${bounds.height()}(h=$hops,$cls,$stoppedReason)"
+                    if (allowPartial) {
+                        lastRootOrigin = "evtPartial:${bounds.height()}(h=$hops)"
+                        return candidate
+                    }
+                } else {
+                    lastRootExtractDiag = "small:${bounds.height()}x${bounds.width()}(h=$hops,$cls,$stoppedReason)"
                 }
+            } else {
+                lastRootExtractDiag = "diffPkg:${candPkg ?: "null"}(h=$hops,$stoppedReason)"
             }
-        } catch (_: Exception) {
-            // Ignore recycled node
+        } catch (e: Exception) {
+            lastRootExtractDiag = "exc:${e.javaClass.simpleName}"
         }
         return null
     }
@@ -924,6 +1004,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                 cachedTargetRootPkg = activePkg
                 cachedTargetRootNode = active
                 lastRootOrigin = "actWin"
+                lastRootExtractDiag = "actWin"
                 return active
             }
         } catch (e: Exception) {
@@ -946,6 +1027,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                         cachedTargetRootPkg = activePkg
                         cachedTargetRootNode = root
                         lastRootOrigin = "win@${window.layer}"
+                        lastRootExtractDiag = "win@${window.layer}"
                         return root
                     }
                 }
@@ -959,6 +1041,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             return fromEvent
         }
 
+        val minFullHeight = (getScreenHeightPx() / 4).coerceAtLeast(200)
         // Por qué: En escaneos periódicos sin eventSource (bucle de 2s) cuando window.root es null en One UI,
         // reutiliza la última raíz válida de Messenger tras refrescarla contra el árbol vivo.
         val cached = cachedTargetRootNode
@@ -967,14 +1050,23 @@ class TranslationAccessibilityService : AccessibilityService() {
                 if (cached.refresh() && cached.packageName?.toString() == activePkg) {
                     val rect = Rect()
                     cached.getBoundsInScreen(rect)
-                    if (rect.height() >= getScreenHeightPx() / 3) {
+                    if (rect.height() >= minFullHeight) {
                         lastRootOrigin = "cache:${rect.height()}"
                         return cached
+                    }
+                } else {
+                    cachedTargetRootPkg = null
+                    cachedTargetRootNode = null
+                    if (eventSource == null) {
+                        lastRootExtractDiag = "cacheStale"
                     }
                 }
             } catch (_: Exception) {
                 cachedTargetRootPkg = null
                 cachedTargetRootNode = null
+                if (eventSource == null) {
+                    lastRootExtractDiag = "cacheExc"
+                }
             }
         }
 
@@ -983,7 +1075,27 @@ class TranslationAccessibilityService : AccessibilityService() {
             return partialFallback
         }
 
-        lastRootOrigin = "null(evt=${eventSource != null},cache=${cached != null})"
+        val cachedPartial = lastPartialTargetRootNode
+        if (cachedPartial != null && lastPartialTargetRootPkg == activePkg) {
+            try {
+                if (cachedPartial.refresh() && cachedPartial.packageName?.toString() == activePkg) {
+                    val rect = Rect()
+                    cachedPartial.getBoundsInScreen(rect)
+                    if (rect.height() >= 150) {
+                        lastRootOrigin = "cachePart:${rect.height()}"
+                        return cachedPartial
+                    }
+                } else {
+                    lastPartialTargetRootPkg = null
+                    lastPartialTargetRootNode = null
+                }
+            } catch (_: Exception) {
+                lastPartialTargetRootPkg = null
+                lastPartialTargetRootNode = null
+            }
+        }
+
+        lastRootOrigin = "null(evt=${eventSource != null},cache=${cached != null},part=${cachedPartial != null},d=$lastRootExtractDiag)"
         return null
     }
 
@@ -1999,6 +2111,10 @@ class TranslationAccessibilityService : AccessibilityService() {
         isScreenScrolling = false
         cachedTargetRootPkg = null
         cachedTargetRootNode = null
+        lastPartialTargetRootPkg = null
+        lastPartialTargetRootNode = null
+        pendingScanWindowStartMs = 0L
+        pendingScanEventSource = null
         lastTargetEventPkg = null
         lastTargetEventTimeMs = 0L
         TranslationNotificationManager.cancelNotification(this)

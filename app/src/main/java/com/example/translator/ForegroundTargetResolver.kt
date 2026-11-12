@@ -41,6 +41,9 @@ data class ForegroundResolutionResult(
 object ForegroundTargetResolver {
 
     const val RECENT_EVENT_GRACE_MS = 5_000L
+    // Por qué: Mientras una ventana fullscreen sin root atribuido (p. ej. Messenger en One UI) sigue
+    // visible sin cambios ni scroll, la lectura pasiva puede superar 5s sin emitir nuevos eventos.
+    const val UNATTRIBUTED_WINDOW_GRACE_MS = 120_000L
 
     /**
      * Identifica superficies del sistema o teclado que flotan sobre la app de chat sin reemplazarla.
@@ -121,7 +124,7 @@ object ForegroundTargetResolver {
                         // Por qué: En One UI, Messenger puede aparecer como ventana TYPE_APPLICATION en capa superior
                         // sin root atribuido (window.root == null) sobre el lanzador en capa 0.
                         if (topPkg.isNullOrBlank() &&
-                            recentEventAgeMs in 0..RECENT_EVENT_GRACE_MS &&
+                            recentEventAgeMs in 0..UNATTRIBUTED_WINDOW_GRACE_MS &&
                             isEnabledTarget(recentEventPkg)
                         ) {
                             return ForegroundResolutionResult(recentEventPkg, "null_win_above_blocked=$recentEventPkg")
@@ -140,7 +143,7 @@ object ForegroundTargetResolver {
         if (topSubstantialWin != null) {
             val topPkg = topSubstantialWin.packageName
             if (topPkg.isNullOrBlank()) {
-                if (recentEventAgeMs in 0..RECENT_EVENT_GRACE_MS && isEnabledTarget(recentEventPkg)) {
+                if (recentEventAgeMs in 0..UNATTRIBUTED_WINDOW_GRACE_MS && isEnabledTarget(recentEventPkg)) {
                     return ForegroundResolutionResult(recentEventPkg, "null_top_win=$recentEventPkg")
                 }
                 return ForegroundResolutionResult(null, "null_win_no_recent")

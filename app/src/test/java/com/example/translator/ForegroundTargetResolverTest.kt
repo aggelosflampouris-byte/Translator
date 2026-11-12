@@ -222,5 +222,28 @@ class ForegroundTargetResolverTest {
         )
         assertNull(backHome.targetPackage)
     }
+
+    @Test
+    fun resolve_preservesMessengerDuringIdleReadingWhileUnattributedWindowRemainsVisible() {
+        val unattributedTopWin = AppWindowSnapshot(
+            packageName = null,
+            isActive = true,
+            isFocused = true,
+            layer = 0,
+            bounds = WindowRect(0, 0, 1080, 2316)
+        )
+        val idleReading = ForegroundTargetResolver.resolve(
+            activeWindowPkg = "com.android.systemui",
+            activeWindowBounds = WindowRect(0, 0, 1080, 135),
+            appWindows = listOf(unattributedTopWin),
+            screenWidthPx = 1080,
+            screenHeightPx = 2340,
+            recentEventPkg = "com.facebook.orca",
+            recentEventAgeMs = 15_000L,
+            enabledTargetPackages = enabledPkgs,
+            selfPackage = selfPkg
+        )
+        assertEquals("com.facebook.orca", idleReading.targetPackage)
+    }
 }
 
