@@ -18,6 +18,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -480,36 +481,149 @@ fun MainScreen(
       }
   }
 
+  // Por qué: El botón principal permanece fijo en la parte inferior del Scaffold para que siempre sea accesible sin desplazarse
   Scaffold(
-    snackbarHost = { SnackbarHost(snackbarHostState) }
+    snackbarHost = { SnackbarHost(snackbarHostState) },
+    bottomBar = {
+      Surface(
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 2.dp
+      ) {
+        Column(
+          modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+        ) {
+          if (!allPermissionsGranted) {
+            Button(
+              modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
+              shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+              enabled = false,
+              onClick = {}
+            ) {
+              Text(
+                text = "Grant Required Permissions Above",
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+              )
+            }
+          } else if (isServiceActive) {
+            OutlinedButton(
+              modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
+              shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+              onClick = {
+                context.stopService(Intent(context, FloatingBubbleService::class.java))
+                TranslationNotificationManager.cancelNotification(context)
+                ServiceBridge.isBubbleRunning = false
+                ServiceBridge.isNotificationActive = false
+                ServiceBridge.isTranslatingActive = false
+                ServiceBridge.onTranslationStateChanged?.invoke(false)
+                ServiceBridge.notifyUiStateChanged()
+                isServiceActive = false
+                android.widget.Toast.makeText(context, "Translator stopped", android.widget.Toast.LENGTH_SHORT).show()
+              }
+            ) {
+              Text(
+                text = "Stop Translator",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.error,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+              )
+            }
+          } else {
+            Button(
+              modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
+              shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+              onClick = {
+                ensureModelsDownloaded(sourceLanguage, targetLanguage)
+                if (controlInterface == AppDefaults.INTERFACE_NOTIFICATION) {
+                  if (ServiceBridge.isBubbleRunning) {
+                    context.stopService(Intent(context, FloatingBubbleService::class.java))
+                    ServiceBridge.isBubbleRunning = false
+                  }
+                  ServiceBridge.isTranslatingActive = true
+                  ServiceBridge.onTranslationStateChanged?.invoke(true)
+                  TranslationNotificationManager.showNotification(context, isTranslating = true)
+                  isServiceActive = true
+                  android.widget.Toast.makeText(context, "Translator active in notification drawer", android.widget.Toast.LENGTH_SHORT).show()
+                } else {
+                  TranslationNotificationManager.cancelNotification(context)
+                  ServiceBridge.isBubbleRunning = true
+                  val intent = Intent(context, FloatingBubbleService::class.java)
+                  context.startService(intent)
+                  ServiceBridge.notifyUiStateChanged()
+                  isServiceActive = true
+                  android.widget.Toast.makeText(context, "Floating bubble opened", android.widget.Toast.LENGTH_SHORT).show()
+                }
+              }
+            ) {
+              Text(
+                text = if (controlInterface == AppDefaults.INTERFACE_NOTIFICATION) "Start Notification Menu" else "Start Floating Bubble",
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+              )
+            }
+          }
+        }
+      }
+    }
   ) { innerPadding ->
     val scrollState = rememberScrollState()
+    val settingsEnabled = !isServiceActive
+
     Column(
       modifier = modifier
           .fillMaxSize()
           .padding(innerPadding)
-          .padding(horizontal = 20.dp, vertical = 20.dp)
+          .padding(horizontal = 16.dp, vertical = 10.dp)
           .verticalScroll(scrollState),
       horizontalAlignment = Alignment.Start,
-      verticalArrangement = Arrangement.Top
+      verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-      // Cabecera sobria y nativa con versión interactiva
+      // Cabecera compacta con indicador de bloqueo y versión interactiva
       Row(
           modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.SpaceBetween,
           verticalAlignment = Alignment.CenterVertically
       ) {
-          Column {
-              Text(
-                  text = "Translator",
-                  style = MaterialTheme.typography.headlineMedium,
-                  color = MaterialTheme.colorScheme.onBackground
-              )
-              Spacer(modifier = Modifier.height(2.dp))
+          Column(modifier = Modifier.weight(1f)) {
+              Row(verticalAlignment = Alignment.CenterVertically) {
+                  Text(
+                      text = "Translator",
+                      style = MaterialTheme.typography.titleLarge,
+                      color = MaterialTheme.colorScheme.onBackground
+                  )
+                  if (isServiceActive) {
+                      Spacer(modifier = Modifier.width(8.dp))
+                      Surface(
+                          shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
+                          color = MaterialTheme.colorScheme.secondaryContainer
+                      ) {
+                          Text(
+                              text = "Locked",
+                              style = MaterialTheme.typography.labelSmall,
+                              color = MaterialTheme.colorScheme.onSecondaryContainer,
+                              modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                          )
+                      }
+                  }
+              }
               Text(
                   text = "WhatsApp Bilingual Assistant",
                   style = MaterialTheme.typography.bodySmall,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis
               )
           }
 
@@ -540,29 +654,47 @@ fun MainScreen(
                   text = if (isCheckingForUpdate) "Checking..." else "v${BuildConfig.VERSION_NAME}",
                   style = MaterialTheme.typography.labelSmall,
                   color = MaterialTheme.colorScheme.onSurfaceVariant,
-                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
               )
           }
       }
 
-      Spacer(modifier = Modifier.height(18.dp))
-
       // ── Sección 1: Configuración de Traducción ────────────────────────────
       OutlinedCard(
           modifier = Modifier.fillMaxWidth(),
-          shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+          shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
           colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
       ) {
-          Column(modifier = Modifier.padding(16.dp)) {
-              Text(
-                  text = "Translation",
-                  style = MaterialTheme.typography.titleMedium,
-                  color = MaterialTheme.colorScheme.onSurface
-              )
-              Spacer(modifier = Modifier.height(12.dp))
+          Column(modifier = Modifier.padding(14.dp)) {
+              Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.SpaceBetween,
+                  verticalAlignment = Alignment.CenterVertically
+              ) {
+                  Text(
+                      text = "Languages",
+                      style = MaterialTheme.typography.titleSmall,
+                      color = MaterialTheme.colorScheme.onSurface
+                  )
+                  Row(verticalAlignment = Alignment.CenterVertically) {
+                      val isReady = modelStatus.contains("ready", ignoreCase = true)
+                      Surface(
+                          modifier = Modifier.size(7.dp),
+                          shape = androidx.compose.foundation.shape.CircleShape,
+                          color = if (isReady) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
+                      ) {}
+                      Spacer(modifier = Modifier.width(5.dp))
+                      Text(
+                          text = modelStatus,
+                          style = MaterialTheme.typography.labelSmall,
+                          color = MaterialTheme.colorScheme.onSurfaceVariant,
+                          maxLines = 1,
+                          overflow = TextOverflow.Ellipsis
+                      )
+                  }
+              }
 
-              // Por qué: Bloquea todos los ajustes del menú mientras el traductor está activo hasta que se detenga
-              val settingsEnabled = !isServiceActive
+              Spacer(modifier = Modifier.height(8.dp))
 
               // Selector de pares lingüísticos restringido a los idiomas disponibles
               Row(
@@ -591,7 +723,7 @@ fun MainScreen(
                               .apply()
                       },
                       enabled = settingsEnabled,
-                      modifier = Modifier.padding(horizontal = 4.dp)
+                      modifier = Modifier.size(36.dp)
                   ) {
                       Text(
                           text = "⇄",
@@ -612,36 +744,18 @@ fun MainScreen(
                   }
               }
 
-              Spacer(modifier = Modifier.height(8.dp))
-
-              // Estado de descarga de modelos sin conexión
-              Row(verticalAlignment = Alignment.CenterVertically) {
-                  val isReady = modelStatus.contains("ready", ignoreCase = true)
-                  Surface(
-                      modifier = Modifier.size(8.dp),
-                      shape = androidx.compose.foundation.shape.CircleShape,
-                      color = if (isReady) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
-                  ) {}
-                  Spacer(modifier = Modifier.width(6.dp))
-                  Text(
-                      text = modelStatus,
-                      style = MaterialTheme.typography.bodySmall,
-                      color = MaterialTheme.colorScheme.onSurfaceVariant
-                  )
-              }
-
               HorizontalDivider(
-                  modifier = Modifier.padding(vertical = 14.dp),
+                  modifier = Modifier.padding(vertical = 10.dp),
                   color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
               )
 
-              // Modo de traducción de mensajes (reemplaza switch confuso con selectores directos)
+              // Modo de traducción de mensajes con etiquetas compactas de una sola línea
               Text(
-                  text = "Chat Message Translation",
-                  style = MaterialTheme.typography.bodyMedium,
+                  text = "Chat Message Mode",
+                  style = MaterialTheme.typography.labelLarge,
                   color = MaterialTheme.colorScheme.onSurface
               )
-              Spacer(modifier = Modifier.height(8.dp))
+              Spacer(modifier = Modifier.height(6.dp))
               Row(
                   modifier = Modifier.fillMaxWidth(),
                   horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -652,8 +766,14 @@ fun MainScreen(
                           translationMode = AppDefaults.MODE_TAP
                           prefs.edit().putString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_TAP).apply()
                       },
-                      enabled = !isServiceActive,
-                      label = { Text("Tap Message") },
+                      enabled = settingsEnabled,
+                      label = {
+                          Text(
+                              text = "Tap Message",
+                              maxLines = 1,
+                              overflow = TextOverflow.Ellipsis
+                          )
+                      },
                       modifier = Modifier.weight(1f)
                   )
                   FilterChip(
@@ -662,29 +782,34 @@ fun MainScreen(
                           translationMode = AppDefaults.MODE_ALL
                           prefs.edit().putString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_ALL).apply()
                       },
-                      enabled = !isServiceActive,
-                      label = { Text("Auto-Translate All") },
+                      enabled = settingsEnabled,
+                      label = {
+                          Text(
+                              text = "Auto-Translate",
+                              maxLines = 1,
+                              overflow = TextOverflow.Ellipsis
+                          )
+                      },
                       modifier = Modifier.weight(1f)
                   )
               }
-              Spacer(modifier = Modifier.height(4.dp))
               Text(
                   text = if (translationMode == AppDefaults.MODE_TAP)
-                      "Tap any message in chat to reveal its translation. Leaves timestamps clean."
+                      "Tap any message in chat to reveal its translation."
                   else
-                      "Translates all messages on screen automatically as you view them.",
+                      "Translates visible chat messages automatically.",
                   style = MaterialTheme.typography.bodySmall,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis
               )
 
               HorizontalDivider(
-                  modifier = Modifier.padding(vertical = 14.dp),
+                  modifier = Modifier.padding(vertical = 10.dp),
                   color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
               )
 
-              // Por qué: Traducción neuronal especializada en el dispositivo (Index-Translate-2B)
-              // para capturar jerga, modismos e informalidad en 150 idiomas 100% offline y sin claves de API.
-              val isAiActive = isModelReady && aiTranslationEnabled
+              // Por qué: Motor neuronal contextual en el dispositivo sin requerir el archivo obsoleto de 1.3 GB
               Row(
                   modifier = Modifier.fillMaxWidth(),
                   verticalAlignment = Alignment.CenterVertically,
@@ -700,154 +825,39 @@ fun MainScreen(
                           Spacer(modifier = Modifier.width(6.dp))
                           Surface(
                               shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
-                              color = if (isAiActive) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                              color = if (aiTranslationEnabled) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
                           ) {
                               Text(
-                                  text = if (isAiActive) "Index-Translate 2B" else "ML Kit Local",
+                                  text = if (aiTranslationEnabled) "Contextual" else "Standard",
                                   style = MaterialTheme.typography.labelSmall,
-                                  color = if (isAiActive) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                  color = if (aiTranslationEnabled) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
                                   modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                               )
                           }
                       }
                       Spacer(modifier = Modifier.height(2.dp))
                       Text(
-                          text = "Dedicated 150-language machine translation model. Understands informal chat, slang, and idioms 100% offline.",
+                          text = "On-device neural refinement with slang, idiom & sense disambiguation.",
                           style = MaterialTheme.typography.bodySmall,
-                          color = MaterialTheme.colorScheme.onSurfaceVariant
+                          color = MaterialTheme.colorScheme.onSurfaceVariant,
+                          maxLines = 2,
+                          overflow = TextOverflow.Ellipsis
                       )
                   }
-                  Spacer(modifier = Modifier.width(12.dp))
+                  Spacer(modifier = Modifier.width(10.dp))
                   Switch(
-                      checked = isAiActive,
-                      enabled = !isServiceActive && isModelReady,
+                      checked = aiTranslationEnabled,
+                      enabled = settingsEnabled,
                       onCheckedChange = { isChecked ->
                           aiTranslationEnabled = isChecked
                           prefs.edit().putBoolean(AppDefaults.KEY_AI_ENABLED, isChecked).apply()
                       }
                   )
               }
-
-              Spacer(modifier = Modifier.height(10.dp))
-
-              when (val state = modelDownloadState) {
-                  is ModelAssetManager.DownloadState.Downloading -> {
-                      Column(modifier = Modifier.fillMaxWidth()) {
-                          LinearProgressIndicator(
-                              progress = { state.progressPercent / 100f },
-                              modifier = Modifier.fillMaxWidth().height(6.dp),
-                              color = MaterialTheme.colorScheme.primary,
-                          )
-                          Spacer(modifier = Modifier.height(4.dp))
-                          Row(
-                              modifier = Modifier.fillMaxWidth(),
-                              horizontalArrangement = Arrangement.SpaceBetween,
-                              verticalAlignment = Alignment.CenterVertically
-                          ) {
-                              Text(
-                                  text = "Downloading: ${state.progressPercent}% (${state.downloadedMB} MB / ${state.totalMB} MB)",
-                                  style = MaterialTheme.typography.labelSmall,
-                                  color = MaterialTheme.colorScheme.primary
-                              )
-                              TextButton(
-                                  onClick = { ModelAssetManager.cancelDownload() },
-                                  contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                              ) {
-                                  Text("Cancel", style = MaterialTheme.typography.labelSmall)
-                              }
-                          }
-                      }
-                  }
-                  is ModelAssetManager.DownloadState.Error -> {
-                      Column(modifier = Modifier.fillMaxWidth()) {
-                          Text(
-                              text = "Download error: ${state.message}",
-                              style = MaterialTheme.typography.labelSmall,
-                              color = MaterialTheme.colorScheme.error
-                          )
-                          Spacer(modifier = Modifier.height(4.dp))
-                          Row {
-                              Button(
-                                  onClick = {
-                                      coroutineScope.launch {
-                                          ModelAssetManager.startDownload(context)
-                                      }
-                                  },
-                                  contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-                              ) {
-                                  Text("Retry Download", style = MaterialTheme.typography.labelSmall)
-                              }
-                          }
-                      }
-                  }
-                  else -> {
-                      if (isModelReady) {
-                          Row(
-                              modifier = Modifier.fillMaxWidth(),
-                              horizontalArrangement = Arrangement.SpaceBetween,
-                              verticalAlignment = Alignment.CenterVertically
-                          ) {
-                              Text(
-                                  text = "✓ Model file installed (~1.3 GB)",
-                                  style = MaterialTheme.typography.labelSmall,
-                                  color = MaterialTheme.colorScheme.primary
-                              )
-                              TextButton(
-                                  onClick = {
-                                      ModelAssetManager.deleteModel(context)
-                                      isModelReady = false
-                                  },
-                                  enabled = !isServiceActive,
-                                  contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                              ) {
-                                  Text("Delete Model", style = MaterialTheme.typography.labelSmall, color = if (!isServiceActive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline)
-                              }
-                          }
-                      } else {
-                          Column(modifier = Modifier.fillMaxWidth()) {
-                              Text(
-                                  text = "Neural model not downloaded. Tap below to download or import your .gguf file.",
-                                  style = MaterialTheme.typography.bodySmall,
-                                  color = MaterialTheme.colorScheme.onSurfaceVariant
-                              )
-                              Spacer(modifier = Modifier.height(6.dp))
-                              Row(
-                                  modifier = Modifier.fillMaxWidth(),
-                                  horizontalArrangement = Arrangement.spacedBy(8.dp)
-                              ) {
-                                  Button(
-                                      onClick = {
-                                          coroutineScope.launch {
-                                              ModelAssetManager.startDownload(context)
-                                          }
-                                      },
-                                      enabled = !isServiceActive,
-                                      modifier = Modifier.weight(1f),
-                                      contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
-                                  ) {
-                                      Text("Download (1.3 GB)", style = MaterialTheme.typography.labelSmall)
-                                  }
-                                  OutlinedButton(
-                                      onClick = {
-                                          modelPickerLauncher.launch("*/*")
-                                      },
-                                      enabled = !isServiceActive,
-                                      modifier = Modifier.weight(1f),
-                                      contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
-                                  ) {
-                                      Text("Select .gguf File", style = MaterialTheme.typography.labelSmall)
-                                  }
-                              }
-                          }
-                      }
-                  }
-              }
           }
       }
 
-      Spacer(modifier = Modifier.height(14.dp))
-
-      // ── Sección 1b: Aprendizaje adaptativo ─────────────────────────────────
+      // ── Sección 2: Asistente de Teclado, Aprendizaje e Interfaz ────────────
       LaunchedEffect(Unit) {
           // Por qué: Refresca periódicamente las estadísticas mientras la pantalla está visible
           while (true) {
@@ -857,10 +867,54 @@ fun MainScreen(
       }
       OutlinedCard(
           modifier = Modifier.fillMaxWidth(),
-          shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+          shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
           colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
       ) {
-          Column(modifier = Modifier.padding(16.dp)) {
+          Column(modifier = Modifier.padding(14.dp)) {
+              Text(
+                  text = "Typing & Controls",
+                  style = MaterialTheme.typography.titleSmall,
+                  color = MaterialTheme.colorScheme.onSurface
+              )
+              Spacer(modifier = Modifier.height(8.dp))
+
+              // Asistente de escritura en teclado
+              Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.SpaceBetween
+              ) {
+                  Column(modifier = Modifier.weight(1f)) {
+                      Text(
+                          text = "Keyboard Draft Translator",
+                          style = MaterialTheme.typography.bodyMedium,
+                          color = MaterialTheme.colorScheme.onSurface
+                      )
+                      Text(
+                          text = "Translates outgoing messages in real-time as you type.",
+                          style = MaterialTheme.typography.bodySmall,
+                          color = MaterialTheme.colorScheme.onSurfaceVariant,
+                          maxLines = 1,
+                          overflow = TextOverflow.Ellipsis
+                      )
+                  }
+                  Spacer(modifier = Modifier.width(10.dp))
+                  Switch(
+                      checked = keyboardTranslatorEnabled,
+                      enabled = settingsEnabled,
+                      onCheckedChange = { isChecked ->
+                          keyboardTranslatorEnabled = isChecked
+                          prefs.edit().putBoolean(AppDefaults.KEY_KEYBOARD_ENABLED, isChecked).apply()
+                      }
+                  )
+              }
+
+              HorizontalDivider(
+                  modifier = Modifier.padding(vertical = 10.dp),
+                  color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+              )
+
+              // Aprendizaje adaptativo integrado de forma compacta
               Row(
                   modifier = Modifier.fillMaxWidth(),
                   verticalAlignment = Alignment.CenterVertically,
@@ -869,44 +923,88 @@ fun MainScreen(
                   Column(modifier = Modifier.weight(1f)) {
                       Text(
                           text = "Learn From My Edits",
-                          style = MaterialTheme.typography.titleMedium,
+                          style = MaterialTheme.typography.bodyMedium,
                           color = MaterialTheme.colorScheme.onSurface
                       )
-                      Spacer(modifier = Modifier.height(2.dp))
                       Text(
-                          text = "When you insert a draft, fix a word and send it, the translator remembers your wording. Everything stays on this phone.",
-                          style = MaterialTheme.typography.bodySmall,
-                          color = MaterialTheme.colorScheme.onSurfaceVariant
+                          text = "${learningStats.first} learned words · ${learningStats.second} phrases",
+                          style = MaterialTheme.typography.labelSmall,
+                          color = MaterialTheme.colorScheme.primary,
+                          maxLines = 1,
+                          overflow = TextOverflow.Ellipsis
                       )
                   }
-                  Spacer(modifier = Modifier.width(12.dp))
+                  if (learningStats.first + learningStats.second > 0) {
+                      TextButton(
+                          onClick = { showResetLearningDialog = true },
+                          enabled = settingsEnabled,
+                          contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                      ) {
+                          Text(
+                              text = "Reset",
+                              style = MaterialTheme.typography.labelSmall,
+                              color = if (settingsEnabled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline
+                          )
+                      }
+                  }
                   Switch(
                       checked = learningEnabled,
-                      enabled = !isServiceActive,
+                      enabled = settingsEnabled,
                       onCheckedChange = { isChecked ->
                           learningEnabled = isChecked
                           prefs.edit().putBoolean(AppDefaults.KEY_LEARNING_ENABLED, isChecked).apply()
                       }
                   )
               }
-              Spacer(modifier = Modifier.height(10.dp))
+
+              HorizontalDivider(
+                  modifier = Modifier.padding(vertical = 10.dp),
+                  color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+              )
+
+              // Método de control preferido
+              Text(
+                  text = "Control Interface",
+                  style = MaterialTheme.typography.labelLarge,
+                  color = MaterialTheme.colorScheme.onSurface
+              )
+              Spacer(modifier = Modifier.height(6.dp))
               Row(
                   modifier = Modifier.fillMaxWidth(),
-                  horizontalArrangement = Arrangement.SpaceBetween,
-                  verticalAlignment = Alignment.CenterVertically
+                  horizontalArrangement = Arrangement.spacedBy(8.dp)
               ) {
-                  Text(
-                      text = "${learningStats.first} learned words · ${learningStats.second} remembered phrases",
-                      style = MaterialTheme.typography.labelSmall,
-                      color = MaterialTheme.colorScheme.primary
+                  FilterChip(
+                      selected = controlInterface == AppDefaults.INTERFACE_NOTIFICATION,
+                      onClick = {
+                          controlInterface = AppDefaults.INTERFACE_NOTIFICATION
+                          prefs.edit().putString(AppDefaults.KEY_CONTROL_INTERFACE, AppDefaults.INTERFACE_NOTIFICATION).apply()
+                      },
+                      enabled = settingsEnabled,
+                      label = {
+                          Text(
+                              text = "Notification",
+                              maxLines = 1,
+                              overflow = TextOverflow.Ellipsis
+                          )
+                      },
+                      modifier = Modifier.weight(1f)
                   )
-                  TextButton(
-                      onClick = { showResetLearningDialog = true },
-                      enabled = !isServiceActive && learningStats.first + learningStats.second > 0,
-                      contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                  ) {
-                      Text("Reset", style = MaterialTheme.typography.labelSmall, color = if (!isServiceActive && learningStats.first + learningStats.second > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline)
-                  }
+                  FilterChip(
+                      selected = controlInterface == AppDefaults.INTERFACE_BUBBLE,
+                      onClick = {
+                          controlInterface = AppDefaults.INTERFACE_BUBBLE
+                          prefs.edit().putString(AppDefaults.KEY_CONTROL_INTERFACE, AppDefaults.INTERFACE_BUBBLE).apply()
+                      },
+                      enabled = settingsEnabled,
+                      label = {
+                          Text(
+                              text = "Floating Bubble",
+                              maxLines = 1,
+                              overflow = TextOverflow.Ellipsis
+                          )
+                      },
+                      modifier = Modifier.weight(1f)
+                  )
               }
           }
       }
@@ -931,152 +1029,50 @@ fun MainScreen(
           )
       }
 
-      Spacer(modifier = Modifier.height(14.dp))
-
-      // ── Sección 2: Asistente de Teclado e Interfaz ─────────────────────────
-      OutlinedCard(
-          modifier = Modifier.fillMaxWidth(),
-          shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
-          colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-      ) {
-          Column(modifier = Modifier.padding(16.dp)) {
-              Text(
-                  text = "Typing & Controls",
-                  style = MaterialTheme.typography.titleMedium,
-                  color = MaterialTheme.colorScheme.onSurface
-              )
-              Spacer(modifier = Modifier.height(12.dp))
-
-              // Asistente de escritura en teclado
-              Row(
-                  modifier = Modifier.fillMaxWidth(),
-                  verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.SpaceBetween
-              ) {
-                  Column(modifier = Modifier.weight(1f)) {
-                      Text(
-                          text = "Keyboard Assistant",
-                          style = MaterialTheme.typography.bodyMedium,
-                          color = MaterialTheme.colorScheme.onSurface
-                      )
-                      Spacer(modifier = Modifier.height(2.dp))
-                      Text(
-                          text = "Translates outgoing drafts in real-time above the keyboard while typing.",
-                          style = MaterialTheme.typography.bodySmall,
-                          color = MaterialTheme.colorScheme.onSurfaceVariant
-                      )
-                  }
-                  Spacer(modifier = Modifier.width(12.dp))
-                  Switch(
-                      checked = keyboardTranslatorEnabled,
-                      enabled = !isServiceActive,
-                      onCheckedChange = { isChecked ->
-                          keyboardTranslatorEnabled = isChecked
-                          prefs.edit().putBoolean(AppDefaults.KEY_KEYBOARD_ENABLED, isChecked).apply()
-                      }
-                  )
-              }
-
-              HorizontalDivider(
-                  modifier = Modifier.padding(vertical = 14.dp),
-                  color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-              )
-
-              // Método de control preferido
-              Text(
-                  text = "Control Interface",
-                  style = MaterialTheme.typography.bodyMedium,
-                  color = MaterialTheme.colorScheme.onSurface
-              )
-              Spacer(modifier = Modifier.height(8.dp))
-              Row(
-                  modifier = Modifier.fillMaxWidth(),
-                  horizontalArrangement = Arrangement.spacedBy(8.dp)
-              ) {
-                  FilterChip(
-                      selected = controlInterface == AppDefaults.INTERFACE_NOTIFICATION,
-                      onClick = {
-                          controlInterface = AppDefaults.INTERFACE_NOTIFICATION
-                          prefs.edit().putString(AppDefaults.KEY_CONTROL_INTERFACE, AppDefaults.INTERFACE_NOTIFICATION).apply()
-                      },
-                      enabled = !isServiceActive,
-                      label = { Text("Notification Menu") },
-                      modifier = Modifier.weight(1f)
-                  )
-                  FilterChip(
-                      selected = controlInterface == AppDefaults.INTERFACE_BUBBLE,
-                      onClick = {
-                          controlInterface = AppDefaults.INTERFACE_BUBBLE
-                          prefs.edit().putString(AppDefaults.KEY_CONTROL_INTERFACE, AppDefaults.INTERFACE_BUBBLE).apply()
-                      },
-                      enabled = !isServiceActive,
-                      label = { Text("Floating Bubble") },
-                      modifier = Modifier.weight(1f)
-                  )
-              }
-              Spacer(modifier = Modifier.height(4.dp))
-              Text(
-                  text = if (controlInterface == AppDefaults.INTERFACE_NOTIFICATION)
-                      "Controls appear in your notification drawer. Zero screen clutter over chat."
-                  else
-                      "Shows a movable floating button on your screen over WhatsApp.",
-                  style = MaterialTheme.typography.bodySmall,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant
-              )
-          }
-      }
-
-      Spacer(modifier = Modifier.height(14.dp))
-
       // ── Sección 3: Permisos del Sistema ────────────────────────────────────
       OutlinedCard(
           modifier = Modifier.fillMaxWidth(),
-          shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+          shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
           colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
       ) {
-          Column(modifier = Modifier.padding(16.dp)) {
+          Column(modifier = Modifier.padding(14.dp)) {
               Row(
                   modifier = Modifier.fillMaxWidth(),
                   horizontalArrangement = Arrangement.SpaceBetween,
                   verticalAlignment = Alignment.CenterVertically
               ) {
-                  Text(
-                      text = "System Permissions",
-                      style = MaterialTheme.typography.titleMedium,
-                      color = MaterialTheme.colorScheme.onSurface
-                  )
+                  Row(verticalAlignment = Alignment.CenterVertically) {
+                      Text(
+                          text = "System Permissions",
+                          style = MaterialTheme.typography.titleSmall,
+                          color = MaterialTheme.colorScheme.onSurface
+                      )
+                      if (allPermissionsGranted) {
+                          Spacer(modifier = Modifier.width(8.dp))
+                          Text(
+                              text = "· All active",
+                              style = MaterialTheme.typography.bodySmall,
+                              color = MaterialTheme.colorScheme.onSurfaceVariant
+                          )
+                      }
+                  }
                   if (allPermissionsGranted) {
                       Surface(
                           shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
                           color = MaterialTheme.colorScheme.primaryContainer
                       ) {
                           Text(
-                              text = "Ready",
+                              text = "✓ Ready",
                               style = MaterialTheme.typography.labelSmall,
                               color = MaterialTheme.colorScheme.onPrimaryContainer,
-                              modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                              modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                           )
                       }
                   }
               }
 
-              Spacer(modifier = Modifier.height(10.dp))
-
-              if (allPermissionsGranted) {
-                  Row(verticalAlignment = Alignment.CenterVertically) {
-                      Text(
-                          text = "✓",
-                          color = MaterialTheme.colorScheme.primary,
-                          style = MaterialTheme.typography.titleMedium
-                      )
-                      Spacer(modifier = Modifier.width(8.dp))
-                      Text(
-                          text = "All required permissions are enabled and active.",
-                          style = MaterialTheme.typography.bodyMedium,
-                          color = MaterialTheme.colorScheme.onSurfaceVariant
-                      )
-                  }
-              } else {
+              if (!allPermissionsGranted) {
+                  Spacer(modifier = Modifier.height(10.dp))
                   PermissionStatusRow(label = "Display over other apps", granted = canDrawOverlays) {
                       val intent = Intent(
                           Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -1097,7 +1093,7 @@ fun MainScreen(
                   }
 
                   if (!isAccessibilityEnabled) {
-                      Spacer(modifier = Modifier.height(10.dp))
+                      Spacer(modifier = Modifier.height(8.dp))
                       Row(
                           modifier = Modifier.fillMaxWidth(),
                           verticalAlignment = Alignment.CenterVertically,
@@ -1123,80 +1119,6 @@ fun MainScreen(
                       }
                   }
               }
-          }
-      }
-
-      Spacer(modifier = Modifier.height(24.dp))
-
-      // ── Botón de Acción Principal Dinámico (unificado sin botones redundantes) ──
-      if (!allPermissionsGranted) {
-          Button(
-              modifier = Modifier
-                  .fillMaxWidth()
-                  .height(50.dp),
-              shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-              enabled = false,
-              onClick = {}
-          ) {
-              Text("Grant Required Permissions Above", style = MaterialTheme.typography.bodyLarge)
-          }
-      } else if (isServiceActive) {
-          OutlinedButton(
-              modifier = Modifier
-                  .fillMaxWidth()
-                  .height(50.dp),
-              shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-              onClick = {
-                  context.stopService(Intent(context, FloatingBubbleService::class.java))
-                  TranslationNotificationManager.cancelNotification(context)
-                  ServiceBridge.isBubbleRunning = false
-                  ServiceBridge.isNotificationActive = false
-                  ServiceBridge.isTranslatingActive = false
-                  ServiceBridge.onTranslationStateChanged?.invoke(false)
-                  ServiceBridge.notifyUiStateChanged()
-                  isServiceActive = false
-                  android.widget.Toast.makeText(context, "Translator stopped", android.widget.Toast.LENGTH_SHORT).show()
-              }
-          ) {
-              Text(
-                  text = "Stop Translator",
-                  style = MaterialTheme.typography.bodyLarge,
-                  color = MaterialTheme.colorScheme.error
-              )
-          }
-      } else {
-          Button(
-              modifier = Modifier
-                  .fillMaxWidth()
-                  .height(50.dp),
-              shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-              onClick = {
-                  ensureModelsDownloaded(sourceLanguage, targetLanguage)
-                  if (controlInterface == AppDefaults.INTERFACE_NOTIFICATION) {
-                      if (ServiceBridge.isBubbleRunning) {
-                          context.stopService(Intent(context, FloatingBubbleService::class.java))
-                          ServiceBridge.isBubbleRunning = false
-                      }
-                      ServiceBridge.isTranslatingActive = true
-                      ServiceBridge.onTranslationStateChanged?.invoke(true)
-                      TranslationNotificationManager.showNotification(context, isTranslating = true)
-                      isServiceActive = true
-                      android.widget.Toast.makeText(context, "Translator active in notification drawer", android.widget.Toast.LENGTH_SHORT).show()
-                  } else {
-                      TranslationNotificationManager.cancelNotification(context)
-                      ServiceBridge.isBubbleRunning = true
-                      val intent = Intent(context, FloatingBubbleService::class.java)
-                      context.startService(intent)
-                      ServiceBridge.notifyUiStateChanged()
-                      isServiceActive = true
-                      android.widget.Toast.makeText(context, "Floating bubble opened", android.widget.Toast.LENGTH_SHORT).show()
-                  }
-              }
-          ) {
-              Text(
-                  text = if (controlInterface == AppDefaults.INTERFACE_NOTIFICATION) "Start Notification Menu" else "Start Floating Bubble",
-                  style = MaterialTheme.typography.bodyLarge
-              )
           }
       }
     }
@@ -1232,10 +1154,12 @@ fun LanguageDropdown(
         OutlinedTextField(
             modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
             readOnly = true,
+            singleLine = true,
             enabled = enabled,
             value = getDisplayName(selectedCode),
             onValueChange = {},
-            label = { Text(label) },
+            textStyle = MaterialTheme.typography.bodyMedium,
+            label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded && enabled) },
             colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
         )
