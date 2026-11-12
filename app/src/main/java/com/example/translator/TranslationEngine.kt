@@ -37,6 +37,7 @@ class IndexTranslationEngine(private val context: Context) : TranslationEngine {
             val trimmed = output.trim()
             if (trimmed.isBlank()) return false
             if (trimmed.equals(cleanInput.trim(), ignoreCase = true)) return false
+            if (TranslationPromptBuilder.hasSpecialCharacterCorruption(trimmed, cleanInput)) return false
 
             val lower = trimmed.lowercase()
             if (trimmed.startsWith("[Error", ignoreCase = true) ||
@@ -83,11 +84,11 @@ class IndexTranslationEngine(private val context: Context) : TranslationEngine {
         targetLang: String,
         hints: TranslationHints
     ): String? {
-        val cleanInput = text.trim()
+        val cleanInput = TranslationPromptBuilder.sanitizeSpecialCharacters(text)
         if (cleanInput.isBlank() || !cleanInput.any { it.isLetter() }) return null
 
         val raw = neuralBackend.translate(cleanInput, sourceLang, targetLang, hints) ?: return null
-        val cleaned = TranslationPromptBuilder.stripThink(raw)
+        val cleaned = TranslationPromptBuilder.stripThink(raw, cleanInput)
         val withGlossary = if (hints.preferredTerms.isNotEmpty()) {
             CorrectionApplier.apply(cleaned, hints.preferredTerms)
         } else {
@@ -97,7 +98,7 @@ class IndexTranslationEngine(private val context: Context) : TranslationEngine {
         return if (isValidTranslation(withGlossary, cleanInput, targetLang)) {
             withGlossary
         } else {
-            raw
+            cleaned.takeIf { it.isNotBlank() } ?: raw
         }
     }
 

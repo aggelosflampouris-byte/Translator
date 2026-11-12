@@ -158,7 +158,7 @@ object TranslationFilter {
      * and WhatsApp delivery status markers commonly grouped into chat bubble metadata.
      */
     fun cleanMessageText(text: String): String {
-        var cleaned = text.trim()
+        var cleaned = TranslationPromptBuilder.sanitizeSpecialCharacters(text)
         // Strip trailing WhatsApp status markers (e.g. ", Delivered", ", Παραδόθηκε")
         cleaned = cleaned.replace(WHATSAPP_STATUS_REGEX, "").trim()
         // Strip trailing timestamps (e.g. ", 7:27 μ.μ.")

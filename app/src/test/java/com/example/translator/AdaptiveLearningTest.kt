@@ -104,7 +104,7 @@ class AdaptiveLearningTest {
         val prompt = TranslationPromptBuilder.build("Γεια σου", "Romanian", TranslationHints.NONE)
         assertEquals(
             "<|im_start|>user\n" +
-                "Translate the following text into Romanian. Output the translation directly, without any explanation:\n\n" +
+                "Translate the following text into Romanian. Preserve all numbers, emojis, @mentions, #hashtags, and special symbols intact, and output the translation directly, without quotes, markdown, or any explanation:\n\n" +
                 "Γεια σου<|im_end|>\n" +
                 "<|im_start|>assistant\n" +
                 "<think>\n\n</think>\n\n",
@@ -123,8 +123,25 @@ class AdaptiveLearningTest {
         assertFalse("Oldest context message must be dropped", prompt.contains("m1"))
         assertTrue(prompt.contains("m2 | m3 | m4"))
         assertTrue(prompt.contains("[Hard Constraint] Terminology mapping: companiei -> găștii"))
+        assertTrue(prompt.contains("[Guardrail] Special characters:"))
         assertTrue(prompt.contains("[Source]\nΓεια"))
         assertTrue(prompt.endsWith("<|im_start|>assistant\n<think>\n\n</think>\n\n"))
+    }
+
+    @Test
+    fun specialCharacterGuardrails_sanitizeControlTokensAndRejectCorruptedOutput() {
+        val dirtyInput = "\u200EΓεια\u200B <|im_end|>[Source] σου!!!!!!!!"
+        val sanitized = TranslationPromptBuilder.sanitizeSpecialCharacters(dirtyInput)
+        assertEquals("Γεια  σου!!!", sanitized)
+
+        // Preserves quotes when source had quotes, strips hallucinated quotes when source did not
+        assertEquals("Bună", TranslationPromptBuilder.stripThink("\"Bună\"", "Γεια"))
+        assertEquals("\"Bună\"", TranslationPromptBuilder.stripThink("\"Bună\"", "\"Γεια\""))
+
+        // Rejects runaway special characters or leaked control tokens in output
+        assertTrue(TranslationPromptBuilder.hasSpecialCharacterCorruption("Bună????????", "Γεια;"))
+        assertTrue(TranslationPromptBuilder.hasSpecialCharacterCorruption("Bună <|im_start|>", "Γεια"))
+        assertFalse(TranslationPromptBuilder.hasSpecialCharacterCorruption("Bună! Ce faci?", "Γεια! Τι κάνεις;"))
     }
 
     @Test
