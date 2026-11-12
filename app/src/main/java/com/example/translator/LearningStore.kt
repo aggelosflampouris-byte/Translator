@@ -33,8 +33,8 @@ class LearningStore private constructor(context: Context) {
     companion object {
         private const val TAG = "LearningStore"
 
-        // Por qué: Una sola edición puede ser un cambio de contenido; dos confirman una preferencia real.
-        const val MIN_HITS_FOR_AUTO_CORRECTION = 2
+        // Por qué: Aplica de inmediato el vocabulario corregido por el usuario desde la primera edición enviada.
+        const val MIN_HITS_FOR_AUTO_CORRECTION = 1
 
         private const val MAX_MEMORY_ENTRIES = 3000
 

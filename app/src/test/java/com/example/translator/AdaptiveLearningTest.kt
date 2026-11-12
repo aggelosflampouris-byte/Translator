@@ -172,5 +172,33 @@ class AdaptiveLearningTest {
         assertTrue(TranslationPromptBuilder.hasContextLeak("Acesta este un mesaj de test Bună", "Γεια", hints))
         assertFalse(TranslationPromptBuilder.hasContextLeak("<think>\n\n</think>\n\nBună", "Γεια", hints))
     }
+
+    @Test
+    fun greekScriptRomanian_isRecognizedAndTranslated() {
+        val incoming = "Μπουνα σέρα ρε μαλακα"
+        assertTrue(TranslationSenseEngine.hasGreekScriptRomanian(incoming))
+        assertTrue(TranslationFilter.shouldTranslate(incoming, "el", "ro"))
+        assertEquals(
+            "Καλησπέρα ρε μαλάκα",
+            TranslationSenseEngine.resolveIdiomPreTranslation(incoming, "ro", "el")
+        )
+    }
+
+    @Test
+    fun mixedGreetingAndSenseNormalization_producesConsistentGreekOutput() {
+        assertEquals(
+            "Bună seara Giannis Acesta este un test",
+            TextNormalizer.restoreRomanianDiacritics("Good seara Giannis Acesta este un test")
+        )
+        assertEquals(
+            "Προσπαθώντας να καταλάβω πώς θα κάνω την εφαρμογή να δουλέψει για τον ηλίθιο της παρέας",
+            TranslationSenseEngine.applyPostTranslationSenseLogic(
+                originalText = "Încercând să dau seama că voi face cererea de a lucra pentru stupidul companiei",
+                translatedText = "Προσπαθώντας να καταλάβω ότι θα κάνω το αίτημα να εργαστεί για το ηλίθιο",
+                sourceLang = "ro",
+                targetLang = "el"
+            )
+        )
+    }
 }
 

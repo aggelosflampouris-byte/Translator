@@ -61,6 +61,44 @@ object TranslationSenseEngine {
 
     private val GENERIC_ROMANCE_PREPOSITIONS = setOf("de", "in", "e", "a", "la")
 
+    // Por qué: Expresiones rumanas escritas fonéticamente con alfabeto griego (ej. "Μπουνα σέρα ρε μαλακα")
+    private val GREEK_SCRIPT_ROMANIAN_MAP = listOf(
+        "μπουνα ντιμινεατσα" to "Καλημέρα",
+        "μπουνα σερα" to "Καλησπέρα",
+        "μπουνα ζιουα" to "Γεια σας",
+        "νοαπτε μπουνα" to "Καληνύχτα",
+        "τσε φατσι" to "Τι κάνεις",
+        "μουλτσουμεσκ" to "Ευχαριστώ"
+    )
+
+    fun hasGreekScriptRomanian(text: String): Boolean {
+        val norm = normalizeGreek(text)
+        return GREEK_SCRIPT_ROMANIAN_MAP.any { (greekRo, _) -> norm.contains(greekRo) }
+    }
+
+    private fun translateGreekScriptRomanian(text: String): String? {
+        val clean = text.trim()
+        val norm = normalizeGreek(clean)
+        if (!GREEK_SCRIPT_ROMANIAN_MAP.any { (greekRo, _) -> norm.contains(greekRo) }) {
+            return null
+        }
+        var result = clean
+        // Por qué: Sustituye el saludo rumano fonético en alfabeto griego por su equivalente griego real
+        val replacements = listOf(
+            Regex("""(?iu)μπο[υύ]να\s+ντιμιν[εέ][αά]τσα""") to "Καλημέρα",
+            Regex("""(?iu)μπο[υύ]να\s+σ[εέ]ρα""") to "Καλησπέρα",
+            Regex("""(?iu)μπο[υύ]να\s+ζ[ιί]ουα""") to "Γεια σας",
+            Regex("""(?iu)νο[αά]πτε\s+μπο[υύ]να""") to "Καληνύχτα",
+            Regex("""(?iu)τσε\s+φ[αά]τσι""") to "Τι κάνεις",
+            Regex("""(?iu)μουλτσουμ[εέ]σκ""") to "Ευχαριστώ"
+        )
+        for ((pattern, greekReplacement) in replacements) {
+            result = pattern.replace(result, greekReplacement)
+        }
+        result = result.replace(Regex("""(?iu)(?<!\p{L})μαλακα(?!\p{L})"""), "μαλάκα")
+        return result
+    }
+
     /**
      * Determines whether a recognized rectangle corresponds to a chat message bubble
      * (either incoming on the left or sent outgoing on the right), while filtering out
@@ -107,8 +145,11 @@ object TranslationSenseEngine {
             return false
         }
 
-        // If target is Greek, discard any text already composed of Greek script
+        // If target is Greek, discard any text already composed of Greek script unless it contains phonetic Romanian
         if (targetLang == TranslateLanguage.GREEK) {
+            if (sourceLang == TranslateLanguage.ROMANIAN && hasGreekScriptRomanian(clean)) {
+                return true
+            }
             val greekLetters = clean.count { (it in '\u0370'..'\u03FF' || it in '\u1F00'..'\u1FFF') && it.isLetter() }
             val latinLetters = clean.count { it in 'a'..'z' || it in 'A'..'Z' || it in "ăâîșțĂÂÎȘȚ" }
             if (greekLetters > 0 && greekLetters >= latinLetters) {
@@ -245,6 +286,8 @@ object TranslationSenseEngine {
 
     private fun resolveRomanianToGreekIdioms(text: String): String? {
         val clean = TranslationFilter.cleanMessageText(text).trim()
+        translateGreekScriptRomanian(clean)?.let { return it }
+
         val normalized = clean.lowercase()
             .replace("ă", "a")
             .replace("â", "a")
@@ -529,16 +572,18 @@ object TranslationSenseEngine {
             result = result.replace(Regex("""^ο\s+([ΆΈΉΊΌΎΏΑ-Ωα-ωάέήίόύώ]+),"""), "$1,")
 
             // Correction 5: Vocative address "ο φίλος μου" -> "φίλε μου"
-            result = result.replace(Regex("""\bο\s+φίλος\s+μου\b""", RegexOption.IGNORE_CASE), "φίλε μου")
-            result = result.replace(Regex("""\bφίλος\s+μου\b""", RegexOption.IGNORE_CASE), "φίλε μου")
+            result = result.replace(Regex("""(?iu)(?<!\p{L})ο\s+φίλος\s+μου(?!\p{L})"""), "φίλε μου")
+            result = result.replace(Regex("""(?iu)(?<!\p{L})φίλος\s+μου(?!\p{L})"""), "φίλε μου")
 
             // Correction 6: Vocative Greek name endings in address context
-            result = result.replace(Regex("""\bΓιάννης\b(?=[,!;?:]|\s*$)"""), "Γιάννη")
-            result = result.replace(Regex("""\bΆγγελος\b(?=[,!;?:]|\s*$)"""), "Άγγελε")
-            result = result.replace(Regex("""\bΓιώργος\b(?=[,!;?:]|\s*$)"""), "Γιώργο")
-            result = result.replace(Regex("""\bΝίκος\b(?=[,!;?:]|\s*$)"""), "Νίκο")
-            result = result.replace(Regex("""\bΚώστας\b(?=[,!;?:]|\s*$)"""), "Κώστα")
-            result = result.replace(Regex("""\bΔημήτρης\b(?=[,!;?:]|\s*$)"""), "Δημήτρη")
+            result = result.replace(Regex("""(?<!\p{L})Γιάννης(?=[,!;?:]|\s*$)"""), "Γιάννη")
+            result = result.replace(Regex("""(?<!\p{L})Άγγελος(?=[,!;?:]|\s*$)"""), "Άγγελε")
+            result = result.replace(Regex("""(?<!\p{L})Γιώργος(?=[,!;?:]|\s*$)"""), "Γιώργο")
+            result = result.replace(Regex("""(?<!\p{L})Νίκος(?=[,!;?:]|\s*$)"""), "Νίκο")
+            result = result.replace(Regex("""(?<!\p{L})Κώστας(?=[,!;?:]|\s*$)"""), "Κώστα")
+            result = result.replace(Regex("""(?<!\p{L})Δημήτρης(?=[,!;?:]|\s*$)"""), "Δημήτρη")
+            result = result.replace(Regex("""(Καλησπέρα|Καλημέρα|Καληνύχτα|Γεια\s+σου|Γεια\s+σας)\s+Γιάννης(?!\p{L})"""), "$1 Γιάννη")
+            result = result.replace(Regex("""(Καλησπέρα|Καλημέρα|Καληνύχτα|Γεια\s+σου|Γεια\s+σας)\s+Άγγελος(?!\p{L})"""), "$1 Άγγελε")
 
             // Correction 7: Sustitución de expresiones groseras o anglicismos residuales producidos por modelos estadísticos (ej: 'Go Fuck' -> 'Άντε στο διάολο!')
             if (result.contains("Go Fuck", ignoreCase = true) || (origNorm.contains("du-te dracului") && result.contains("dracului", ignoreCase = true))) {
@@ -549,22 +594,28 @@ object TranslationSenseEngine {
             // Correction 8: Sustitución del falso amigo "συμμορία" (banda criminal) por "παρέα" (grupo de amigos)
             // Por qué: En chats de mensajería (WhatsApp), el término rumano "gașcă" o "grup" se refiere a la "παρέα"
             // de amigos y nunca a una "συμμορία" armada. Además restaura la frase "για τον ηλίθιο της παρέας".
-            result = result.replace(Regex("""\bγια\s+τη(?:ν)?\s+ηλίθια\s+(?:συμμορία|παρέα)\b""", RegexOption.IGNORE_CASE), "για τον ηλίθιο της παρέας")
-            result = result.replace(Regex("""\bηλίθια\s+συμμορία\b""", RegexOption.IGNORE_CASE), "τον ηλίθιο της παρέας")
-            result = result.replace(Regex("""\bηλίθια\s+παρέα\b""", RegexOption.IGNORE_CASE), "τον ηλίθιο της παρέας")
-            result = result.replace(Regex("""\bτης\s+συμμορίας\b""", RegexOption.IGNORE_CASE), "της παρέας")
-            result = result.replace(Regex("""\bτη(ν)?\s+συμμορία\b""", RegexOption.IGNORE_CASE), "τη$1 παρέα")
-            result = result.replace(Regex("""\bσυμμορία\b""", RegexOption.IGNORE_CASE), "παρέα")
-            result = result.replace(Regex("""\bσυμμορίας\b""", RegexOption.IGNORE_CASE), "παρέας")
-            result = result.replace(Regex("""\bτου\s+γκρουπ\b""", RegexOption.IGNORE_CASE), "της παρέας")
+            result = result.replace(Regex("""(?iu)για\s+τη(?:ν)?\s+ηλίθια\s+(?:συμμορία|παρέα)"""), "για τον ηλίθιο της παρέας")
+            result = result.replace(Regex("""(?iu)ηλίθια\s+συμμορία"""), "τον ηλίθιο της παρέας")
+            result = result.replace(Regex("""(?iu)ηλίθια\s+παρέα"""), "τον ηλίθιο της παρέας")
+            result = result.replace(Regex("""(?iu)της\s+συμμορίας"""), "της παρέας")
+            result = result.replace(Regex("""(?iu)τη(ν)?\s+συμμορία"""), "τη$1 παρέα")
+            result = result.replace(Regex("""(?iu)συμμορίας"""), "παρέας")
+            result = result.replace(Regex("""(?iu)συμμορία"""), "παρέα")
+            result = result.replace(Regex("""(?iu)του\s+γκρουπ"""), "της παρέας")
+            if (origNorm.contains("stupidul") || origNorm.contains("prostul") || origNorm.contains("idiotul")) {
+                result = result.replace(Regex("""(?iu)για\s+τ(?:ον|ο)\s+ηλίθιο\s+(?:της\s+εταιρείας|στην\s+ομάδα|της\s+ομάδας)"""), "για τον ηλίθιο της παρέας")
+                result = result.replace(Regex("""(?iu)για\s+το\s+ηλίθιο\s*$"""), "για τον ηλίθιο της παρέας")
+            }
 
             // Correction 9: Corrección de distorsiones en frases de aplicaciones y software
             // Por qué: ML Kit traduce a veces "să funcționeze aplicația" como "την εργασία της εφαρμογής" o "να εργαστεί",
             // y "pentru idiotul grupului" como "για την ομαδική ηλίθια". Se restauran las formas conversacionales naturales.
-            result = result.replace(Regex("""\b(κάνω\s+)?τ(?:ην)?\s+εργασία\s+της\s+εφαρμογής\b""", RegexOption.IGNORE_CASE), "κάνω την εφαρμογή να δουλέψει")
-            result = result.replace(Regex("""\bεργασία\s+της\s+εφαρμογής\b""", RegexOption.IGNORE_CASE), "την εφαρμογή να δουλέψει")
-            result = result.replace(Regex("""\bγια\s+τη(?:ν)?\s+ομαδική\s+ηλίθια\b""", RegexOption.IGNORE_CASE), "για τον ηλίθιο της παρέας")
-            result = result.replace(Regex("""\bομαδική\s+ηλίθια\b""", RegexOption.IGNORE_CASE), "τον ηλίθιο της παρέας")
+            result = result.replace(Regex("""(?iu)(κάνω\s+)?τ(?:ην)?\s+εργασία\s+της\s+εφαρμογής"""), "κάνω την εφαρμογή να δουλέψει")
+            result = result.replace(Regex("""(?iu)εργασία\s+της\s+εφαρμογής"""), "την εφαρμογή να δουλέψει")
+            result = result.replace(Regex("""(?iu)το\s+αίτημα\s+να\s+(?:εργαστεί|δουλέψει)"""), "την εφαρμογή να δουλέψει")
+            result = result.replace(Regex("""(?iu)καταλάβω\s+ότι\s+θα\s+κάνω"""), "καταλάβω πώς θα κάνω")
+            result = result.replace(Regex("""(?iu)για\s+τη(?:ν)?\s+ομαδική\s+ηλίθια"""), "για τον ηλίθιο της παρέας")
+            result = result.replace(Regex("""(?iu)ομαδική\s+ηλίθια"""), "τον ηλίθιο της παρέας")
 
             result = result.replace(Regex("""(εφαρμογή|πρόγραμμα|σύστημα|κινητό|τηλέφωνο|bot)\s+να\s+εργαστεί""", RegexOption.IGNORE_CASE), "$1 να δουλέψει")
             result = result.replace(Regex("""να\s+εργαστεί\s+η\s+(εφαρμογή|πρόγραμμα|σύστημα)""", RegexOption.IGNORE_CASE), "να δουλέψει η $1")

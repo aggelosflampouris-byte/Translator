@@ -346,10 +346,10 @@ class TranslationAccessibilityService : AccessibilityService() {
             }
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
-                if (!isKeyboardVisible()) {
-                    overlayManager.removeDraftOverlay()
-                } else if (isKeyboardTranslatorEnabled) {
+                if (isKeyboardTranslatorEnabled) {
                     handleOutgoingTyping(event)
+                } else {
+                    overlayManager.removeDraftOverlay()
                 }
                 // Por qué: Ignora cambios de contenido si la lista aún se encuentra en movimiento por desplazamiento
                 val now = android.os.SystemClock.uptimeMillis()
@@ -359,10 +359,10 @@ class TranslationAccessibilityService : AccessibilityService() {
             }
             AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED,
             AccessibilityEvent.TYPE_VIEW_FOCUSED -> {
-                if (!isKeyboardVisible(event.source)) {
-                    overlayManager.removeDraftOverlay()
-                } else {
+                if (isKeyboardTranslatorEnabled) {
                     handleOutgoingTyping(event)
+                } else {
+                    overlayManager.removeDraftOverlay()
                 }
             }
         }
@@ -516,13 +516,15 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
 
         // When the soft keyboard is open, hide chat message bubbles so the screen is not overflooded.
-        // When the soft keyboard is closed, ensure the typing draft overlay is removed.
+        // When the soft keyboard is closed, still evaluate the input bar in case a draft is present.
         if (isKeyboardVisible()) {
             overlayManager.removeAllMessageOverlays()
             if (isKeyboardTranslatorEnabled) {
                 handleOutgoingTyping()
             }
             return 0
+        } else if (isKeyboardTranslatorEnabled) {
+            handleOutgoingTyping()
         } else {
             overlayManager.removeDraftOverlay()
         }
@@ -897,6 +899,10 @@ class TranslationAccessibilityService : AccessibilityService() {
     }
 
     private var lastInsertedText: String? = null
+    private var dismissedDraftText: String? = null
+    private var lastRenderedDraftSource: String? = null
+    private var lastRenderedDraftTop: Int = 0
+    private var lastRenderedDraftManualLang: String? = null
 
     private fun findCurrentEditableNode(): AccessibilityNodeInfo? {
         try {
@@ -951,7 +957,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             observeInputForLearning(node)
         }
 
-        if (!isKeyboardTranslatorEnabled || node == null || !isKeyboardVisible(node)) {
+        if (!isKeyboardTranslatorEnabled || node == null) {
             overlayManager.removeDraftOverlay()
             return
         }
@@ -971,7 +977,26 @@ class TranslationAccessibilityService : AccessibilityService() {
             // se limpia de inmediato la pastilla para mantener la pantalla 100% limpia sin textos distractores.
             typingJob?.cancel()
             manualDraftTargetLang = null
+            dismissedDraftText = null
             overlayManager.removeDraftOverlay()
+            return
+        }
+
+        if (rawText == dismissedDraftText) {
+            overlayManager.removeDraftOverlay()
+            return
+        }
+        dismissedDraftText = null
+
+        val currentRect = Rect()
+        node.getBoundsInScreen(currentRect)
+        // Por qué: Si el texto del borrador y la posición vertical del campo no han cambiado
+        // y la píldora ya está visible, se evita reiniciar el trabajo de traducción en cada escaneo.
+        if (overlayManager.currentDraftOverlayBounds != null &&
+            rawText == lastRenderedDraftSource &&
+            manualDraftTargetLang == lastRenderedDraftManualLang &&
+            kotlin.math.abs(currentRect.top - lastRenderedDraftTop) <= (4 * resources.displayMetrics.density).toInt()
+        ) {
             return
         }
 
@@ -1107,7 +1132,10 @@ class TranslationAccessibilityService : AccessibilityService() {
             val finalTranslatedDraft = translatedLines.joinToString("\n")
             if (finalTranslatedDraft.isNotBlank() && finalTranslatedDraft != liveText) {
                 mainHandler.post {
-                    if (isKeyboardVisible(liveNode)) {
+                    if (ServiceBridge.isTranslatingActive && isWhatsAppInForeground() && !isPlaceholderText(liveText, liveHint)) {
+                        lastRenderedDraftSource = liveText
+                        lastRenderedDraftTop = freshRect.top
+                        lastRenderedDraftManualLang = manualDraftTargetLang
                         overlayManager.updateDraftOverlay(
                             inputRect = freshRect,
                             text = finalTranslatedDraft,
@@ -1125,6 +1153,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                                 insertTranslatedTextIntoInput(finalTranslatedDraft, liveNode)
                             },
                             onDismissClicked = {
+                                dismissedDraftText = liveText
                                 manualDraftTargetLang = null
                                 overlayManager.removeDraftOverlay()
                             },
@@ -1135,6 +1164,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                                 } else {
                                     com.google.mlkit.nl.translate.TranslateLanguage.GREEK
                                 }
+                                lastRenderedDraftSource = null
                                 handleOutgoingTyping(event)
                             }
                         )
