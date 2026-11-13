@@ -378,10 +378,23 @@ class TranslationAccessibilityService : AccessibilityService() {
         var skippedTinyDesc: Int = 0
         var skippedBubbleBounds: Int = 0
         var passedCandidates: Int = 0
-        val samples = ArrayList<String>(6)
+        val chatSamples = ArrayList<String>(6)
+        val chromeSamples = ArrayList<String>(6)
 
-        fun addSample(entry: String) {
-            if (samples.size < 6) samples.add(entry)
+        fun addSample(entry: String, inChatViewport: Boolean = true) {
+            if (inChatViewport) {
+                if (chatSamples.size < 6) chatSamples.add(entry)
+            } else if (chromeSamples.size < 6) {
+                chromeSamples.add(entry)
+            }
+        }
+
+        fun formatSamples(): String {
+            return if (chatSamples.isNotEmpty()) {
+                chatSamples.joinToString(";")
+            } else {
+                chromeSamples.joinToString(";")
+            }
         }
     }
 
@@ -892,7 +905,8 @@ class TranslationAccessibilityService : AccessibilityService() {
                 if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
                     event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
                     event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED ||
-                    event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED
+                    event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED ||
+                    event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED
                 ) {
                     lastTargetEventPkg = packageName
                     lastTargetEventTimeMs = nowMs
@@ -1503,7 +1517,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         val baseDiag = "fg=$fgPkg(${activeProfile.id}) root=$lastRootOrigin src=$configuredSource->$configuredTarget scr=${screenWidth}x$screenHeight d=${"%.2f".format(density)} y=$topInset..$effectiveBottom " +
             "vis=${stats.visitedNodes} ed=${stats.editableNodes} t=${stats.nodesWithText} dsc=${stats.nodesWithDesc} " +
             "skW=${stats.skippedWidget} skF=${stats.skippedFilter} skTiny=${stats.skippedTinyDesc} skBnd=${stats.skippedBubbleBounds} " +
-            "cands=${candidates.size}/${dedupedCandidates.size} smp=${stats.samples.joinToString(";")}"
+            "cands=${candidates.size}/${dedupedCandidates.size} smp=${stats.formatSamples()}"
 
         if (dedupedCandidates.isEmpty()) {
             setTreeScanDiag("$baseDiag | out=empty")
@@ -1709,8 +1723,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             }
         }
 
-        val rawText = directText ?: descText
-        if (rawText.isNullOrBlank()) {
+        if (directText.isNullOrBlank() && descText.isNullOrBlank()) {
             return maxChildTextLen
         }
 
@@ -1720,22 +1733,64 @@ class TranslationAccessibilityService : AccessibilityService() {
         val screenHeight = getScreenHeightPx()
         val density = resources.displayMetrics.density
         val shortClass = className.substringAfterLast('.')
+        val inChatViewport = rect.bottom > minY && rect.top < maxY
 
-        val cleanText = TranslationFilter.cleanMessageText(rawText)
-        val passesLanguageFilter = !requireTranslatable || TranslationFilter.shouldTranslate(cleanText, configuredTarget, configuredSource)
-        if (cleanText.isBlank() || !passesLanguageFilter) {
+        // Por qué: En Litho/Messenger, un nodo puede traer texto corto/metadato en text y el cuerpo
+        // traducible en contentDescription; si la primera variante se filtra, evaluamos la alternativa.
+        var chosenRaw = directText ?: descText ?: return maxChildTextLen
+        var cleanText = TranslationFilter.cleanMessageText(chosenRaw)
+        var rejectReason = if (requireTranslatable) {
+            TranslationFilter.filterRejectionReason(
+                text = cleanText,
+                configuredTarget = configuredTarget,
+                configuredSource = configuredSource,
+                deferUnknownLatinToMlKit = true
+            )
+        } else {
+            if (cleanText.isBlank()) "emp" else null
+        }
+        var usedDirectText = directText != null
+
+        if (rejectReason != null && directText != null && descText != null && descText != directText) {
+            val altClean = TranslationFilter.cleanMessageText(descText)
+            val altReject = if (requireTranslatable) {
+                TranslationFilter.filterRejectionReason(
+                    text = altClean,
+                    configuredTarget = configuredTarget,
+                    configuredSource = configuredSource,
+                    deferUnknownLatinToMlKit = true
+                )
+            } else {
+                if (altClean.isBlank()) "emp" else null
+            }
+            if (altReject == null) {
+                chosenRaw = descText
+                cleanText = altClean
+                rejectReason = null
+                usedDirectText = false
+            }
+        }
+
+        if (cleanText.isBlank() || rejectReason != null) {
+            val tag = rejectReason ?: "emp"
             stats?.let {
                 it.skippedFilter++
-                it.addSample("$shortClass(t=${directText?.length ?: 0},d=${descText?.length ?: 0},[${rect.left},${rect.top}-${rect.right},${rect.bottom}],flt)")
+                it.addSample(
+                    "$shortClass(t=${directText?.length ?: 0},d=${descText?.length ?: 0},[${rect.left},${rect.top}-${rect.right},${rect.bottom}],flt:$tag)",
+                    inChatViewport = inChatViewport
+                )
             }
             return maxChildTextLen
         }
 
         // Por qué: Si el texto provino de contentDescription, descarta únicamente micro-iconos sin perder burbujas cortas
-        if (directText == null && rect.width() < (22 * density).toInt() && rect.height() < (18 * density).toInt()) {
+        if (!usedDirectText && rect.width() < (22 * density).toInt() && rect.height() < (18 * density).toInt()) {
             stats?.let {
                 it.skippedTinyDesc++
-                it.addSample("$shortClass(d=${descText?.length ?: 0},[${rect.left},${rect.top}-${rect.right},${rect.bottom}],tiny)")
+                it.addSample(
+                    "$shortClass(d=${descText?.length ?: 0},[${rect.left},${rect.top}-${rect.right},${rect.bottom}],tiny)",
+                    inChatViewport = inChatViewport
+                )
             }
             return maxChildTextLen
         }
@@ -1787,14 +1842,20 @@ class TranslationAccessibilityService : AccessibilityService() {
             outList.add(MessageCandidate(cleanText, clampedRect))
             stats?.let {
                 it.passedCandidates++
-                it.addSample("$shortClass(t=${directText?.length ?: 0},d=${descText?.length ?: 0},[${clampedRect.left},${clampedRect.top}-${clampedRect.right},${clampedRect.bottom}],ok)")
+                it.addSample(
+                    "$shortClass(t=${directText?.length ?: 0},d=${descText?.length ?: 0},[${clampedRect.left},${clampedRect.top}-${clampedRect.right},${clampedRect.bottom}],ok)",
+                    inChatViewport = inChatViewport
+                )
             }
-            return maxOf(maxChildTextLen, rawText.length)
+            return maxOf(maxChildTextLen, chosenRaw.length)
         }
 
         stats?.let {
             it.skippedBubbleBounds++
-            it.addSample("$shortClass(b=$isBubble,[${rect.left},${rect.top}-${rect.right},${rect.bottom}],bnd)")
+            it.addSample(
+                "$shortClass(b=$isBubble,[${rect.left},${rect.top}-${rect.right},${rect.bottom}],bnd)",
+                inChatViewport = inChatViewport
+            )
         }
         return maxChildTextLen
     }
@@ -2401,7 +2462,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             if (text.isBlank()) return
             val cleanText = TranslationFilter.cleanMessageText(text).trim()
             if (cleanText.isBlank() || !cleanText.any { it.isLetter() }) return
-            if (!TranslationFilter.shouldTranslate(cleanText, configuredTarget, configuredSource)) return
+            if (!TranslationFilter.shouldTranslate(cleanText, configuredTarget, configuredSource, deferUnknownLatinToMlKit = true)) return
 
             val rect = Rect()
             nodeWithText.getBoundsInScreen(rect)

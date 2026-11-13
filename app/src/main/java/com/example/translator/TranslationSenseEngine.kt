@@ -53,7 +53,12 @@ object TranslationSenseEngine {
         "fiecarui", "semestru", "acasa", "acasă", "bani", "loc", "treaba", "treabă", "drum",
         "masina", "mașină", "casa", "casă", "facem", "vedem", "cand", "când", "daca", "dacă",
         "dar", "sau", "adica", "adică", "deja", "inca", "încă", "foarte", "mult", "puțin", "putin",
-        "astazi", "astăzi", "aseara", "aseară", "dimineata", "dimineață", "zi", "zile"
+        "astazi", "astăzi", "aseara", "aseară", "dimineata", "dimineață", "zi", "zile",
+        "ajung", "ajuns", "imediat", "mergem", "zici", "spune", "spus", "plec", "plecam",
+        "intalnim", "cafea", "mancam", "piata", "nimic", "gata", "astept", "intarziu",
+        "scrie", "vorbesc", "intreb", "raspund", "uite", "aici", "acolo", "frumos",
+        "frumoasa", "naspa", "asa", "chiar", "doar", "macar", "nici", "despre",
+        "ceva", "nimeni", "toata", "greu", "usor", "rau"
     )
 
     private val GENERIC_ROMANCE_PREPOSITIONS = setOf("de", "in", "e", "a", "la")
@@ -151,7 +156,8 @@ object TranslationSenseEngine {
         text: String,
         sourceLang: String,
         targetLang: String,
-        identifiedLang: String? = null
+        identifiedLang: String? = null,
+        allowDeferredLatinForMlKit: Boolean = false
     ): Boolean {
         val clean = TranslationFilter.cleanMessageText(text).trim()
         if (clean.length < 2) return false
@@ -197,6 +203,10 @@ object TranslationSenseEngine {
             }
 
             if (identifiedLang == TranslateLanguage.ROMANIAN || identifiedLang == "ron") {
+                return true
+            }
+
+            if (allowDeferredLatinForMlKit && identifiedLang == null && latinLetters >= 2) {
                 return true
             }
 

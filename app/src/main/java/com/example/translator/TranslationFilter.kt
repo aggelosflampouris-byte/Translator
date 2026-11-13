@@ -16,18 +16,30 @@ object TranslationFilter {
         RegexOption.IGNORE_CASE
     )
     private val LEADING_SENDER_PREFIX_REGEX = Regex(
-        """^(?:(?:you sent|you replied|εσείς στείλατε|εσεις στειλατε|στείλατε|στειλατε|απαντήσατε|απαντησατε|ai trimis|ai răspuns|ai raspuns)\s*:\s*|(?:εσείς στείλατε|εσεις στειλατε)\s+)""",
+        """^(?:(?:you sent|you replied|εσείς στείλατε|εσεις στειλατε|στείλατε|στειλατε|απαντήσατε|απαντησατε|ai trimis|ai răspuns|ai raspuns)(?:\s+(?:στον?\s+χρήστη|στον?\s+χρηστη|σε|to)\s+[^\n:]{1,40})?\s*:\s*|(?:εσείς στείλατε|εσεις στειλατε)\s+|(?:(?:ο|η|ο/η)\s+χρήστης\s+|(?:ο|η|ο/η)\s+χρηστης\s+|(?:ο|η|ο/η)\s+)?[^\n:]{1,40}\s+(?:έστειλε|εστειλε|απάντησε|απαντησε|sent|replied|a trimis|a răspuns|a raspuns)\s*:\s*|(?:εσείς|you|tu)\s*:\s*)""",
+        RegexOption.IGNORE_CASE
+    )
+    // Por qué: En interfaces griegas de Messenger ("Λευτέρης Φλαμπούρης: Salut"), retira el remitente
+    // en griego cuando precede en la misma línea a un mensaje en alfabeto latino.
+    private val GREEK_SENDER_BEFORE_LATIN_REGEX = Regex(
+        """^[α-ωΑ-Ωάέήίόύώϊϋΐΰς][α-ωΑ-Ωάέήίόύώϊϋΐΰς \t./'-]{0,42}:[ \t]+(?=[^\n]*[a-zA-ZăâîșțĂÂÎȘȚ]{2})"""
+    )
+    private val TRAILING_ACTION_HINT_REGEX = Regex(
+        """[,.]\s*(?:πατήστε δύο φορές|πατηστε δυο φορες|πατήστε παρατεταμένα|πατηστε παρατεταμενα|double[- ]?tap|tap and hold)[^\n]*$""",
         RegexOption.IGNORE_CASE
     )
     private val CHAT_STATUS_REGEX = Regex(
-        """[,.\s\n]+(delivered|read|sent|seen|pending|unread|edited|\(edited\)|επεξεργάστηκε|\(επεξεργάστηκε\)|editat|παραδόθηκε|διαβάστηκε|στάλθηκε|εστάλη|εσταλη|το είδε|το ειδε|σε εκκρεμότητα|trimis|citit|citiți|cititi|livrat|în așteptare|[✓✔\u2713\u2714\u2705]+)\s*$""",
+        """[,.\s\n]+(delivered|read|sent|seen|pending|unread|edited|\(edited\)|επεξεργάστηκε|\(επεξεργάστηκε\)|editat|παραδόθηκε|παραδοθηκε|διαβάστηκε|διαβαστηκε|στάλθηκε|σταλθηκε|εστάλη|εσταλη|απεστάλη|απεσταλη|εθεάθη|εθεαθη|εμφανίστηκε|εμφανιστηκε|το είδε|το ειδε|σε εκκρεμότητα|trimis|citit|citiți|cititi|livrat|în așteptare|[✓✔\u2713\u2714\u2705]+)\s*$""",
         RegexOption.IGNORE_CASE
     )
     private val STANDALONE_STATUS_REGEX = Regex(
-        """^([,.:\s\n]*(\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?)?[,.:\s\n]*(delivered|read|sent|seen|pending|unread|edited|\(edited\)|επεξεργάστηκε|\(επεξεργάστηκε\)|editat|παραδόθηκε|παραδοθηκε|διαβάστηκε|διαβαστηκε|στάλθηκε|σταλθηκε|εστάλη|εσταλη|το είδε|το ειδε|σε εκκρεμότητα|σε εκκρεμοτητα|εκκρεμεί|εκκρεμει|trimis|citit|citiți|cititi|livrat|în așteptare|in asteptare|[✓✔\u2713\u2714\u2705]+)[,.:\s\n]*)+$""",
+        """^([,.:\s\n]*(\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?)?[,.:\s\n]*(delivered|read|sent|seen|pending|unread|edited|\(edited\)|επεξεργάστηκε|\(επεξεργάστηκε\)|editat|παραδόθηκε|παραδοθηκε|διαβάστηκε|διαβαστηκε|στάλθηκε|σταλθηκε|εστάλη|εσταλη|απεστάλη|απεσταλη|εθεάθη|εθεαθη|εμφανίστηκε|εμφανιστηκε|το είδε|το ειδε|σε εκκρεμότητα|σε εκκρεμοτητα|εκκρεμεί|εκκρεμει|trimis|citit|citiți|cititi|livrat|în așteptare|in asteptare|[✓✔\u2713\u2714\u2705]+)[,.:\s\n]*)+$""",
         RegexOption.IGNORE_CASE
     )
-    private val TRAILING_TIMESTAMP_REGEX = Regex("""[\s\n]+\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?(\s*[✓✔\u2713\u2714\u2705]+)?\s*$""", RegexOption.IGNORE_CASE)
+    private val TRAILING_TIMESTAMP_REGEX = Regex(
+        """(?:(?:,\s*|\n+\s*)(?:today|yesterday|σήμερα|σημερα|χθες|mon|tue|wed|thu|fri|sat|sun|δευ|τρι|τετ|πεμ|παρ|σαβ|κυρ|lun|mar|mie|joi|vin|sâm|sam|dum)?\s*(?:at|στις|στὶς|la)?\s*|[\s\n]+)\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?(\s*[✓✔\u2713\u2714\u2705]+)?\s*$""",
+        RegexOption.IGNORE_CASE
+    )
     private val PERCENTAGE_REGEX = Regex("""^\d{1,3}%$""")
 
     private val COMMON_UI_TOKENS = setOf(
@@ -74,7 +86,8 @@ object TranslationFilter {
 
     private val MESSAGE_STATUS_TOKENS = setOf(
         "διαβάστηκε", "διαβαστηκε", "παραδόθηκε", "παραδοθηκε", "στάλθηκε", "σταλθηκε",
-        "εστάλη", "εσταλη", "το είδε", "το ειδε",
+        "εστάλη", "εσταλη", "απεστάλη", "απεσταλη", "εθεάθη", "εθεαθη",
+        "εμφανίστηκε", "εμφανιστηκε", "το είδε", "το ειδε",
         "σε εκκρεμότητα", "σε εκκρεμοτητα", "εκκρεμεί", "εκκρεμει", "μη αναγνωσμένο", "μη αναγνωσμενο",
         "επεξεργάστηκε", "επεξεργαστηκε",
         "read", "delivered", "sent", "seen", "pending", "unread", "edited", "(edited)",
@@ -89,51 +102,69 @@ object TranslationFilter {
     fun shouldTranslate(
         text: String,
         configuredTarget: String,
-        configuredSource: String = TranslateLanguage.ROMANIAN
+        configuredSource: String = TranslateLanguage.ROMANIAN,
+        deferUnknownLatinToMlKit: Boolean = false
     ): Boolean {
+        return filterRejectionReason(
+            text = text,
+            configuredTarget = configuredTarget,
+            configuredSource = configuredSource,
+            deferUnknownLatinToMlKit = deferUnknownLatinToMlKit
+        ) == null
+    }
+
+    /**
+     * Devuelve un código corto sin PII indicando por qué se descartó el texto, o `null` si es candidato válido.
+     */
+    fun filterRejectionReason(
+        text: String,
+        configuredTarget: String,
+        configuredSource: String = TranslateLanguage.ROMANIAN,
+        deferUnknownLatinToMlKit: Boolean = false
+    ): String? {
         val cleaned = cleanMessageText(text)
         val trimmed = cleaned.trim()
-        if (trimmed.length < 2) return false
+        if (trimmed.length < 2) return "emp"
 
         // Must contain at least one letter
-        if (!trimmed.any { it.isLetter() }) return false
+        if (!trimmed.any { it.isLetter() }) return "let"
 
         // Filter out URLs, schemes, domain extensions, and URL path fragments
         if (ScriptDetector.containsUrlOrDomain(trimmed) ||
             trimmed.contains("://") ||
             (trimmed.startsWith("/") && !trimmed.contains(" ")) ||
             (trimmed.matches(URL_PATH_REGEX) && (trimmed.contains("/") || (trimmed.length > 8 && !trimmed.contains(" "))))) {
-            return false
+            return "url"
         }
 
         // Filter out pure timestamps (e.g. "5:16 μ.μ.", "12:55", "Today at 2:30 PM")
         if (trimmed.matches(TIMESTAMP_REGEX) || trimmed.matches(CHAT_RELATIVE_TIMESTAMP_REGEX)) {
-            return false
+            return "ts"
         }
 
         val lower = trimmed.lowercase()
         if (COMMON_UI_TOKENS.contains(lower) || MESSAGE_STATUS_TOKENS.contains(lower)) {
-            return false
+            return "ui"
         }
 
         // Filter out chat system and call notices
         if (SYSTEM_NOTICE_PHRASES.any { lower.contains(it) }) {
-            return false
+            return "sys"
         }
 
         // Filter out standalone status or combined timestamp + delivery markers
         if (lower.matches(STANDALONE_STATUS_REGEX)) {
-            return false
+            return "st"
         }
 
         // Filter out checkmark symbols (e.g. "✓", "✓✓")
         if (trimmed.all { it in "✓✔\u2713\u2714\u2705,.:\t\n " }) {
-            return false
+            return "chk"
         }
 
         // Filter out percentage / battery indicators (e.g. "71%")
         if (trimmed.matches(PERCENTAGE_REGEX)) {
-            return false
+            return "pct"
         }
 
         // If target is Greek, skip any block that is purely or predominantly Greek text
@@ -141,19 +172,26 @@ object TranslationFilter {
             val greekCharCount = ScriptDetector.countGreek(trimmed)
             val latinCharCount = ScriptDetector.countLatin(trimmed)
             if (greekCharCount > 0 && (latinCharCount == 0 || greekCharCount > latinCharCount)) {
-                return false
+                return "grk($greekCharCount/$latinCharCount)"
             }
         }
 
         // Por qué: Valida estrictamente que el texto sea eligible como idioma de origen (ej. rumano),
         // descartando ofertas de trabajo o mensajes en inglés para no traducirlos erróneamente a inglés.
         if (configuredSource != "AUTO") {
-            if (!TranslationSenseEngine.isEligibleSourceText(trimmed, configuredSource, configuredTarget)) {
-                return false
+            if (!TranslationSenseEngine.isEligibleSourceText(
+                    text = trimmed,
+                    sourceLang = configuredSource,
+                    targetLang = configuredTarget,
+                    identifiedLang = null,
+                    allowDeferredLatinForMlKit = deferUnknownLatinToMlKit
+                )
+            ) {
+                return "elig"
             }
         }
 
-        return true
+        return null
     }
 
     /**
@@ -167,9 +205,11 @@ object TranslationFilter {
         if (cleaned.matches(TIMESTAMP_REGEX) || cleaned.matches(CHAT_RELATIVE_TIMESTAMP_REGEX)) {
             return ""
         }
-        // Por qué: Elimina prefijos de accesibilidad de Messenger/Instagram ("Εσείς στείλατε: ", "You sent: ")
-        // y marcadores de estado/edición u horas adjuntas al final de la burbuja
+        // Por qué: Elimina prefijos de accesibilidad de Messenger/Instagram ("Εσείς στείλατε: ", "Απαντήσατε στο χρήστη ...: "),
+        // sugerencias de TalkBack y marcadores de estado/edición u horas adjuntas al final de la burbuja.
+        cleaned = cleaned.replace(TRAILING_ACTION_HINT_REGEX, "").trim()
         cleaned = cleaned.replace(LEADING_SENDER_PREFIX_REGEX, "").trim()
+        cleaned = cleaned.replace(GREEK_SENDER_BEFORE_LATIN_REGEX, "").trim()
         cleaned = cleaned.replace(CHAT_STATUS_REGEX, "").trim()
         cleaned = cleaned.replace(TRAILING_TIMESTAMP_REGEX, "").trim()
         cleaned = cleaned.replace(CHAT_STATUS_REGEX, "").trim()

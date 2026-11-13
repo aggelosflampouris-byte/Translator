@@ -264,8 +264,64 @@ class TranslationFilterTest {
         assertFalse(TranslationFilter.shouldTranslate("Conversation information", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN))
         assertFalse(TranslationFilter.shouldTranslate("Απαντήσατε στο χρήστη Λευτέρης", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK))
         assertFalse(TranslationFilter.shouldTranslate("Εστάλη", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.shouldTranslate("Απεστάλη", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN))
+        assertFalse(TranslationFilter.shouldTranslate("Εθεάθη", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN))
         assertFalse(TranslationFilter.shouldTranslate("Seen", TranslateLanguage.GREEK))
         assertFalse(TranslationFilter.shouldTranslate("Liked a message", TranslateLanguage.GREEK))
         assertFalse(TranslationFilter.shouldTranslate("BOT", TranslateLanguage.GREEK))
+    }
+
+    @Test
+    fun cleanMessageText_andShouldTranslate_handlesGreekLocaleMessengerWrappersAndUnaccentedRomanian() {
+        assertEquals(
+            "Ce faci?",
+            TranslationFilter.cleanMessageText("Απαντήσατε στο χρήστη Λευτέρης: Ce faci?")
+        )
+        assertTrue(
+            TranslationFilter.shouldTranslate(
+                "Απαντήσατε στο χρήστη Λευτέρης: Ce faci?",
+                TranslateLanguage.GREEK,
+                TranslateLanguage.ROMANIAN
+            )
+        )
+
+        val wrappedIncoming = "Λευτέρης Φλαμπούρης έστειλε: Bună ziua, ΤΕΤ ΣΤΙΣ 6:12 Μ.Μ., Απεστάλη, Πατήστε δύο φορές για απάντηση"
+        assertEquals("Bună ziua", TranslationFilter.cleanMessageText(wrappedIncoming))
+        assertTrue(
+            TranslationFilter.shouldTranslate(
+                wrappedIncoming,
+                TranslateLanguage.GREEK,
+                TranslateLanguage.ROMANIAN
+            )
+        )
+
+        assertEquals(
+            "Salut prietene",
+            TranslationFilter.cleanMessageText("Λευτέρης Φλαμπούρης: Salut prietene")
+        )
+        assertTrue(
+            TranslationFilter.shouldTranslate(
+                "Λευτέρης Φλαμπούρης: Salut prietene",
+                TranslateLanguage.GREEK,
+                TranslateLanguage.ROMANIAN
+            )
+        )
+
+        assertTrue(
+            TranslationFilter.shouldTranslate(
+                "Ajung imediat la cafenea",
+                TranslateLanguage.GREEK,
+                TranslateLanguage.ROMANIAN,
+                deferUnknownLatinToMlKit = true
+            )
+        )
+        assertFalse(
+            TranslationFilter.shouldTranslate(
+                "How are you doing today?",
+                TranslateLanguage.GREEK,
+                TranslateLanguage.ROMANIAN,
+                deferUnknownLatinToMlKit = true
+            )
+        )
     }
 }
