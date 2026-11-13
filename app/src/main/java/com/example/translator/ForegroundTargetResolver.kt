@@ -74,7 +74,8 @@ object ForegroundTargetResolver {
         recentEventPkg: String?,
         recentEventAgeMs: Long,
         enabledTargetPackages: Set<String>,
-        selfPackage: String
+        selfPackage: String,
+        hasActiveVisibleTargetSignal: Boolean = false
     ): ForegroundResolutionResult {
         fun isEnabledTarget(pkg: String?): Boolean {
             if (pkg.isNullOrBlank()) return false
@@ -131,6 +132,19 @@ object ForegroundTargetResolver {
                         }
                     }
                     if (activeWindowBounds == null || substantial) {
+                        // Por qué: En One UI, el lanzador/panel lateral puede conservar una ventana en capa 0 marcada AF
+                        // aun mientras la app de chat está activa al frente emitiendo eventos visibles posteriores.
+                        val noTargetWindowBelowLauncher = appWindows.none {
+                            isEnabledTarget(it.packageName) && it.layer <= (activeLayer ?: Int.MAX_VALUE)
+                        }
+                        if (TargetAppCatalog.isLauncherPackage(activeWindowPkg) &&
+                            noTargetWindowBelowLauncher &&
+                            hasActiveVisibleTargetSignal &&
+                            recentEventAgeMs in 0..RECENT_EVENT_GRACE_MS &&
+                            isEnabledTarget(recentEventPkg)
+                        ) {
+                            return ForegroundResolutionResult(recentEventPkg, "launcher_override=$recentEventPkg")
+                        }
                         return ForegroundResolutionResult(null, "blocked_active=$activeWindowPkg")
                     }
                 } else if (substantial) {

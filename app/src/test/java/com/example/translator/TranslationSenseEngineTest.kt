@@ -307,4 +307,20 @@ class TranslationSenseEngineTest {
             )
         )
     }
+
+    @Test
+    fun isEligibleSourceText_acceptsShortUnaccentedRomanianChatWords() {
+        val shortRomanianMessages = listOf("Neata", "Vii?", "Suna", "Pleci", "Ajungem", "Serios")
+        for (msg in shortRomanianMessages) {
+            assertTrue(
+                "Expected short Romanian chat message '$msg' to be eligible",
+                TranslationSenseEngine.isEligibleSourceText(
+                    msg,
+                    TranslateLanguage.ROMANIAN,
+                    TranslateLanguage.GREEK,
+                    identifiedLang = null
+                )
+            )
+        }
+    }
 }

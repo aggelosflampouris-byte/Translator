@@ -113,5 +113,58 @@ class ScrollEventClassifierTest {
         )
         assertFalse(empty.isRelevantVerticalScroll)
     }
+
+    @Test
+    fun classify_suppressesLayoutJitterAndDoesNotInterruptOnSmallZeroDelta() {
+        val first = ScrollEventClassifier.classify(
+            hasDeltaApi = true,
+            scrollDeltaX = 0,
+            scrollDeltaY = 0,
+            sourceHeightPx = 1800,
+            screenHeightPx = 2340,
+            windowId = 1,
+            scrollY = 0,
+            maxScrollY = 1500,
+            fromIndex = 0,
+            toIndex = 4,
+            itemCount = 12,
+            prevSignature = null
+        )
+        assertFalse(first.shouldInterruptOverlays)
+
+        val jitter = ScrollEventClassifier.classify(
+            hasDeltaApi = true,
+            scrollDeltaX = 0,
+            scrollDeltaY = 0,
+            sourceHeightPx = 1800,
+            screenHeightPx = 2340,
+            windowId = 1,
+            scrollY = 0,
+            maxScrollY = 1500,
+            fromIndex = 1,
+            toIndex = 5,
+            itemCount = 13,
+            prevSignature = first.nextSignature
+        )
+        assertFalse(jitter.isRelevantVerticalScroll)
+        assertFalse(jitter.shouldInterruptOverlays)
+
+        val realScroll = ScrollEventClassifier.classify(
+            hasDeltaApi = true,
+            scrollDeltaX = 0,
+            scrollDeltaY = 120,
+            sourceHeightPx = 1800,
+            screenHeightPx = 2340,
+            windowId = 1,
+            scrollY = 120,
+            maxScrollY = 1500,
+            fromIndex = 2,
+            toIndex = 7,
+            itemCount = 13,
+            prevSignature = first.nextSignature
+        )
+        assertTrue(realScroll.isRelevantVerticalScroll)
+        assertTrue(realScroll.shouldInterruptOverlays)
+    }
 }
 

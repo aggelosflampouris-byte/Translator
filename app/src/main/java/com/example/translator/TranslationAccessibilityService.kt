@@ -148,10 +148,18 @@ class TranslationAccessibilityService : AccessibilityService() {
     @Volatile private var lastNonTransientEventTimeMs: Long = 0L
     @Volatile private var lastTargetEventPkg: String? = null
     @Volatile private var lastTargetEventTimeMs: Long = 0L
+    @Volatile private var lastNonTargetStateChangeTimeMs: Long = 0L
+    @Volatile private var lastTargetVisibleSignalPkg: String? = null
+    @Volatile private var lastTargetVisibleSignalMs: Long = 0L
     @Volatile private var cachedTargetRootPkg: String? = null
     @Volatile private var cachedTargetRootNode: AccessibilityNodeInfo? = null
     @Volatile private var lastPartialTargetRootPkg: String? = null
     @Volatile private var lastPartialTargetRootNode: AccessibilityNodeInfo? = null
+    @Volatile private var cachedEditableNode: AccessibilityNodeInfo? = null
+    @Volatile private var cachedEditablePkg: String? = null
+    @Volatile private var pendingTypingSource: String? = null
+    @Volatile private var pendingTypingTargetLang: String? = null
+    @Volatile private var pendingTypingWindowStartMs: Long = 0L
     @Volatile private var lastRootExtractAttemptMs: Long = 0L
     @Volatile private var lastRootExtractDiag: String = "init"
     @Volatile private var targetSrcNonNullCount: Int = 0
@@ -177,8 +185,27 @@ class TranslationAccessibilityService : AccessibilityService() {
     @Volatile private var lastEditProbeMs: Long = 0L
     private val srcProbeHistory = ArrayDeque<String>(4)
     private val seenExternalPackages = LinkedHashMap<String, Int>(8)
+    private val perAppScanDiagMap = LinkedHashMap<String, String>(4)
     private val cachedMessengerSelfSenders = LinkedHashSet<String>(4)
     @Volatile private var cachedMessengerPartnerSenders: Set<String> = emptySet()
+
+    private fun recordPerAppDiag(pkg: String, summary: String) {
+        if (pkg.isBlank()) return
+        val shortPkg = pkg.substringAfterLast('.')
+        synchronized(perAppScanDiagMap) {
+            perAppScanDiagMap.remove(shortPkg)
+            if (perAppScanDiagMap.size >= 3) {
+                val oldestKey = perAppScanDiagMap.keys.firstOrNull()
+                if (oldestKey != null) perAppScanDiagMap.remove(oldestKey)
+            }
+            perAppScanDiagMap[shortPkg] = summary
+            ServiceBridge.lastPerAppScanDebug = perAppScanDiagMap.entries.joinToString(" || ") { (k, v) -> "$k:$v" }
+        }
+    }
+
+    private fun setDraftDiag(summary: String) {
+        ServiceBridge.lastDraftDebug = summary
+    }
 
     private fun recordSeenExternalPackage(pkg: String) {
         synchronized(seenExternalPackages) {
@@ -646,6 +673,11 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
         pendingScanWindowStartMs = 0L
         pendingScanEventSource = null
+        cachedEditableNode = null
+        cachedEditablePkg = null
+        pendingTypingSource = null
+        pendingTypingTargetLang = null
+        pendingTypingWindowStartMs = 0L
         scrollSettleJob?.cancel()
         isScreenScrolling = false
         lastScrollPositionSig = null
@@ -758,7 +790,10 @@ class TranslationAccessibilityService : AccessibilityService() {
             // Ignore
         }
 
+        val screenWidth = getScreenWidthPx()
+        val screenHeight = getScreenHeightPx()
         val appSnapshots = mutableListOf<AppWindowSnapshot>()
+        val extraFocusedSubstantialSnapshots = mutableListOf<AppWindowSnapshot>()
         val rawWinDiag = if (captureExternalSnapshot) mutableListOf<String>() else null
         try {
             val windowList = windows
@@ -782,16 +817,23 @@ class TranslationAccessibilityService : AccessibilityService() {
                         }.ifEmpty { "-" }
                         rawWinDiag.add("${wPkg.ifBlank { "null" }}:t${window.type}@${window.layer}($flags,${wRect.width()}x${wRect.height()})")
                     }
+                    val boundsRect = if (wRect.isEmpty) WindowRect(0, 0, 0, 0) else toWindowRect(wRect)
+                    val snapshot = AppWindowSnapshot(
+                        packageName = wPkg.ifBlank { null },
+                        isActive = window.isActive,
+                        isFocused = window.isFocused,
+                        layer = window.layer,
+                        bounds = boundsRect
+                    )
                     if (window.type == AccessibilityWindowInfo.TYPE_APPLICATION) {
-                        appSnapshots.add(
-                            AppWindowSnapshot(
-                                packageName = wPkg.ifBlank { null },
-                                isActive = window.isActive,
-                                isFocused = window.isFocused,
-                                layer = window.layer,
-                                bounds = if (wRect.isEmpty) WindowRect(0, 0, 0, 0) else toWindowRect(wRect)
-                            )
-                        )
+                        appSnapshots.add(snapshot)
+                    } else if ((window.isActive || window.isFocused) &&
+                        (wPkg.isBlank() || !isTransientOverlayOrInputPackage(wPkg)) &&
+                        ForegroundTargetResolver.isSubstantialWindow(boundsRect, screenWidth, screenHeight)
+                    ) {
+                        // Por qué: En One UI, una ventana activa a pantalla completa sin raíz atribuida puede aparecer
+                        // como tipo sistema (t3); conservarla como respaldo evita caducar a los 5s durante lectura pasiva.
+                        extraFocusedSubstantialSnapshots.add(snapshot)
                     }
                 }
             }
@@ -799,10 +841,20 @@ class TranslationAccessibilityService : AccessibilityService() {
             // Ignore
         }
 
-        val screenWidth = getScreenWidthPx()
-        val screenHeight = getScreenHeightPx()
+        if (appSnapshots.none {
+                !ForegroundTargetResolver.isSystemTransientPackage(it.packageName) &&
+                    ForegroundTargetResolver.isSubstantialWindow(it.bounds, screenWidth, screenHeight)
+            } && extraFocusedSubstantialSnapshots.isNotEmpty()
+        ) {
+            appSnapshots.addAll(extraFocusedSubstantialSnapshots)
+        }
+
         val now = android.os.SystemClock.uptimeMillis()
         val eventAgeMs = if (lastTargetEventTimeMs > 0L) now - lastTargetEventTimeMs else Long.MAX_VALUE
+        val hasActiveVisibleTargetSignal = lastTargetEventPkg != null &&
+            lastTargetEventPkg == lastTargetVisibleSignalPkg &&
+            lastTargetVisibleSignalMs > lastNonTargetStateChangeTimeMs &&
+            (now - lastTargetVisibleSignalMs) <= ForegroundTargetResolver.RECENT_EVENT_GRACE_MS
 
         val result = ForegroundTargetResolver.resolve(
             activeWindowPkg = activePkg,
@@ -813,7 +865,8 @@ class TranslationAccessibilityService : AccessibilityService() {
             recentEventPkg = lastTargetEventPkg,
             recentEventAgeMs = eventAgeMs,
             enabledTargetPackages = enabledTargetPackages,
-            selfPackage = applicationContext.packageName
+            selfPackage = applicationContext.packageName,
+            hasActiveVisibleTargetSignal = hasActiveVisibleTargetSignal
         )
 
         lastResolveReason = result.reason
@@ -847,7 +900,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         return !isScreenScrolling && (nowMs - lastScrollTimestamp >= 350L)
     }
 
-    private fun evaluateVerticalScrollEvent(event: AccessibilityEvent, sourceNode: AccessibilityNodeInfo?): Boolean {
+    private fun evaluateVerticalScrollEvent(event: AccessibilityEvent, sourceNode: AccessibilityNodeInfo?): ScrollDecision {
         val sourceHeight = if (sourceNode != null) {
             val rect = Rect()
             try {
@@ -883,7 +936,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         } else {
             ignoredScrollCount++
         }
-        return decision.isRelevantVerticalScroll
+        return decision
     }
 
     private fun isTargetAppInForeground(): Boolean = resolveForegroundTargetPackage() != null
@@ -908,14 +961,26 @@ class TranslationAccessibilityService : AccessibilityService() {
                     event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
                     event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED ||
                     event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED ||
-                    event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED
+                    event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED ||
+                    event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED
                 ) {
                     lastTargetEventPkg = packageName
                     lastTargetEventTimeMs = nowMs
                 }
+                if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+                    event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED ||
+                    event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED ||
+                    event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED
+                ) {
+                    lastTargetVisibleSignalPkg = packageName
+                    lastTargetVisibleSignalMs = nowMs
+                }
             } else if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
                 lastTargetEventPkg = null
                 lastTargetEventTimeMs = 0L
+                lastNonTargetStateChangeTimeMs = nowMs
+                lastTargetVisibleSignalPkg = null
+                lastTargetVisibleSignalMs = 0L
             }
             if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
                 event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
@@ -938,6 +1003,36 @@ class TranslationAccessibilityService : AccessibilityService() {
                 resetPerPackageProbes()
             }
             capturedSourceNode = event.source
+            val rawSourceNode = capturedSourceNode
+            // Por qué: Guardar el nodo editable y la señal visible antes de subir al nodo raíz,
+            // preservando tanto el compositor para traducción inversa como la detección frente a falso foco del launcher en One UI.
+            if (rawSourceNode != null) {
+                if ((event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED ||
+                        event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED) &&
+                    rawSourceNode.isEditable
+                ) {
+                    cachedEditableNode = rawSourceNode
+                    cachedEditablePkg = packageName
+                }
+                if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
+                    event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED
+                ) {
+                    val srcBounds = android.graphics.Rect()
+                    rawSourceNode.getBoundsInScreen(srcBounds)
+                    val dm = resources.displayMetrics
+                    val onScreen = rawSourceNode.isVisibleToUser &&
+                        srcBounds.width() > 0 &&
+                        srcBounds.height() > 0 &&
+                        srcBounds.right > 0 &&
+                        srcBounds.bottom > 0 &&
+                        srcBounds.left < dm.widthPixels &&
+                        srcBounds.top < dm.heightPixels
+                    if (onScreen) {
+                        lastTargetVisibleSignalPkg = packageName
+                        lastTargetVisibleSignalMs = nowMs
+                    }
+                }
+            }
             // Por qué: Si aún no tenemos root en caché, capturamos incluso mientras solo la burbuja está activa
             // para aprovechar el evento inicial TYPE_WINDOW_STATE_CHANGED antes de que el usuario pulse Start.
             val minExtractIntervalMs = when {
@@ -1004,7 +1099,21 @@ class TranslationAccessibilityService : AccessibilityService() {
         when (event.eventType) {
             AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
                 val settleSource = capturedSourceNode ?: event.source
-                if (!evaluateVerticalScrollEvent(event, settleSource)) {
+                val scrollDecision = evaluateVerticalScrollEvent(event, settleSource)
+                if (!scrollDecision.isRelevantVerticalScroll) {
+                    // Por qué: Pequeños reajustes de diseño (layout_jitter) pueden indicar inserción o cambio de burbujas;
+                    // reescaneamos suavemente sin borrar las píldoras ya visibles.
+                    if (scrollDecision.reason.startsWith("layout_jitter") && isScrollQuieted()) {
+                        scheduleScan(220L, settleSource)
+                    }
+                    return
+                }
+                if (!scrollDecision.shouldInterruptOverlays) {
+                    // Por qué: Cambios de índice con delta cero (por ejemplo, mensajes nuevos o apertura del teclado)
+                    // no deben incrementar scanGeneration ni borrar los overlays actuales antes de tiempo.
+                    if (isScrollQuieted()) {
+                        scheduleScan(220L, settleSource)
+                    }
                     return
                 }
                 scanGeneration.incrementAndGet()
@@ -1463,6 +1572,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         if (rootNode == null) {
             val flagMode = if (includeNotImportantViewsFlag) "full" else "noNotImp"
             ServiceBridge.lastScanDebug = "abort=null_root($lastRootOrigin) | fg=$fgPkg | flags=$flagMode | $lastResolveReason | $lastExternalWindowsSummary"
+            recordPerAppDiag(fgPkg, "nullRoot($lastRootOrigin|$lastResolveReason)")
             mainHandler.post {
                 overlayManager.removeAllOverlays()
             }
@@ -1486,6 +1596,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             if (ServiceBridge.lastTreeScanDebug == "No non-null root scan yet.") {
                 ServiceBridge.lastTreeScanDebug = kbDiag
             }
+            recordPerAppDiag(fgPkg, "kbVis(r=$lastRootOrigin,ed=${edit != null})")
             overlayManager.removeAllMessageOverlays()
             if (isKeyboardTranslatorEnabled) {
                 handleOutgoingTyping()
@@ -1535,12 +1646,14 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         if (dedupedCandidates.isEmpty()) {
             setTreeScanDiag("$baseDiag | out=empty")
+            recordPerAppDiag(fgPkg, "empty(r=$lastRootOrigin,vis=${stats.visitedNodes},ed=${stats.editableNodes})")
             mainHandler.post {
                 overlayManager.removeAllMessageOverlays()
             }
             return 0
         }
         setTreeScanDiag("$baseDiag | out=translating(${dedupedCandidates.size})")
+        recordPerAppDiag(fgPkg, "tr(${dedupedCandidates.size},r=$lastRootOrigin)")
 
         // Por qué: Purgar inmediatamente cualquier burbuja previa que ya no coincida con los candidatos visibles actuales
         val currentValidBounds = dedupedCandidates.map { it.bounds }
@@ -1577,8 +1690,10 @@ class TranslationAccessibilityService : AccessibilityService() {
                 if (ServiceBridge.isTranslatingActive && fgOk && genOk && !isScreenScrolling) {
                     overlayManager.updateOverlays(immediateResults, isFullSync = pendingCandidates.isEmpty(), profile = activeProfile)
                     appendTreeScanDiag("imm=${immediateResults.size}")
+                    recordPerAppDiag(fgPkg, "imm=${immediateResults.size}(r=$lastRootOrigin)")
                 } else {
                     appendTreeScanDiag("immAbort(act=${ServiceBridge.isTranslatingActive},fg=$fgOk,gen=$genOk,scr=$isScreenScrolling)")
+                    recordPerAppDiag(fgPkg, "immAbort(fg=$fgOk,gen=$genOk,scr=$isScreenScrolling)")
                 }
             }
         }
@@ -1609,6 +1724,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                     )
                     if (!isEligible) {
                         appendTreeScanDiag("mlkit=ineligible(det=$detectedLang,len=${cleanText.length})")
+                        recordPerAppDiag(fgPkg, "mlkitNo($detectedLang,len=${cleanText.length})")
                         return@launch
                     }
 
@@ -1644,6 +1760,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                             ) {
                                 overlayManager.addOrUpdateOverlay(rect, senseCorrected, profile = activeProfile)
                                 appendTreeScanDiag("overlay=ok(rect=${rect.left},${rect.top}-${rect.right},${rect.bottom})")
+                                recordPerAppDiag(fgPkg, "ov=${dedupedCandidates.size}(r=$lastRootOrigin)")
                             } else {
                                 appendTreeScanDiag("postAbort(gen=$genOk,act=${ServiceBridge.isTranslatingActive},fg=$fgOkPost,scr=$isScreenScrolling)")
                             }
@@ -2258,7 +2375,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             }
             if (!overlaps) {
                 accepted.add(candidate)
-            }
+            }   
         }
         return accepted
     }
@@ -2345,6 +2462,8 @@ class TranslationAccessibilityService : AccessibilityService() {
             val focusedPkg = focused?.packageName?.toString()
             if (focused != null && isEnabledTargetPackage(focusedPkg) && isEditableNodeOnScreen(focused, screenWidth, screenHeight)) {
                 lastEditableFindVia = "focusInput"
+                cachedEditableNode = focused
+                cachedEditablePkg = focusedPkg
                 return focused
             }
         } catch (e: Exception) {
@@ -2357,15 +2476,40 @@ class TranslationAccessibilityService : AccessibilityService() {
             val focusedPkg = focused?.packageName?.toString()
             if (focused != null && isEnabledTargetPackage(focusedPkg) && isEditableNodeOnScreen(focused, screenWidth, screenHeight)) {
                 lastEditableFindVia = "actFocus"
+                cachedEditableNode = focused
+                cachedEditablePkg = focusedPkg
                 return focused
             }
         } catch (e: Exception) {
             // Ignore
         }
 
-        val root = preferredRoot ?: findActiveTargetRootNode() ?: return null
-        lastEditableFindVia = "tree(${if (preferredRoot != null) "pref" else lastRootOrigin})"
-        return findBottomMostVisibleEditableChild(root, screenWidth, screenHeight)
+        val root = preferredRoot ?: findActiveTargetRootNode()
+        if (root != null) {
+            lastEditableFindVia = "tree(${if (preferredRoot != null) "pref" else lastRootOrigin})"
+            val treeChild = findBottomMostVisibleEditableChild(root, screenWidth, screenHeight)
+            if (treeChild != null) {
+                cachedEditableNode = treeChild
+                cachedEditablePkg = treeChild.packageName?.toString() ?: root.packageName?.toString()
+                return treeChild
+            }
+        }
+
+        // Por qué: En transiciones o fotogramas parciales (p. ej. 2048 en Messenger), si el árbol no devuelve foco
+        // ni hijos editables, refrescar el último compositor cacheado evita perder la barra de borrador.
+        val cached = cachedEditableNode
+        val cachedPkg = cachedEditablePkg
+        val currentFg = lastForegroundTargetPackage
+        if (cached != null &&
+            isEnabledTargetPackage(cachedPkg) &&
+            (currentFg == null || cachedPkg == currentFg) &&
+            cached.refresh() &&
+            isEditableNodeOnScreen(cached, screenWidth, screenHeight)
+        ) {
+            lastEditableFindVia = "cachedEdit"
+            return cached
+        }
+        return null
     }
 
     // Por qué: En apps con múltiples fragmentos en memoria (como Messenger), selecciona el campo editable visible
@@ -2445,16 +2589,19 @@ class TranslationAccessibilityService : AccessibilityService() {
     }
 
     private fun handleOutgoingTyping(event: AccessibilityEvent? = null) {
-        val node = (if (event?.source?.isEditable == true) event.source else null) ?: findCurrentEditableNode()
+        val eventEditable = event?.source?.takeIf { it.isEditable && it.refresh() }
+        val node = eventEditable ?: findCurrentEditableNode()
 
         if (node != null) {
             observeInputForLearning(node)
             val editPkg = node.packageName?.toString() ?: lastForegroundTargetPackage
             if (isEnabledTargetPackage(editPkg) && editPkg != null) {
+                cachedEditableNode = node
+                cachedEditablePkg = editPkg
                 val nowMs = android.os.SystemClock.uptimeMillis()
                 if (lastEditProbeDiag == "none" || nowMs - lastEditProbeMs >= 500L) {
                     lastEditProbeMs = nowMs
-                    val via = if (event?.source?.isEditable == true) "evtSrc(${event.eventType})" else lastEditableFindVia
+                    val via = if (eventEditable != null) "evtSrc(${event.eventType})" else lastEditableFindVia
                     lastEditProbeDiag = probeAncestry(node, editPkg, via)
                     updateProbeDebug()
                 }
@@ -2464,7 +2611,26 @@ class TranslationAccessibilityService : AccessibilityService() {
             }
         }
 
-        if (!isKeyboardTranslatorEnabled || node == null) {
+        if (!isKeyboardTranslatorEnabled) {
+            typingJob?.cancel()
+            pendingTypingSource = null
+            pendingTypingTargetLang = null
+            pendingTypingWindowStartMs = 0L
+            setDraftDiag("disabled")
+            overlayManager.removeDraftOverlay()
+            return
+        }
+
+        if (node == null) {
+            // Por qué: Eventos pasivos (2048 sobre un ViewGroup o escaneos sin foco momentáneo) no deben borrar
+            // una pastilla de borrador activa mientras el teclado siga abierto o falte el árbol completo.
+            val isPassiveContentOrScan = event == null || event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+            val rootUnavailable = lastRootOrigin.startsWith("null") || lastRootOrigin.startsWith("evtPartial")
+            if (isPassiveContentOrScan && overlayManager.currentDraftOverlayBounds != null && (rootUnavailable || isKeyboardVisible())) {
+                setDraftDiag("keep(noEdit,via=$lastEditableFindVia,r=$lastRootOrigin)")
+                return
+            }
+            setDraftDiag("clear(noEdit,via=$lastEditableFindVia,r=$lastRootOrigin)")
             overlayManager.removeDraftOverlay()
             return
         }
@@ -2473,6 +2639,10 @@ class TranslationAccessibilityService : AccessibilityService() {
         val hintText = node.hintText?.toString()?.trim() ?: ""
 
         if (rawText == lastInsertedText) {
+            pendingTypingSource = null
+            pendingTypingTargetLang = null
+            pendingTypingWindowStartMs = 0L
+            setDraftDiag("skip=inserted")
             overlayManager.removeDraftOverlay()
             return
         }
@@ -2483,13 +2653,18 @@ class TranslationAccessibilityService : AccessibilityService() {
             // Por qué: Si el campo está vacío o muestra un placeholder de la app,
             // se limpia de inmediato la pastilla para mantener la pantalla 100% limpia sin textos distractores.
             typingJob?.cancel()
+            pendingTypingSource = null
+            pendingTypingTargetLang = null
+            pendingTypingWindowStartMs = 0L
             manualDraftTargetLang = null
             dismissedDraftText = null
+            setDraftDiag("empty_placeholder")
             overlayManager.removeDraftOverlay()
             return
         }
 
         if (rawText == dismissedDraftText) {
+            setDraftDiag("skip=dismissed")
             overlayManager.removeDraftOverlay()
             return
         }
@@ -2504,30 +2679,63 @@ class TranslationAccessibilityService : AccessibilityService() {
             manualDraftTargetLang == lastRenderedDraftManualLang &&
             kotlin.math.abs(currentRect.top - lastRenderedDraftTop) <= (4 * resources.displayMetrics.density).toInt()
         ) {
+            setDraftDiag("rendered(len=${rawText.length},top=${currentRect.top})")
             return
         }
 
         val (_, draftTargetLang) = resolveDraftDirection(rawText, manualDraftTargetLang)
+        val nowTypingMs = android.os.SystemClock.uptimeMillis()
 
+        // Por qué: Evitar inanición del debounce de 200ms cuando la app (p. ej. Messenger) emite múltiples
+        // eventos TYPE_WINDOW_CONTENT_CHANGED seguidos con el mismo borrador antes de completar el retraso.
+        if (typingJob?.isActive == true &&
+            rawText == pendingTypingSource &&
+            draftTargetLang == pendingTypingTargetLang
+        ) {
+            setDraftDiag("debounce(same,len=${rawText.length})")
+            return
+        }
+        if (pendingTypingWindowStartMs == 0L || typingJob?.isActive != true) {
+            pendingTypingWindowStartMs = nowTypingMs
+        }
+        val elapsedTypingMs = nowTypingMs - pendingTypingWindowStartMs
+        if (typingJob?.isActive == true && elapsedTypingMs >= 450L) {
+            return
+        }
+
+        pendingTypingSource = rawText
+        pendingTypingTargetLang = draftTargetLang
+        val effectiveTypingDelayMs = minOf(200L, (450L - elapsedTypingMs).coerceAtLeast(60L))
+
+        setDraftDiag("queued(len=${rawText.length},dir=$draftTargetLang,via=$lastEditableFindVia)")
         typingJob?.cancel()
         typingJob = serviceScope.launch {
-            // Por qué: Debounce de 200ms para responder de forma ágil a la escritura fluida sin saturar ejecuciones redundantes
-            delay(200L)
+            // Por qué: Debounce de 200ms (acotado al tope de 450ms) para responder rápido sin saturar ejecuciones redundantes
+            delay(effectiveTypingDelayMs)
+            pendingTypingWindowStartMs = 0L
 
-            val liveNode = (if (event?.source?.isEditable == true) event.source else null) ?: findCurrentEditableNode() ?: node
+            val refreshedEventNode = event?.source?.takeIf { it.isEditable && it.refresh() }
+            val refreshedPassedNode = node.takeIf { it.refresh() }
+            val liveNode = findCurrentEditableNode() ?: refreshedPassedNode ?: refreshedEventNode ?: node
             val liveText = liveNode.text?.toString()?.trim() ?: rawText
             val liveHint = liveNode.hintText?.toString()?.trim() ?: hintText
+            pendingTypingSource = null
+            pendingTypingTargetLang = null
 
             if (isPlaceholderText(liveText, liveHint, liveNode)) {
                 manualDraftTargetLang = null
+                setDraftDiag("empty_placeholder_live")
                 overlayManager.removeDraftOverlay()
                 return@launch
             }
 
             val freshRect = Rect()
             liveNode.getBoundsInScreen(freshRect)
-            if (freshRect.top <= 0) {
+            if (freshRect.isEmpty || freshRect.top <= 0) {
                 node.getBoundsInScreen(freshRect)
+            }
+            if (freshRect.isEmpty || freshRect.top <= 0) {
+                freshRect.set(currentRect)
             }
 
             // Re-evaluar idioma según el texto actualizado respetando los idiomas elegidos en el menú
@@ -2562,10 +2770,13 @@ class TranslationAccessibilityService : AccessibilityService() {
             val finalTranslatedDraft = translatedLines.joinToString("\n")
             if (finalTranslatedDraft.isNotBlank() && finalTranslatedDraft != liveText) {
                 mainHandler.post {
-                    if (ServiceBridge.isTranslatingActive && isTargetAppInForeground() && !isPlaceholderText(liveText, liveHint, liveNode)) {
+                    val liveNodePkg = liveNode.packageName?.toString()
+                    val fgOrLiveTarget = isTargetAppInForeground() || isEnabledTargetPackage(liveNodePkg)
+                    if (ServiceBridge.isTranslatingActive && fgOrLiveTarget && !isPlaceholderText(liveText, liveHint, liveNode)) {
                         lastRenderedDraftSource = liveText
                         lastRenderedDraftTop = freshRect.top
                         lastRenderedDraftManualLang = manualDraftTargetLang
+                        setDraftDiag("shown(len=${liveText.length}->${finalTranslatedDraft.length},dir=$effectiveTargetLang,top=${freshRect.top})")
                         overlayManager.updateDraftOverlay(
                             inputRect = freshRect,
                             text = finalTranslatedDraft,
@@ -2601,10 +2812,12 @@ class TranslationAccessibilityService : AccessibilityService() {
                             }
                         )
                     } else {
+                        setDraftDiag("abort_post(act=${ServiceBridge.isTranslatingActive},fg=$fgOrLiveTarget)")
                         overlayManager.removeDraftOverlay()
                     }
                 }
             } else {
+                setDraftDiag("skip_tr(blank=${finalTranslatedDraft.isBlank()},same=${finalTranslatedDraft == liveText})")
                 mainHandler.post {
                     overlayManager.removeDraftOverlay()
                 }
@@ -2894,6 +3107,19 @@ class TranslationAccessibilityService : AccessibilityService() {
         targetSrcNullCount = 0
         lastTargetEventPkg = null
         lastTargetEventTimeMs = 0L
+        lastNonTargetStateChangeTimeMs = 0L
+        lastTargetVisibleSignalPkg = null
+        lastTargetVisibleSignalMs = 0L
+        cachedEditableNode = null
+        cachedEditablePkg = null
+        pendingTypingSource = null
+        pendingTypingTargetLang = null
+        pendingTypingWindowStartMs = 0L
+        synchronized(perAppScanDiagMap) {
+            perAppScanDiagMap.clear()
+        }
+        ServiceBridge.lastPerAppScanDebug = ""
+        ServiceBridge.lastDraftDebug = "none"
         synchronized(cachedMessengerSelfSenders) {
             cachedMessengerSelfSenders.clear()
             cachedMessengerPartnerSenders = emptySet()

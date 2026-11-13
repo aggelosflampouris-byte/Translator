@@ -176,8 +176,11 @@ object TargetAppCatalog {
         "com.android.vending"
     )
 
-    private val BLOCKED_PACKAGE_KEYWORDS = listOf(
-        "launcher", "quickstep", "trebuchet", "nexuslauncher",
+    private val LAUNCHER_PACKAGE_KEYWORDS = listOf(
+        "launcher", "quickstep", "trebuchet", "nexuslauncher"
+    )
+
+    private val BLOCKED_PACKAGE_KEYWORDS = LAUNCHER_PACKAGE_KEYWORDS + listOf(
         "keyboard", "honeyboard", "inputmethod", "latinime", "gboard", "swiftkey",
         "bank", "banking", "wallet", "paypal", "revolut", "venmo", "cashapp",
         "authenticator", "1password", "agilebits", "bitwarden", "keepass", "dashlane", "lastpass",
@@ -192,6 +195,16 @@ object TargetAppCatalog {
             .filter { it.defaultEnabled }
             .flatMap { it.packageNames }
             .toSet()
+    }
+
+    /**
+     * Indica si un paquete corresponde al lanzador del sistema o pantalla de inicio.
+     */
+    fun isLauncherPackage(pkg: String?): Boolean {
+        if (pkg.isNullOrBlank()) return false
+        val lower = pkg.lowercase()
+        if (lower.endsWith(".home") || lower.contains(".home.")) return true
+        return LAUNCHER_PACKAGE_KEYWORDS.any { lower.contains(it) }
     }
 
     /**

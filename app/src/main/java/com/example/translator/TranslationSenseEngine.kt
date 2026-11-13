@@ -58,7 +58,15 @@ object TranslationSenseEngine {
         "intalnim", "cafea", "mancam", "piata", "nimic", "gata", "astept", "intarziu",
         "scrie", "vorbesc", "intreb", "raspund", "uite", "aici", "acolo", "frumos",
         "frumoasa", "naspa", "asa", "chiar", "doar", "macar", "nici", "despre",
-        "ceva", "nimeni", "toata", "greu", "usor", "rau"
+        "ceva", "nimeni", "toata", "greu", "usor", "rau",
+        "vii", "suna", "sună", "scriu", "zis", "facut", "făcut", "poti", "poți",
+        "vrei", "vrea", "haide", "exact", "probabil", "oricum", "iti", "îți",
+        "imi", "îmi", "isi", "își", "pleci", "plecați", "plecati", "ajungi",
+        "ajungem", "mergi", "mergeți", "mergeti", "mâncăm", "cafeaua", "serios",
+        "misto", "mișto", "pupa", "pupă", "pupici", "iubire", "iubito", "frumoaso",
+        "scumpule", "dimineață", "neata", "neatza", "salutari", "salutări",
+        "astepti", "aștepți", "treci", "auzim", "raman", "rămân", "intram", "intrăm",
+        "iesim", "ieșim", "dormi", "dorm", "lucrez", "lucrezi", "muncesc", "muncesti"
     )
 
     private val GENERIC_ROMANCE_PREPOSITIONS = setOf("de", "in", "e", "a", "la")

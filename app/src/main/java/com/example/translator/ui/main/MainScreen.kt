@@ -703,6 +703,12 @@ fun MainScreen(
               appendLine("LastScan: ${ServiceBridge.lastScanDebug}")
               appendLine("LastTree: ${ServiceBridge.lastTreeScanDebug}")
               appendLine("LastProbe: ${ServiceBridge.lastProbeDebug}")
+              if (ServiceBridge.lastDraftDebug != "none") {
+                  appendLine("Draft: ${ServiceBridge.lastDraftDebug}")
+              }
+              if (ServiceBridge.lastPerAppScanDebug.isNotBlank()) {
+                  appendLine("AppHistory: ${ServiceBridge.lastPerAppScanDebug}")
+              }
               if (!lastCrashSummary.isNullOrBlank()) {
                   appendLine("LastCrash: $lastCrashSummary")
               }

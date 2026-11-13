@@ -75,6 +75,16 @@ object ServiceBridge {
      */
     @Volatile var lastProbeDebug: String = "No probe yet."
 
+    /**
+     * Estado compacto del motor inverso del teclado sin incluir texto escrito por el usuario.
+     */
+    @Volatile var lastDraftDebug: String = "none"
+
+    /**
+     * Resumen reciente por aplicación visitada para conservar trazas de Messenger y Viber al cambiar de app.
+     */
+    @Volatile var lastPerAppScanDebug: String = ""
+
     fun isAnyServiceActive(): Boolean {
         return isTranslatingActive || isBubbleRunning || isNotificationActive
     }
