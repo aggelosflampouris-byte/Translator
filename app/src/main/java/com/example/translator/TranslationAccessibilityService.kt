@@ -151,6 +151,8 @@ class TranslationAccessibilityService : AccessibilityService() {
     @Volatile private var lastNonTargetStateChangeTimeMs: Long = 0L
     @Volatile private var lastTargetVisibleSignalPkg: String? = null
     @Volatile private var lastTargetVisibleSignalMs: Long = 0L
+    @Volatile private var lastSettledTargetPackage: String? = null
+    @Volatile private var targetNullBurstAfterNonTargetCount: Int = 0
     @Volatile private var cachedTargetRootPkg: String? = null
     @Volatile private var cachedTargetRootNode: AccessibilityNodeInfo? = null
     @Volatile private var lastPartialTargetRootPkg: String? = null
@@ -661,7 +663,7 @@ class TranslationAccessibilityService : AccessibilityService() {
     private fun isTransientOverlayOrInputPackage(pkg: String?): Boolean {
         if (pkg.isNullOrBlank()) return true
         if (pkg == applicationContext.packageName) return true
-        if (pkg == "com.android.systemui") return true
+        if (ForegroundTargetResolver.isSystemTransientPackage(pkg)) return true
         return isKeyboardPackage(pkg)
     }
 
@@ -669,12 +671,24 @@ class TranslationAccessibilityService : AccessibilityService() {
         return TargetAppCatalog.isKeyboardPackage(pkg)
     }
 
-    // Por qué: Al cambiar de una app habilitada a otra (p. ej. WhatsApp a Telegram), limpia inmediatamente
-    // las burbujas previas, trabajos en vuelo y estado de borrador para evitar superposiciones cruzadas.
+    // Por qué: Separa la limpieza visual inmediata al perder el foco del reseteo destructivo de trabajos/generación,
+    // evitando que parpadeos transitorios null cancelen escaneos en curso mientras las fugas visuales siguen bloqueadas.
     private fun handleForegroundTargetTransition(activeTargetPkg: String?) {
-        if (activeTargetPkg == lastForegroundTargetPackage) return
+        val prevForegroundTarget = lastForegroundTargetPackage
+        if (activeTargetPkg == prevForegroundTarget) return
         lastForegroundTargetPackage = activeTargetPkg
+        val prevSettledPkg = lastSettledTargetPackage
+        val genuineNonTargetDeparture =
+            activeTargetPkg == null &&
+                lastNonTargetStateChangeTimeMs > 0L &&
+                lastNonTargetStateChangeTimeMs >= lastTargetEventTimeMs
+        val switchedToDifferentTarget =
+            activeTargetPkg != null &&
+                prevSettledPkg != null &&
+                prevSettledPkg != activeTargetPkg
+
         if (activeTargetPkg != null) {
+            lastSettledTargetPackage = activeTargetPkg
             val desiredIncludeNotImp = synchronized(noNotImpProbeResultByPkg) {
                 noNotImpProbeResultByPkg[activeTargetPkg] != "ok"
             }
@@ -683,15 +697,14 @@ class TranslationAccessibilityService : AccessibilityService() {
                 syncAccessibilityPackageScope()
                 updateProbeDebug()
             }
-        }
-        if (activeTargetPkg != null) {
             if (cachedTargetRootPkg != activeTargetPkg) {
                 cachedTargetRootPkg = null
                 cachedTargetRootNode = null
                 lastPartialTargetRootPkg = null
                 lastPartialTargetRootNode = null
             }
-        } else if (lastNonTargetStateChangeTimeMs >= lastTargetEventTimeMs) {
+        } else if (genuineNonTargetDeparture) {
+            lastSettledTargetPackage = null
             // Por qué: Solo descartar la raíz en caché si hubo una transición real hacia otra app;
             // los parpadeos transitorios null conservan la raíz para reescaneos sin eventos.
             cachedTargetRootPkg = null
@@ -699,25 +712,40 @@ class TranslationAccessibilityService : AccessibilityService() {
             lastPartialTargetRootPkg = null
             lastPartialTargetRootNode = null
         }
-        pendingScanWindowStartMs = 0L
-        pendingScanEventSource = null
-        cachedEditableNode = null
-        cachedEditablePkg = null
-        pendingTypingSource = null
-        pendingTypingTargetLang = null
-        pendingTypingWindowStartMs = 0L
-        scrollSettleJob?.cancel()
-        isScreenScrolling = false
-        lastScrollPositionSig = null
-        scanGeneration.incrementAndGet()
-        inFlightKeys.clear()
-        typingJob?.cancel()
-        scanDebounceJob?.cancel()
-        lastRenderedDraftSource = null
-        manualDraftTargetLang = null
-        dismissedDraftText = null
-        mainHandler.post {
-            overlayManager.removeAllOverlays()
+
+        if (genuineNonTargetDeparture || switchedToDifferentTarget) {
+            pendingScanWindowStartMs = 0L
+            pendingScanEventSource = null
+            cachedEditableNode = null
+            cachedEditablePkg = null
+            pendingTypingSource = null
+            pendingTypingTargetLang = null
+            pendingTypingWindowStartMs = 0L
+            scrollSettleJob?.cancel()
+            isScreenScrolling = false
+            lastScrollPositionSig = null
+            scanGeneration.incrementAndGet()
+            inFlightKeys.clear()
+            typingJob?.cancel()
+            scanDebounceJob?.cancel()
+            lastRenderedDraftSource = null
+            manualDraftTargetLang = null
+            dismissedDraftText = null
+        }
+
+        if (activeTargetPkg == null || genuineNonTargetDeparture || switchedToDifferentTarget) {
+            mainHandler.post {
+                overlayManager.removeAllOverlays()
+            }
+        } else if (
+            prevForegroundTarget == null &&
+            prevSettledPkg == activeTargetPkg &&
+            !overlayManager.hasOverlays() &&
+            isScrollQuieted(android.os.SystemClock.uptimeMillis())
+        ) {
+            // Por qué: Al recuperarse de un parpadeo transitorio null en la misma app cuyas burbujas
+            // fueron retiradas, reprograma un escaneo rápido para restaurar las traducciones visibles.
+            scheduleScan(80L)
         }
     }
 
@@ -1023,6 +1051,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                     lastNonTargetStateChangeTimeMs = nowMs
                     lastTargetVisibleSignalPkg = null
                     lastTargetVisibleSignalMs = 0L
+                    targetNullBurstAfterNonTargetCount = 0
                     cachedTargetRootPkg = null
                     cachedTargetRootNode = null
                     lastPartialTargetRootPkg = null
@@ -1041,19 +1070,23 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         val isTargetEvt = isEnabledTargetPackage(packageName)
         var capturedSourceNode: AccessibilityNodeInfo? = null
+        var rawIsEditable = false
         if (isTargetEvt && (ServiceBridge.isTranslatingActive || ServiceBridge.isBubbleRunning)) {
             if (lastDiagTargetPkg != packageName) {
                 lastDiagTargetPkg = packageName
                 targetSrcNonNullCount = 0
                 targetSrcNullCount = 0
+                targetNullBurstAfterNonTargetCount = 0
                 lastRootExtractDiag = "init"
                 resetPerPackageProbes()
             }
             capturedSourceNode = event.source
             val rawSourceNode = capturedSourceNode
+            rawIsEditable = rawSourceNode?.isEditable == true
             // Por qué: Guardar el nodo editable y la señal visible antes de subir al nodo raíz,
             // preservando tanto el compositor para traducción inversa como la detección frente a falso foco del launcher en One UI.
             if (rawSourceNode != null) {
+                targetNullBurstAfterNonTargetCount = 0
                 if ((event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED ||
                         event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED) &&
                     rawSourceNode.isEditable
@@ -1103,6 +1136,20 @@ class TranslationAccessibilityService : AccessibilityService() {
                 }
             } else {
                 targetSrcNullCount++
+                if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
+                    event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED
+                ) {
+                    targetNullBurstAfterNonTargetCount++
+                    // Por qué: Apps como Viber en One UI emiten eventos 2048/4096 con source=null al inicio;
+                    // una ráfaga sostenida tras salir de otra app confirma que el chat está visible en primer plano.
+                    if (targetSrcNonNullCount == 0 &&
+                        targetNullBurstAfterNonTargetCount >= 4 &&
+                        (lastNonTargetStateChangeTimeMs == 0L || nowMs - lastNonTargetStateChangeTimeMs >= 300L)
+                    ) {
+                        lastTargetVisibleSignalPkg = packageName
+                        lastTargetVisibleSignalMs = nowMs
+                    }
+                }
                 if (cachedTargetRootNode == null && lastPartialTargetRootNode == null && lastRootExtractDiag == "init") {
                     lastRootExtractDiag = "srcNull(t=${event.eventType})"
                 }
@@ -1193,8 +1240,16 @@ class TranslationAccessibilityService : AccessibilityService() {
                     isScreenScrolling = false
                     val sourceForSettle = settleSource ?: pendingScanEventSource
                     pendingScanEventSource = null
-                    if (isTargetAppInForeground() && ServiceBridge.isTranslatingActive) {
-                        scanAndTranslateVisibleMessages(sourceForSettle)
+                    if (ServiceBridge.isTranslatingActive) {
+                        val settleFg = resolveForegroundTargetPackage()
+                        if (settleFg != null) {
+                            scanAndTranslateVisibleMessages(sourceForSettle)
+                        } else {
+                            val diagPkg = lastTargetEventPkg ?: lastSettledTargetPackage ?: lastEventPkg
+                            if (isEnabledTargetPackage(diagPkg)) {
+                                recordPerAppDiag(diagPkg ?: "", "scrollNoFg($lastResolveReason)")
+                            }
+                        }
                     }
                 }
             }
@@ -1204,15 +1259,20 @@ class TranslationAccessibilityService : AccessibilityService() {
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                 if (isKeyboardTranslatorEnabled) {
-                    handleOutgoingTyping(event)
+                    // Por qué: Evita recorrer todo el árbol buscando un campo editable en cada evento 2048
+                    // cuando no hay compositor enfocado ni borrador activo.
+                    if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+                        rawIsEditable ||
+                        overlayManager.currentDraftOverlayBounds != null ||
+                        cachedEditableNode != null
+                    ) {
+                        handleOutgoingTyping(event)
+                    }
                 } else {
                     overlayManager.removeDraftOverlay()
                 }
-                // Por qué: Ignora cambios de contenido si la lista aún se encuentra en movimiento por desplazamiento
-                val now = android.os.SystemClock.uptimeMillis()
-                if (isScrollQuieted(now)) {
-                    scheduleScan(360L, capturedSourceNode ?: event.source)
-                }
+                // Por qué: Permitir que scheduleScan ajuste el retraso en lugar de descartar eventos durante el reposo de scroll.
+                scheduleScan(360L, capturedSourceNode ?: event.source)
             }
             AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED,
             AccessibilityEvent.TYPE_VIEW_FOCUSED -> {
@@ -1231,9 +1291,10 @@ class TranslationAccessibilityService : AccessibilityService() {
     private fun scheduleScan(delayMs: Long, eventSource: AccessibilityNodeInfo? = null) {
         if (!ServiceBridge.isTranslatingActive) return
         if (!isTargetAppInForeground()) {
-            if (isEnabledTargetPackage(lastEventPkg)) {
-                ServiceBridge.lastScanDebug = "abort=sched_no_fg | pkg=$lastEventPkg | $lastResolveReason | $lastExternalWindowsSummary"
-                recordPerAppDiag(lastEventPkg ?: "", "schedNoFg($lastResolveReason)")
+            val diagPkg = if (isEnabledTargetPackage(lastEventPkg)) lastEventPkg else (lastTargetEventPkg ?: lastSettledTargetPackage)
+            if (isEnabledTargetPackage(diagPkg)) {
+                ServiceBridge.lastScanDebug = "abort=sched_no_fg | pkg=$diagPkg | $lastResolveReason | $lastExternalWindowsSummary"
+                recordPerAppDiag(diagPkg ?: "", "schedNoFg($lastResolveReason)")
             }
             if (overlayManager.hasOverlays()) {
                 mainHandler.post { overlayManager.removeAllOverlays() }
@@ -1241,9 +1302,17 @@ class TranslationAccessibilityService : AccessibilityService() {
             return
         }
         val now = android.os.SystemClock.uptimeMillis()
-        if (!isScrollQuieted(now)) {
-            return
+        val waitForScrollMs = if (!isScrollQuieted(now)) {
+            val elapsedSinceScroll = (now - lastScrollTimestamp).coerceAtLeast(0L)
+            if (isScreenScrolling) {
+                360L
+            } else {
+                (370L - elapsedSinceScroll).coerceIn(80L, 370L)
+            }
+        } else {
+            0L
         }
+        val targetDelayMs = maxOf(delayMs, waitForScrollMs)
         if (eventSource != null) {
             pendingScanEventSource = eventSource
         }
@@ -1257,16 +1326,49 @@ class TranslationAccessibilityService : AccessibilityService() {
             return
         }
         scanDebounceJob?.cancel()
-        val effectiveDelayMs = minOf(delayMs, (750L - elapsedSinceWindowStart).coerceAtLeast(80L))
+        val cappedDelayMs = minOf(targetDelayMs, (750L - elapsedSinceWindowStart).coerceAtLeast(80L))
+        val effectiveDelayMs = maxOf(waitForScrollMs, cappedDelayMs)
         scanDebounceJob = serviceScope.launch {
             delay(effectiveDelayMs)
             pendingScanWindowStartMs = 0L
             val sourceForScan = pendingScanEventSource ?: eventSource
             pendingScanEventSource = null
-            val nowAfterDelay = android.os.SystemClock.uptimeMillis()
-            if (ServiceBridge.isTranslatingActive && isTargetAppInForeground() && isScrollQuieted(nowAfterDelay)) {
-                scanAndTranslateVisibleMessages(sourceForScan)
+            if (!ServiceBridge.isTranslatingActive) return@launch
+            val delayFg = resolveForegroundTargetPackage()
+            if (delayFg == null) {
+                val diagPkg = if (isEnabledTargetPackage(lastEventPkg)) lastEventPkg else (lastTargetEventPkg ?: lastSettledTargetPackage)
+                if (isEnabledTargetPackage(diagPkg)) {
+                    ServiceBridge.lastScanDebug = "abort=sched_delay_no_fg | pkg=$diagPkg | $lastResolveReason | $lastExternalWindowsSummary"
+                    recordPerAppDiag(diagPkg ?: "", "schedDelayNoFg($lastResolveReason)")
+                }
+                return@launch
             }
+            val nowAfterDelay = android.os.SystemClock.uptimeMillis()
+            if (!isScrollQuieted(nowAfterDelay)) {
+                val age = (nowAfterDelay - lastScrollTimestamp).coerceAtLeast(0L)
+                recordPerAppDiag(delayFg, "schedDelayScroll($acceptedScrollCount/$ignoredScrollCount,$lastScrollDiag,age=$age)")
+                // Por qué: En lugar de descartar silenciosamente si el scroll acaba de terminar, reintenta una vez tras el reposo restante.
+                val retryWaitMs = if (isScreenScrolling) 360L else (370L - age).coerceIn(80L, 360L)
+                if (sourceForScan != null) {
+                    pendingScanEventSource = sourceForScan
+                }
+                delay(retryWaitMs)
+                val retrySource = pendingScanEventSource ?: sourceForScan
+                pendingScanEventSource = null
+                if (!ServiceBridge.isTranslatingActive) return@launch
+                val retryFg = resolveForegroundTargetPackage()
+                val nowAfterRetry = android.os.SystemClock.uptimeMillis()
+                if (retryFg != null && isScrollQuieted(nowAfterRetry)) {
+                    scanAndTranslateVisibleMessages(retrySource)
+                } else if (retryFg != null) {
+                    recordPerAppDiag(retryFg, "schedRetryDrop(age=${nowAfterRetry - lastScrollTimestamp})")
+                } else {
+                    val diagPkg = lastTargetEventPkg ?: lastSettledTargetPackage ?: delayFg
+                    recordPerAppDiag(diagPkg, "schedRetryNoFg($lastResolveReason)")
+                }
+                return@launch
+            }
+            scanAndTranslateVisibleMessages(sourceForScan)
         }
     }
 
@@ -1322,12 +1424,17 @@ class TranslationAccessibilityService : AccessibilityService() {
                 if (loopFg != null && isScrollQuieted(nowLoop)) {
                     scanAndTranslateVisibleMessages()
                 } else {
-                    if (loopFg != null && ServiceBridge.lastScanDebug == "No scan executed yet.") {
-                        ServiceBridge.lastScanDebug = "abort=loop_scrolling($acceptedScrollCount/$ignoredScrollCount,$lastScrollDiag,age=${nowLoop - lastScrollTimestamp}) | fg=$loopFg"
+                    if (loopFg != null) {
                         recordPerAppDiag(loopFg, "loopScroll($acceptedScrollCount/$ignoredScrollCount,$lastScrollDiag)")
-                    } else if (loopFg == null && isEnabledTargetPackage(lastTargetEventPkg)) {
-                        ServiceBridge.lastScanDebug = "abort=loop_no_fg | $lastResolveReason | $lastExternalWindowsSummary"
-                        recordPerAppDiag(lastTargetEventPkg ?: "", "loopNoFg($lastResolveReason)")
+                        if (ServiceBridge.lastScanDebug == "No scan executed yet.") {
+                            ServiceBridge.lastScanDebug = "abort=loop_scrolling($acceptedScrollCount/$ignoredScrollCount,$lastScrollDiag,age=${nowLoop - lastScrollTimestamp}) | fg=$loopFg"
+                        }
+                    } else {
+                        val diagPkg = lastTargetEventPkg ?: lastSettledTargetPackage
+                        if (isEnabledTargetPackage(diagPkg)) {
+                            ServiceBridge.lastScanDebug = "abort=loop_no_fg | $lastResolveReason | $lastExternalWindowsSummary"
+                            recordPerAppDiag(diagPkg ?: "", "loopNoFg($lastResolveReason)")
+                        }
                     }
                     if (loopFg == null && overlayManager.hasOverlays()) {
                         mainHandler.post { overlayManager.removeAllOverlays() }
@@ -1488,7 +1595,26 @@ class TranslationAccessibilityService : AccessibilityService() {
                     )
                 for (window in sortedWindows) {
                     val root = safeWindowRoot(window) ?: continue
-                    if (root.packageName?.toString() == activePkg) {
+                    val rootPkg = root.packageName?.toString()
+                    // Por qué: En One UI algunas ventanas de aplicación o activas reportan root.packageName=null
+                    // aunque sus nodos hijos directos pertenecen al paquete objetivo.
+                    val isMatchingWindowRoot = if (rootPkg == activePkg) {
+                        true
+                    } else if (rootPkg == null &&
+                        (window.type == AccessibilityWindowInfo.TYPE_APPLICATION || window.isActive || window.isFocused)
+                    ) {
+                        val childLimit = minOf(root.childCount, 3)
+                        (0 until childLimit).any { idx ->
+                            try {
+                                root.getChild(idx)?.packageName?.toString() == activePkg
+                            } catch (_: Exception) {
+                                false
+                            }
+                        }
+                    } else {
+                        false
+                    }
+                    if (isMatchingWindowRoot) {
                         val ch = root.childCount
                         val typeTag = if (window.type == AccessibilityWindowInfo.TYPE_APPLICATION) "" else ",t=${window.type}"
                         val diag = "win@${window.layer}($lastWinFetchMode,ch=$ch$typeTag)"
@@ -1801,7 +1927,18 @@ class TranslationAccessibilityService : AccessibilityService() {
                         val timeSinceScroll = android.os.SystemClock.uptimeMillis() - lastScrollTimestamp
                         if (currentGeneration != scanGeneration.get()) {
                             appendTreeScanDiag("pendGen")
-                            scheduleScan(80L)
+                            val diagPkg = lastForegroundTargetPackage ?: lastTargetEventPkg ?: lastSettledTargetPackage
+                            if (isEnabledTargetPackage(diagPkg)) {
+                                recordPerAppDiag(diagPkg ?: "", "pendGen")
+                            }
+                            // Por qué: Si pendGen ocurre poco después de un scroll, esperar el reposo restante evita
+                            // que scheduleScan dispare demasiado pronto o pierda el reescaneo de recuperación.
+                            val remainingQuiet = if (isScreenScrolling) {
+                                360L
+                            } else {
+                                (370L - timeSinceScroll).coerceAtLeast(80L)
+                            }
+                            scheduleScan(remainingQuiet)
                             return@launch
                         }
                         val fgOk = isTargetAppInForeground()
@@ -3179,6 +3316,8 @@ class TranslationAccessibilityService : AccessibilityService() {
         lastNonTargetStateChangeTimeMs = 0L
         lastTargetVisibleSignalPkg = null
         lastTargetVisibleSignalMs = 0L
+        lastSettledTargetPackage = null
+        targetNullBurstAfterNonTargetCount = 0
         cachedEditableNode = null
         cachedEditablePkg = null
         pendingTypingSource = null

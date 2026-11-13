@@ -45,12 +45,21 @@ object ForegroundTargetResolver {
     // visible sin cambios ni scroll, la lectura pasiva puede superar 5s sin emitir nuevos eventos.
     const val UNATTRIBUTED_WINDOW_GRACE_MS = 120_000L
 
+    private val SYSTEM_TRANSIENT_PACKAGES = setOf(
+        "com.android.systemui",
+        "com.samsung.android.smartsuggestions",
+        "com.samsung.android.app.smartcapture",
+        "com.samsung.android.app.cocktailbarservice",
+        "com.samsung.android.app.clipboardedge",
+        "com.google.android.as"
+    )
+
     /**
      * Identifica superficies del sistema o teclado que flotan sobre la app de chat sin reemplazarla.
      */
     fun isSystemTransientPackage(pkg: String?): Boolean {
         if (pkg.isNullOrBlank()) return true
-        if (pkg == "com.android.systemui") return true
+        if (SYSTEM_TRANSIENT_PACKAGES.contains(pkg)) return true
         return TargetAppCatalog.isKeyboardPackage(pkg)
     }
 

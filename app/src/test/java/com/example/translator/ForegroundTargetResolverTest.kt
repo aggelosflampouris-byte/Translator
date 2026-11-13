@@ -297,5 +297,28 @@ class ForegroundTargetResolverTest {
         )
         assertNull(staleResult.targetPackage)
     }
+
+    @Test
+    fun resolve_ignoresOneUiAssistantOverlayWhenRecentTargetIsActive() {
+        val viberWin = AppWindowSnapshot(
+            packageName = "com.viber.voip",
+            isActive = false,
+            isFocused = false,
+            layer = 1,
+            bounds = fullScreen
+        )
+        val result = ForegroundTargetResolver.resolve(
+            activeWindowPkg = "com.samsung.android.smartsuggestions",
+            activeWindowBounds = WindowRect(0, 1800, 1080, 2100),
+            appWindows = listOf(viberWin),
+            screenWidthPx = 1080,
+            screenHeightPx = 2340,
+            recentEventPkg = "com.viber.voip",
+            recentEventAgeMs = 200L,
+            enabledTargetPackages = enabledPkgs + "com.viber.voip",
+            selfPackage = selfPkg
+        )
+        assertEquals("com.viber.voip", result.targetPackage)
+    }
 }
 
