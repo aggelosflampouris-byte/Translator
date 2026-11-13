@@ -69,6 +69,12 @@ object ServiceBridge {
      */
     @Volatile var lastRuntimeTrace: String = "No runtime events yet."
 
+    /**
+     * Diagnóstico estructural sin texto privado de fuentes de eventos, nodos editables y prueba de flags.
+     * Por qué: Permite determinar sin permisos extra si un árbol bloqueado expone jerarquía vía EditText o cambio de flags.
+     */
+    @Volatile var lastProbeDebug: String = "No probe yet."
+
     fun isAnyServiceActive(): Boolean {
         return isTranslatingActive || isBubbleRunning || isNotificationActive
     }

@@ -684,16 +684,23 @@ fun MainScreen(
               appendLine("Runtime: ${ServiceBridge.lastRuntimeTrace}")
               appendLine("LastScan: ${ServiceBridge.lastScanDebug}")
               appendLine("LastTree: ${ServiceBridge.lastTreeScanDebug}")
+              appendLine("LastProbe: ${ServiceBridge.lastProbeDebug}")
           }.trim()
 
           AlertDialog(
               onDismissRequest = { showDiagnosticsDialog = false },
               title = { Text("Scan Diagnostics") },
               text = {
-                  Text(
-                      text = diagReport,
-                      style = MaterialTheme.typography.bodySmall
-                  )
+                  Box(
+                      modifier = Modifier
+                          .heightIn(max = 380.dp)
+                          .verticalScroll(rememberScrollState())
+                  ) {
+                      Text(
+                          text = diagReport,
+                          style = MaterialTheme.typography.bodySmall
+                      )
+                  }
               },
               confirmButton = {
                   TextButton(onClick = {

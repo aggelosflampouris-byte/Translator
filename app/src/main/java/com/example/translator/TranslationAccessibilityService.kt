@@ -168,6 +168,14 @@ class TranslationAccessibilityService : AccessibilityService() {
     @Volatile private var lastExternalWindowsSummary: String = "none"
     @Volatile private var lastResolveReason: String = "init"
     @Volatile private var lastTraceUpdateMs: Long = 0L
+    @Volatile private var includeNotImportantViewsFlag: Boolean = true
+    private val nullRootStreakByPkg = LinkedHashMap<String, Int>(4)
+    private val noNotImpProbeResultByPkg = LinkedHashMap<String, String>(4)
+    @Volatile private var lastWinProbeDiag: String = "none"
+    @Volatile private var lastEditProbeDiag: String = "none"
+    @Volatile private var lastEditableFindVia: String = "-"
+    @Volatile private var lastEditProbeMs: Long = 0L
+    private val srcProbeHistory = ArrayDeque<String>(4)
     private val seenExternalPackages = LinkedHashMap<String, Int>(8)
 
     private fun recordSeenExternalPackage(pkg: String) {
@@ -190,13 +198,155 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun resetPerPackageProbes() {
+        synchronized(srcProbeHistory) {
+            srcProbeHistory.clear()
+        }
+        lastWinProbeDiag = "none"
+        lastEditProbeDiag = "none"
+        lastEditableFindVia = "-"
+        updateProbeDebug()
+    }
+
+    private fun updateProbeDebug() {
+        val probeSummary = synchronized(noNotImpProbeResultByPkg) {
+            noNotImpProbeResultByPkg.entries.joinToString(",") { (pkg, status) ->
+                "${pkg.substringAfterLast('.')}:$status"
+            }.ifEmpty { "none" }
+        }
+        val srcSummary = synchronized(srcProbeHistory) {
+            srcProbeHistory.joinToString(";").ifEmpty { "none" }
+        }
+        val flagMode = if (includeNotImportantViewsFlag) "full" else "noNotImp"
+        ServiceBridge.lastProbeDebug =
+            "flags=$flagMode | flagProbe=$probeSummary | win=$lastWinProbeDiag | edit=$lastEditProbeDiag | src=[$srcSummary]"
+    }
+
+    private fun recordSrcProbe(entry: String) {
+        synchronized(srcProbeHistory) {
+            if (srcProbeHistory.contains(entry)) return
+            if (srcProbeHistory.size >= 3) {
+                srcProbeHistory.removeFirst()
+            }
+            srcProbeHistory.addLast(entry)
+        }
+        updateProbeDebug()
+    }
+
+    // Por qué: Resume solo métricas estructurales acotadas (sin texto privado) para saber si una raíz
+    // expone vistas textuales al modificar flags o escalar desde un EditText.
+    private fun summarizeSubtreeStats(root: AccessibilityNodeInfo, maxNodes: Int = 80): String {
+        var visited = 0
+        var withTxt = 0
+        var withDesc = 0
+        var editables = 0
+        val queue = java.util.ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        while (queue.isNotEmpty() && visited < maxNodes) {
+            val curr = queue.removeFirst()
+            visited++
+            try {
+                if (!curr.text.isNullOrBlank()) withTxt++
+                if (!curr.contentDescription.isNullOrBlank()) withDesc++
+                if (curr.isEditable) editables++
+                val count = curr.childCount
+                for (i in 0 until count) {
+                    val child = safeChild(curr, i) ?: continue
+                    queue.add(child)
+                }
+            } catch (_: Exception) {
+                // Ignorar nodos reciclados durante el muestreo estructural
+            }
+        }
+        return "v=$visited,t=$withTxt,d=$withDesc,ed=$editables"
+    }
+
+    private fun probeAncestry(node: AccessibilityNodeInfo, expectedPkg: String, tag: String): String {
+        return try {
+            val startCls = node.className?.toString()?.substringAfterLast('.') ?: "?"
+            val startRect = Rect().also { node.getBoundsInScreen(it) }
+            val isEd = node.isEditable
+            var current = node
+            var samePkgTop: AccessibilityNodeInfo? = if (current.packageName?.toString() == expectedPkg) current else null
+            var hops = 0
+            var stopReason = "cap120"
+            while (hops < 120) {
+                val parent = current.parent
+                if (parent == null) {
+                    stopReason = "top"
+                    break
+                }
+                hops++
+                current = parent
+                if (current.packageName?.toString() == expectedPkg) {
+                    samePkgTop = current
+                }
+            }
+            val topCand = samePkgTop ?: current
+            val topCls = topCand.className?.toString()?.substringAfterLast('.') ?: "?"
+            val topRect = Rect().also { topCand.getBoundsInScreen(it) }
+            val topPkg = topCand.packageName?.toString()?.substringAfterLast('.') ?: "-"
+            val topCh = topCand.childCount
+            val sub = summarizeSubtreeStats(topCand)
+            "$tag:$startCls(${startRect.width()}x${startRect.height()},ed=$isEd)->$topCls(${topRect.width()}x${topRect.height()},ch=$topCh,h=$hops,$stopReason,pkg=$topPkg)[$sub]"
+        } catch (e: Exception) {
+            "$tag:exc(${e.javaClass.simpleName})"
+        }
+    }
+
+    // Por qué: En árboles Litho muy densos (Messenger), FLAG_INCLUDE_NOT_IMPORTANT_VIEWS puede superar
+    // el límite IPC de Binder o fallar en el framework; probar una vez sin esa bandera lo verifica sin nuevos permisos.
+    private fun maybeHandleNullRootFlagProbe(fgPkg: String) {
+        var shouldSync = false
+        var shouldRescan = false
+        synchronized(noNotImpProbeResultByPkg) {
+            val state = noNotImpProbeResultByPkg[fgPkg]
+            val streak = (nullRootStreakByPkg[fgPkg] ?: 0) + 1
+            nullRootStreakByPkg[fgPkg] = streak
+            if (state == null && streak >= 2 && includeNotImportantViewsFlag) {
+                noNotImpProbeResultByPkg[fgPkg] = "probing"
+                nullRootStreakByPkg[fgPkg] = 0
+                includeNotImportantViewsFlag = false
+                shouldSync = true
+                shouldRescan = true
+            } else if (state == "probing" && streak >= 2) {
+                noNotImpProbeResultByPkg[fgPkg] = "null"
+                nullRootStreakByPkg[fgPkg] = 0
+                includeNotImportantViewsFlag = true
+                shouldSync = true
+            }
+        }
+        if (shouldSync) {
+            syncAccessibilityPackageScope()
+            updateProbeDebug()
+        }
+        if (shouldRescan) {
+            scheduleScan(250L)
+        }
+    }
+
+    private fun markNonNullRootFlagProbeSuccess(fgPkg: String) {
+        var changed = false
+        synchronized(noNotImpProbeResultByPkg) {
+            nullRootStreakByPkg[fgPkg] = 0
+            if (noNotImpProbeResultByPkg[fgPkg] == "probing") {
+                noNotImpProbeResultByPkg[fgPkg] = "ok"
+                changed = true
+            }
+        }
+        if (changed) {
+            updateProbeDebug()
+        }
+    }
+
     private fun updateRuntimeTrace(tag: String) {
         lastTraceUpdateMs = android.os.SystemClock.uptimeMillis()
         val msgEnabled = enabledTargetPackages.contains("com.facebook.orca")
         val loopAlive = activeScanLoopJob?.isActive == true
+        val flagMode = if (includeNotImportantViewsFlag) "full" else "noNotImp"
         ServiceBridge.lastRuntimeTrace =
             "$tag | c=$connectCount s=$stateChangeCount l=$scanLoopTicks(alive=$loopAlive) e=$eventCount " +
-            "svcPkgs=${enabledTargetPackages.size}(msg=$msgEnabled) scr=$isScreenScrolling($acceptedScrollCount/$ignoredScrollCount:$lastScrollDiag) " +
+            "svcPkgs=${enabledTargetPackages.size}(msg=$msgEnabled,flags=$flagMode) scr=$isScreenScrolling($acceptedScrollCount/$ignoredScrollCount:$lastScrollDiag) " +
             "fg=${lastForegroundTargetPackage ?: "null"} root=$lastRootOrigin($lastRootExtractDiag,src=$targetSrcNonNullCount/$targetSrcNullCount) res=$lastResolveReason " +
             "tgtEvt=${lastTargetEventPkg ?: "none"} lastEvt=${lastEventPkg ?: "none"}(${lastEventType}) seen=[${formatSeenPackages()}] " +
             "ext=[$lastExternalWindowsSummary]"
@@ -401,11 +551,16 @@ class TranslationAccessibilityService : AccessibilityService() {
             } else {
                 null
             }
-            val desiredFlags = info.flags or
+            val desiredFlags = (info.flags or
                 android.accessibilityservice.AccessibilityServiceInfo.DEFAULT or
                 android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
-                android.accessibilityservice.AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
-                android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+                android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS).let { base ->
+                if (includeNotImportantViewsFlag) {
+                    base or android.accessibilityservice.AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+                } else {
+                    base and android.accessibilityservice.AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS.inv()
+                }
+            }
             val desiredEventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
                 AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
                 AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED or
@@ -458,6 +613,16 @@ class TranslationAccessibilityService : AccessibilityService() {
     private fun handleForegroundTargetTransition(activeTargetPkg: String?) {
         if (activeTargetPkg == lastForegroundTargetPackage) return
         lastForegroundTargetPackage = activeTargetPkg
+        if (activeTargetPkg != null) {
+            val desiredIncludeNotImp = synchronized(noNotImpProbeResultByPkg) {
+                noNotImpProbeResultByPkg[activeTargetPkg] != "ok"
+            }
+            if (desiredIncludeNotImp != includeNotImportantViewsFlag) {
+                includeNotImportantViewsFlag = desiredIncludeNotImp
+                syncAccessibilityPackageScope()
+                updateProbeDebug()
+            }
+        }
         if (activeTargetPkg == null || cachedTargetRootPkg != activeTargetPkg) {
             cachedTargetRootPkg = null
             cachedTargetRootNode = null
@@ -754,6 +919,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                 targetSrcNonNullCount = 0
                 targetSrcNullCount = 0
                 lastRootExtractDiag = "init"
+                resetPerPackageProbes()
             }
             capturedSourceNode = event.source
             // Por qué: Si aún no tenemos root en caché, capturamos incluso mientras solo la burbuja está activa
@@ -765,6 +931,10 @@ class TranslationAccessibilityService : AccessibilityService() {
             }
             if (capturedSourceNode != null) {
                 targetSrcNonNullCount++
+                val needSample = synchronized(srcProbeHistory) { srcProbeHistory.size < 3 }
+                if (needSample || nowMs - lastRootExtractAttemptMs >= minExtractIntervalMs) {
+                    recordSrcProbe(probeAncestry(capturedSourceNode, packageName, "e(${event.eventType})"))
+                }
                 if (nowMs - lastRootExtractAttemptMs >= minExtractIntervalMs) {
                     lastRootExtractAttemptMs = nowMs
                     capturedSourceNode = extractTargetRootFromEventSource(capturedSourceNode, packageName, allowPartial = true)
@@ -1086,6 +1256,11 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         var hollowFallback: AccessibilityNodeInfo? = null
         var hollowDiag = ""
+        fun recordWinProbe(diag: String, root: AccessibilityNodeInfo) {
+            val rect = Rect().also { root.getBoundsInScreen(it) }
+            lastWinProbeDiag = "$diag(${rect.width()}x${rect.height()})[${summarizeSubtreeStats(root)}]"
+            updateProbeDebug()
+        }
 
         // Por qué: Prioriza siempre la raíz real de la ventana (rootInActiveWindow / windows) sobre eventSource,
         // ya que en frameworks como Litho (Messenger) eventSource.parent puede detenerse en un subnodo parcial.
@@ -1097,6 +1272,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                 val diag = "actWin($lastRootFetchMode,ch=$ch)"
                 lastRootExtractDiag = diag
                 if (ch > 0) {
+                    recordWinProbe(diag, active)
                     cachedTargetRootPkg = activePkg
                     cachedTargetRootNode = active
                     lastRootOrigin = diag
@@ -1126,6 +1302,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                         val diag = "win@${window.layer}($lastWinFetchMode,ch=$ch)"
                         lastRootExtractDiag = diag
                         if (ch > 0) {
+                            recordWinProbe(diag, root)
                             cachedTargetRootPkg = activePkg
                             cachedTargetRootNode = root
                             lastRootOrigin = diag
@@ -1261,12 +1438,15 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         val rootNode = findActiveTargetRootNode(eventSource)
         if (rootNode == null) {
-            ServiceBridge.lastScanDebug = "abort=null_root($lastRootOrigin) | fg=$fgPkg | $lastResolveReason | $lastExternalWindowsSummary"
+            val flagMode = if (includeNotImportantViewsFlag) "full" else "noNotImp"
+            ServiceBridge.lastScanDebug = "abort=null_root($lastRootOrigin) | fg=$fgPkg | flags=$flagMode | $lastResolveReason | $lastExternalWindowsSummary"
             mainHandler.post {
                 overlayManager.removeAllOverlays()
             }
+            maybeHandleNullRootFlagProbe(fgPkg)
             return 0
         }
+        markNonNullRootFlagProbeSuccess(fgPkg)
         val activeProfile = TargetAppCatalog.profileForPackage(rootNode.packageName?.toString())
         val density = resources.displayMetrics.density
         val screenWidth = getScreenWidthPx()
@@ -1741,6 +1921,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             val focused = findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
             val focusedPkg = focused?.packageName?.toString()
             if (focused != null && isEnabledTargetPackage(focusedPkg) && isEditableNodeOnScreen(focused, screenWidth, screenHeight)) {
+                lastEditableFindVia = "focusInput"
                 return focused
             }
         } catch (e: Exception) {
@@ -1752,6 +1933,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             val focused = activeRoot?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
             val focusedPkg = focused?.packageName?.toString()
             if (focused != null && isEnabledTargetPackage(focusedPkg) && isEditableNodeOnScreen(focused, screenWidth, screenHeight)) {
+                lastEditableFindVia = "actFocus"
                 return focused
             }
         } catch (e: Exception) {
@@ -1759,6 +1941,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
 
         val root = preferredRoot ?: findActiveTargetRootNode() ?: return null
+        lastEditableFindVia = "tree(${if (preferredRoot != null) "pref" else lastRootOrigin})"
         return findBottomMostVisibleEditableChild(root, screenWidth, screenHeight)
     }
 
@@ -1843,6 +2026,19 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         if (node != null) {
             observeInputForLearning(node)
+            val editPkg = node.packageName?.toString() ?: lastForegroundTargetPackage
+            if (isEnabledTargetPackage(editPkg) && editPkg != null) {
+                val nowMs = android.os.SystemClock.uptimeMillis()
+                if (lastEditProbeDiag == "none" || nowMs - lastEditProbeMs >= 500L) {
+                    lastEditProbeMs = nowMs
+                    val via = if (event?.source?.isEditable == true) "evtSrc(${event.eventType})" else lastEditableFindVia
+                    lastEditProbeDiag = probeAncestry(node, editPkg, via)
+                    updateProbeDebug()
+                }
+                if (cachedTargetRootNode == null || cachedTargetRootPkg != editPkg) {
+                    extractTargetRootFromEventSource(node, editPkg, allowPartial = true)
+                }
+            }
         }
 
         if (!isKeyboardTranslatorEnabled || node == null) {
