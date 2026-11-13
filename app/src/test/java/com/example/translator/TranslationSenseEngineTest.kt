@@ -359,4 +359,72 @@ class TranslationSenseEngineTest {
             )
         )
     }
+
+    @Test
+    fun isEligibleSourceText_acceptsMixedEnglishRomanianGroupMessageAndConversationContext() {
+        val mixedGroupMsg = "I see, thanks, si dam poze cu abonamentele in mail sau ce dovada vor?"
+        assertTrue(
+            TranslationSenseEngine.isEligibleSourceText(
+                mixedGroupMsg,
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
+                identifiedLang = "en"
+            )
+        )
+
+        val groupScreenTexts = listOf(
+            "si mai tii minte cum era structurat mt ul ?",
+            "eu nu am făcut cu savu:)))",
+            "ce e aia",
+            "mid term",
+            mixedGroupMsg
+        )
+        assertTrue(
+            TranslationSenseEngine.hasStrongConversationSourceContext(
+                groupScreenTexts,
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK
+            )
+        )
+        assertFalse(
+            TranslationSenseEngine.hasStrongConversationSourceContext(
+                listOf("How are you doing today?", "Let's meet tomorrow at the station"),
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK
+            )
+        )
+
+        assertTrue(
+            TranslationSenseEngine.isEligibleSourceText(
+                "ce e aia",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
+                identifiedLang = "pt",
+                conversationMatchesSource = true
+            )
+        )
+        assertTrue(
+            TranslationSenseEngine.isEligibleSourceText(
+                "mid term",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
+                identifiedLang = "en",
+                conversationMatchesSource = true
+            )
+        )
+        assertFalse(
+            TranslationSenseEngine.isEligibleSourceText(
+                "mid term",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
+                identifiedLang = "en",
+                conversationMatchesSource = false
+            )
+        )
+
+        assertTrue(TranslationSenseEngine.isLikelyRowSenderHeader("~ Edysuperedy", TranslateLanguage.ROMANIAN))
+        assertTrue(TranslationSenseEngine.isLikelyRowSenderHeader("Higher Year Representative", TranslateLanguage.ROMANIAN))
+        assertFalse(TranslationSenseEngine.isLikelyRowSenderHeader("ce e aia", TranslateLanguage.ROMANIAN))
+        assertFalse(TranslationSenseEngine.isLikelyRowSenderHeader("Da doar la STB", TranslateLanguage.ROMANIAN))
+    }
 }

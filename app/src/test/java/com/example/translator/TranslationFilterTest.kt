@@ -388,4 +388,21 @@ class TranslationFilterTest {
 
         assertFalse(TranslationFilter.shouldTranslate("Εσείς απαντήσατε στον χρήστη Λευτέρης", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK))
     }
+
+    @Test
+    fun shouldTranslate_filtersGroupSenderHandlesMentionsAndGreekEditedMarker() {
+        assertFalse(TranslationFilter.shouldTranslate("~ Crypto1706", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN))
+        assertFalse(TranslationFilter.shouldTranslate("~ Edysuperedy +40 763 029 933", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN))
+        assertFalse(TranslationFilter.shouldTranslate("@~Geala Stefan", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN))
+        assertFalse(TranslationFilter.shouldTranslate("Τροποποιήθηκε", TranslateLanguage.ENGLISH, TranslateLanguage.ROMANIAN))
+        assertFalse(TranslationFilter.shouldTranslate("Τροποποιήθηκε 20:47", TranslateLanguage.ENGLISH, TranslateLanguage.ROMANIAN))
+
+        assertEquals(
+            "Pai aia zic, nu ma chinui azi, de maine incolo",
+            TranslationFilter.cleanMessageText("Pai aia zic, nu ma chinui azi, de maine incolo Τροποποιήθηκε 20:47")
+        )
+        assertFalse(TranslationFilter.hasPlausibleLetterCandidate("~ stefan", null, TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.hasPlausibleLetterCandidate("@~Geala Stefan", null, TranslateLanguage.GREEK))
+        assertTrue(TranslationFilter.hasPlausibleLetterCandidate("Te pup stefan ms", null, TranslateLanguage.GREEK))
+    }
 }

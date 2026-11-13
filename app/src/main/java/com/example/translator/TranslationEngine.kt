@@ -237,7 +237,7 @@ class TranslationPipeline(
         resolveFastClean(cleanInput, sourceLang, targetLang)?.let { return it }
 
         val normalized = if (sourceLang == TranslateLanguage.ROMANIAN) {
-            TextNormalizer.restoreRomanianDiacritics(cleanInput)
+            TextNormalizer.normalizeRomanianChatForTranslation(cleanInput)
         } else {
             cleanInput
         }

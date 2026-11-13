@@ -2,6 +2,7 @@ package com.example.translator
 
 import com.google.mlkit.nl.translate.TranslateLanguage
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -199,6 +200,134 @@ class NodeCandidateEvaluatorTest {
         val samplesSummary = stats.formatSamples()
         assertTrue(samplesSummary.contains("ok"))
         assertTrue(samplesSummary.contains("[147,1330-1000,1430]"))
+    }
+
+    @Test
+    fun evaluateBottomUp_preservesBothQuotedAndShortReplyWhenParentExpansionCollidesWithSibling() {
+        val whatsappProfile = TargetAppCatalog.profileForPackage("com.whatsapp")
+        val sharedBubbleContainer = WindowRect(130, 740, 910, 1020)
+
+        val senderHeader = CollectedNodeSnapshot(
+            rawRect = WindowRect(150, 750, 440, 795),
+            expandedRect = WindowRect(150, 750, 440, 795),
+            directText = "~ Edysuperedy",
+            descText = null,
+            shortClass = "TextView",
+            isScrollableContainer = false,
+            childCount = 0,
+            inChatViewport = true,
+            childIndices = emptyList(),
+            rowId = 1,
+            parentNodeId = 10
+        )
+        val quotedText = CollectedNodeSnapshot(
+            rawRect = WindowRect(160, 810, 880, 910),
+            expandedRect = sharedBubbleContainer,
+            directText = "Pai aia zic, nu ma chinui azi, de maine incolo",
+            descText = null,
+            shortClass = "TextView",
+            isScrollableContainer = false,
+            childCount = 0,
+            inChatViewport = true,
+            childIndices = emptyList(),
+            rowId = 1,
+            parentNodeId = 20
+        )
+        val shortReply = CollectedNodeSnapshot(
+            rawRect = WindowRect(160, 930, 560, 995),
+            expandedRect = sharedBubbleContainer,
+            directText = "Te pup stefan ms",
+            descText = null,
+            shortClass = "TextView",
+            isScrollableContainer = false,
+            childCount = 0,
+            inChatViewport = true,
+            childIndices = emptyList(),
+            rowId = 1,
+            parentNodeId = 10
+        )
+        val talkBackWrapper = CollectedNodeSnapshot(
+            rawRect = sharedBubbleContainer,
+            expandedRect = sharedBubbleContainer,
+            directText = null,
+            descText = "~ Edysuperedy, Pai aia zic, nu ma chinui azi, de maine incolo, Te pup stefan ms, 20:48",
+            shortClass = "LinearLayout",
+            isScrollableContainer = false,
+            childCount = 3,
+            inChatViewport = true,
+            childIndices = listOf(0, 1, 2),
+            rowId = 1,
+            parentNodeId = 1
+        )
+
+        val evaluated = NodeCandidateEvaluator.evaluateBottomUp(
+            rawNodes = listOf(senderHeader, quotedText, shortReply, talkBackWrapper),
+            minY = minY,
+            maxY = maxY,
+            screenWidth = screenWidth,
+            density = density,
+            configuredSource = TranslateLanguage.ROMANIAN,
+            configuredTarget = TranslateLanguage.GREEK,
+            profile = whatsappProfile
+        )
+        val filtered = NodeCandidateEvaluator.filterOverlapping(evaluated, density)
+        val bounded = NodeCandidateEvaluator.assignMaxBottomBounds(filtered, maxY, density)
+
+        assertEquals(2, bounded.size)
+        val quoteCandidate = bounded.first { it.text.startsWith("Pai aia zic") }
+        val replyCandidate = bounded.first { it.text == "Te pup stefan ms" }
+        assertTrue(quoteCandidate.isQuoted)
+        assertFalse(replyCandidate.isQuoted)
+        assertEquals(WindowRect(160, 810, 880, 910), quoteCandidate.bounds)
+        assertEquals(WindowRect(160, 930, 560, 995), replyCandidate.bounds)
+        assertTrue(quoteCandidate.maxBottomPx <= replyCandidate.bounds.top)
+        assertEquals(maxY, replyCandidate.maxBottomPx)
+    }
+
+    @Test
+    fun evaluateBottomUp_dropsRoleBadgeHeaderAboveGroupMessageBody() {
+        val whatsappProfile = TargetAppCatalog.profileForPackage("com.whatsapp")
+        val roleHeader = CollectedNodeSnapshot(
+            rawRect = WindowRect(150, 520, 620, 560),
+            expandedRect = WindowRect(150, 520, 620, 560),
+            directText = "Higher Year Representative",
+            descText = null,
+            shortClass = "TextView",
+            isScrollableContainer = false,
+            childCount = 0,
+            inChatViewport = true,
+            childIndices = emptyList(),
+            rowId = 2,
+            parentNodeId = 30
+        )
+        val body = CollectedNodeSnapshot(
+            rawRect = WindowRect(150, 575, 860, 690),
+            expandedRect = WindowRect(150, 575, 860, 690),
+            directText = "Pai aia zic, nu ma chinui azi, de maine incolo",
+            descText = null,
+            shortClass = "TextView",
+            isScrollableContainer = false,
+            childCount = 0,
+            inChatViewport = true,
+            childIndices = emptyList(),
+            rowId = 2,
+            parentNodeId = 30
+        )
+
+        val evaluated = NodeCandidateEvaluator.evaluateBottomUp(
+            rawNodes = listOf(roleHeader, body),
+            minY = minY,
+            maxY = maxY,
+            screenWidth = screenWidth,
+            density = density,
+            configuredSource = TranslateLanguage.ROMANIAN,
+            configuredTarget = TranslateLanguage.GREEK,
+            profile = whatsappProfile
+        )
+
+        assertEquals(1, evaluated.size)
+        assertEquals("Pai aia zic, nu ma chinui azi, de maine incolo", evaluated.single().text)
+        assertFalse(evaluated.single().isQuoted)
     }
 }
 

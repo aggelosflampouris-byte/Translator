@@ -1,6 +1,8 @@
 package com.example.translator
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OverlayThemeTest {
@@ -151,6 +153,80 @@ class OverlayThemeTest {
         assertEquals(lightSurfaceText, lightOutgoing.textColor)
         assertEquals(R.drawable.bg_translation_bubble_outgoing, forcedClassicWhatsApp.backgroundRes)
         assertEquals(darkSurfaceText, forcedClassicWhatsApp.textColor)
+    }
+
+    @Test
+    fun `isOutgoingBubble ignores wide incoming group messages past 65 percent width`() {
+        val screenWidth = 1080
+        // Mensajes entrantes anchos en grupo WhatsApp (~12%-88%): deben permanecer entrantes (izquierda)
+        assertFalse(
+            OverlayManager.isOutgoingBubble(
+                targetLeft = 135,
+                targetRight = 945,
+                screenWidth = screenWidth,
+                alignmentMode = ChatAlignmentMode.LEFT_RIGHT_CHAT
+            )
+        )
+        // Cita entrante algo indentada (~17%-85%): sigue siendo entrante
+        assertFalse(
+            OverlayManager.isOutgoingBubble(
+                targetLeft = 185,
+                targetRight = 918,
+                screenWidth = screenWidth,
+                alignmentMode = ChatAlignmentMode.LEFT_RIGHT_CHAT
+            )
+        )
+        // Mensaje corto saliente a la derecha (~63%-94%) y mensaje largo saliente (~20%-95%)
+        assertTrue(
+            OverlayManager.isOutgoingBubble(
+                targetLeft = 680,
+                targetRight = 1020,
+                screenWidth = screenWidth,
+                alignmentMode = ChatAlignmentMode.LEFT_RIGHT_CHAT
+            )
+        )
+        assertTrue(
+            OverlayManager.isOutgoingBubble(
+                targetLeft = 220,
+                targetRight = 1020,
+                screenWidth = screenWidth,
+                alignmentMode = ChatAlignmentMode.LEFT_RIGHT_CHAT
+            )
+        )
+        // Chats tipo flujo izquierdo nunca marcan salientes
+        assertFalse(
+            OverlayManager.isOutgoingBubble(
+                targetLeft = 680,
+                targetRight = 1020,
+                screenWidth = screenWidth,
+                alignmentMode = ChatAlignmentMode.LEFT_STREAM_CHAT
+            )
+        )
+    }
+
+    @Test
+    fun `quoted overlay style uses compact quote drawables for dark and light modes`() {
+        val darkQuoted = OverlayManager.resolveBubbleStyle(
+            overlayTheme = AppDefaults.OVERLAY_THEME_AUTO,
+            alignmentMode = ChatAlignmentMode.LEFT_RIGHT_CHAT,
+            isRightSide = false,
+            isWhatsAppApp = true,
+            isSystemDarkMode = true,
+            isQuoted = true
+        )
+        val lightQuoted = OverlayManager.resolveBubbleStyle(
+            overlayTheme = AppDefaults.OVERLAY_THEME_AUTO,
+            alignmentMode = ChatAlignmentMode.LEFT_RIGHT_CHAT,
+            isRightSide = true,
+            isWhatsAppApp = true,
+            isSystemDarkMode = false,
+            isQuoted = true
+        )
+
+        assertEquals(R.drawable.bg_translation_bubble_quoted_dark, darkQuoted.backgroundRes)
+        assertEquals(0xFFD1D7DB.toInt(), darkQuoted.textColor)
+        assertEquals(R.drawable.bg_translation_bubble_quoted_light, lightQuoted.backgroundRes)
+        assertEquals(0xFF334155.toInt(), lightQuoted.textColor)
     }
 }
 

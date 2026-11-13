@@ -20,7 +20,7 @@ object ScriptDetector {
     }
 
     fun isLatinLetter(ch: Char): Boolean {
-        return ch in 'a'..'z' || ch in 'A'..'Z' || ch in ROMANIAN_DIACRITICS
+        return ch in 'a'..'z' || ch in 'A'..'Z' || ch in ROMANIAN_DIACRITICS || ch in "şţŞŢ"
     }
 
     fun countGreek(text: CharSequence): Int {

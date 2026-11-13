@@ -7,7 +7,9 @@ import kotlin.math.min
 
 data class MessageCandidate(
     val text: String,
-    val bounds: Rect
+    val bounds: Rect,
+    val isQuoted: Boolean = false,
+    val maxBottomPx: Int = Int.MAX_VALUE
 )
 
 /**
@@ -25,12 +27,19 @@ data class CollectedNodeSnapshot(
     val isScrollableContainer: Boolean,
     val childCount: Int,
     val inChatViewport: Boolean,
-    val childIndices: List<Int>
+    val childIndices: List<Int>,
+    val rowId: Int = 0,
+    val parentNodeId: Int = 0
 )
 
 data class EvaluatedCandidate(
     val text: String,
-    val bounds: WindowRect
+    val bounds: WindowRect,
+    val rawBounds: WindowRect = bounds,
+    val rowId: Int = 0,
+    val parentNodeId: Int = 0,
+    val isQuoted: Boolean = false,
+    val maxBottomPx: Int = Int.MAX_VALUE
 )
 
 /**
@@ -123,19 +132,32 @@ object NodeCandidateEvaluator {
         if (rawNodes.isEmpty()) return emptyList()
         val outList = mutableListOf<EvaluatedCandidate>()
         val subtreeMaxAccepted = IntArray(rawNodes.size)
+        val subtreeAcceptedCounts = IntArray(rawNodes.size)
 
         for (i in rawNodes.indices) {
             val item = rawNodes[i]
             var maxChildTextLen = 0
+            var acceptedChildCount = 0
             for (childIdx in item.childIndices) {
-                if (childIdx in rawNodes.indices && subtreeMaxAccepted[childIdx] > maxChildTextLen) {
-                    maxChildTextLen = subtreeMaxAccepted[childIdx]
+                if (childIdx in rawNodes.indices) {
+                    if (subtreeMaxAccepted[childIdx] > maxChildTextLen) {
+                        maxChildTextLen = subtreeMaxAccepted[childIdx]
+                    }
+                    acceptedChildCount += subtreeAcceptedCounts[childIdx]
                 }
             }
             if (maxChildTextLen > 0) {
                 val outerLen = maxOf(item.directText?.length ?: 0, item.descText?.length ?: 0)
-                if (item.isScrollableContainer || item.childCount > 6 || outerLen <= maxChildTextLen + 12) {
+                // Por qué: Si subnodos textuales ya fueron aceptados dentro de la burbuja, suprime contenedores
+                // envolventes (sobre todo descripciones TalkBack que concatenan remitente, cita y respuesta).
+                if (item.isScrollableContainer ||
+                    item.childCount > 6 ||
+                    acceptedChildCount >= 2 ||
+                    item.directText.isNullOrBlank() ||
+                    outerLen <= maxChildTextLen + 12
+                ) {
                     subtreeMaxAccepted[i] = maxChildTextLen
+                    subtreeAcceptedCounts[i] = acceptedChildCount
                     continue
                 }
             }
@@ -152,8 +174,149 @@ object NodeCandidateEvaluator {
                 stats = stats
             )
             subtreeMaxAccepted[i] = maxOf(maxChildTextLen, acceptedLen)
+            subtreeAcceptedCounts[i] = if (acceptedLen > 0) acceptedChildCount + 1 else acceptedChildCount
         }
-        return outList
+        return resolveSiblingExpansionsAndReplyStructure(
+            candidates = outList,
+            minY = minY,
+            maxY = maxY,
+            screenWidth = screenWidth,
+            density = density,
+            configuredSource = configuredSource,
+            profile = profile
+        )
+    }
+
+    /**
+     * Evita que una expansión al contenedor padre invada hermanos dentro de la misma fila grupal,
+     * descarta cabeceras de remitente encima del mensaje y etiqueta citas vs respuesta principal.
+     */
+    private fun resolveSiblingExpansionsAndReplyStructure(
+        candidates: List<EvaluatedCandidate>,
+        minY: Int,
+        maxY: Int,
+        screenWidth: Int,
+        density: Float,
+        configuredSource: String,
+        profile: ChatAppProfile
+    ): List<EvaluatedCandidate> {
+        if (candidates.isEmpty()) return emptyList()
+
+        // 1. Degrada bounds expandidos si invaden el rawBounds de otro candidato (ej. cita vs respuesta corta)
+        val nonInvading = ArrayList<EvaluatedCandidate>(candidates.size)
+        for (idx in candidates.indices) {
+            val cand = candidates[idx]
+            if (cand.bounds == cand.rawBounds) {
+                nonInvading.add(cand)
+                continue
+            }
+            var collidesWithSibling = false
+            for (otherIdx in candidates.indices) {
+                if (otherIdx == idx) continue
+                val otherRaw = candidates[otherIdx].rawBounds
+                val sameOrUnknownRow = cand.rowId == 0 || candidates[otherIdx].rowId == 0 || cand.rowId == candidates[otherIdx].rowId
+                if (!sameOrUnknownRow) continue
+                if (overlapRatioOfSmaller(cand.bounds, otherRaw) > 0.10f) {
+                    collidesWithSibling = true
+                    break
+                }
+            }
+            if (!collidesWithSibling) {
+                nonInvading.add(cand)
+            } else {
+                val tight = clampRectToViewport(cand.rawBounds, minY, maxY)
+                if (TranslationSenseEngine.isMessageBubble(tight.left, tight.right, screenWidth, profile.alignmentMode) &&
+                    tight.width > (22 * density).toInt() &&
+                    tight.height > (14 * density).toInt()
+                ) {
+                    nonInvading.add(cand.copy(bounds = tight))
+                } else {
+                    nonInvading.add(cand)
+                }
+            }
+        }
+
+        // 2. Dentro de cada fila de chat (rowId > 0), descarta cabeceras de remitente encima del cuerpo
+        // y marca citas superiores con `isQuoted = true`.
+        val kept = ArrayList<EvaluatedCandidate>(nonInvading.size)
+        val byRow = nonInvading.groupBy { it.rowId }
+        for ((rowId, group) in byRow) {
+            if (rowId <= 0 || group.size <= 1) {
+                kept.addAll(group)
+                continue
+            }
+            val sortedRow = group.sortedWith(compareBy<EvaluatedCandidate> { it.bounds.top }.thenBy { it.bounds.left })
+            val bodyOrKeep = ArrayList<EvaluatedCandidate>(sortedRow.size)
+            for (i in sortedRow.indices) {
+                val c = sortedRow[i]
+                val isAboveAnotherCandidate = i < sortedRow.lastIndex &&
+                    sortedRow[i + 1].bounds.top >= c.bounds.top + (10 * density).toInt()
+                if (isAboveAnotherCandidate && TranslationSenseEngine.isLikelyRowSenderHeader(c.text, configuredSource)) {
+                    continue
+                }
+                bodyOrKeep.add(c)
+            }
+            val finalRow = if (bodyOrKeep.isNotEmpty()) bodyOrKeep else sortedRow
+            if (finalRow.size <= 1) {
+                kept.addAll(finalRow)
+            } else {
+                val mainBody = finalRow.last()
+                val quoteIndentPx = (2 * density).toInt()
+                for (i in finalRow.indices) {
+                    val item = finalRow[i]
+                    val isUpperReplyQuote = i < finalRow.lastIndex &&
+                        item.bounds.bottom <= mainBody.bounds.top + (14 * density).toInt() &&
+                        (item.bounds.left >= mainBody.bounds.left + quoteIndentPx ||
+                            (item.parentNodeId != 0 && mainBody.parentNodeId != 0 && item.parentNodeId != mainBody.parentNodeId))
+                    kept.add(item.copy(isQuoted = isUpperReplyQuote))
+                }
+            }
+        }
+        return kept
+    }
+
+    private fun clampRectToViewport(rect: WindowRect, minY: Int, maxY: Int): WindowRect {
+        val safeMaxY = maxOf(minY, maxY)
+        val top = rect.top.coerceIn(minY, safeMaxY)
+        val bottom = rect.bottom.coerceIn(top, safeMaxY)
+        return WindowRect(
+            left = rect.left,
+            top = top,
+            right = rect.right,
+            bottom = bottom
+        )
+    }
+
+    private fun overlapRatioOfSmaller(a: WindowRect, b: WindowRect): Float {
+        val interLeft = maxOf(a.left, b.left)
+        val interTop = maxOf(a.top, b.top)
+        val interRight = min(a.right, b.right)
+        val interBottom = min(a.bottom, b.bottom)
+        if (interRight <= interLeft || interBottom <= interTop) return 0f
+        val intersectArea = (interRight - interLeft).toLong() * (interBottom - interTop)
+        val minArea = min(a.width.toLong() * a.height, b.width.toLong() * b.height)
+        return if (minArea > 0L) intersectArea.toFloat() / minArea.toFloat() else 0f
+    }
+
+    fun assignMaxBottomBounds(candidates: List<EvaluatedCandidate>, maxY: Int, density: Float): List<EvaluatedCandidate> {
+        if (candidates.isEmpty()) return emptyList()
+        val sorted = candidates.sortedWith(compareBy<EvaluatedCandidate> { it.bounds.top }.thenBy { it.bounds.left })
+        val gapPx = (3 * density).toInt()
+        val horizSlopPx = (8 * density).toInt()
+        val verticalStepPx = (14 * density).toInt()
+        return sorted.mapIndexed { idx, curr ->
+            var limit = maxY
+            for (nextIdx in (idx + 1) until sorted.size) {
+                val next = sorted[nextIdx]
+                if (next.bounds.top < curr.bounds.top + verticalStepPx) continue
+                val horizOverlap = min(curr.bounds.right, next.bounds.right) > maxOf(curr.bounds.left, next.bounds.left) - horizSlopPx
+                if (horizOverlap) {
+                    limit = min(limit, (next.bounds.top - gapPx).coerceAtLeast(curr.bounds.top + (20 * density).toInt()))
+                    break
+                }
+            }
+            curr.copy(maxBottomPx = limit)
+        }
     }
 
     internal data class SelectedCandidateText(
@@ -271,13 +434,17 @@ object NodeCandidateEvaluator {
             expandedRect.bottom > minY + visibleMargin &&
             expandedRect.top < maxY - visibleMargin
         ) {
-            val clampedRect = WindowRect(
-                left = expandedRect.left,
-                top = expandedRect.top.coerceAtLeast(minY),
-                right = expandedRect.right,
-                bottom = expandedRect.bottom.coerceAtMost(maxY)
+            val clampedRect = clampRectToViewport(expandedRect, minY, maxY)
+            val clampedRaw = clampRectToViewport(rawRect, minY, maxY)
+            outList.add(
+                EvaluatedCandidate(
+                    text = cleanText,
+                    bounds = clampedRect,
+                    rawBounds = clampedRaw,
+                    rowId = item.rowId,
+                    parentNodeId = item.parentNodeId
+                )
             )
-            outList.add(EvaluatedCandidate(cleanText, clampedRect))
             stats?.let {
                 it.passedCandidates++
                 it.addSample(
@@ -318,7 +485,7 @@ object NodeCandidateEvaluator {
                     val cArea = cRect.width.toLong() * cRect.height
                     val aArea = aRect.width.toLong() * aRect.height
                     val minArea = min(cArea, aArea)
-                    if (minArea > 0 && intersectArea > minArea * 0.20f) {
+                    if (minArea > 0 && intersectArea > minArea * 0.28f) {
                         overlaps = true
                         break
                     }
@@ -359,6 +526,8 @@ class NodeTreeScanner(
     ): List<MessageCandidate> {
         val rawNodes = mutableListOf<CollectedNodeSnapshot>()
 
+        val rowGen = IntArray(1)
+        val visitGen = intArrayOf(1)
         collectRawNodes(
             node = rootNode,
             minY = minY,
@@ -369,7 +538,11 @@ class NodeTreeScanner(
             configuredTarget = configuredTarget,
             profile = profile,
             stats = stats,
-            outRawNodes = rawNodes
+            outRawNodes = rawNodes,
+            currentRowId = 0,
+            currentParentNodeId = 0,
+            rowGen = rowGen,
+            visitGen = visitGen
         )
         if (rawNodes.isEmpty()) return emptyList()
 
@@ -385,9 +558,17 @@ class NodeTreeScanner(
             stats = stats
         )
 
+        val filtered = NodeCandidateEvaluator.filterOverlapping(evaluated, displayBounds.density)
         return NodeCandidateEvaluator
-            .filterOverlapping(evaluated, displayBounds.density)
-            .map { MessageCandidate(it.text, Rect(it.bounds.left, it.bounds.top, it.bounds.right, it.bounds.bottom)) }
+            .assignMaxBottomBounds(filtered, maxY, displayBounds.density)
+            .map {
+                MessageCandidate(
+                    text = it.text,
+                    bounds = Rect(it.bounds.left, it.bounds.top, it.bounds.right, it.bounds.bottom),
+                    isQuoted = it.isQuoted,
+                    maxBottomPx = it.maxBottomPx
+                )
+            }
     }
 
     /**
@@ -445,6 +626,10 @@ class NodeTreeScanner(
         profile: ChatAppProfile,
         stats: ScanStats,
         outRawNodes: MutableList<CollectedNodeSnapshot>,
+        currentRowId: Int = 0,
+        currentParentNodeId: Int = 0,
+        rowGen: IntArray = IntArray(1),
+        visitGen: IntArray = intArrayOf(1),
         depth: Int = 0
     ): List<Int> {
         if (depth > 64) return emptyList()
@@ -459,10 +644,32 @@ class NodeTreeScanner(
             return emptyList()
         }
 
+        val myNodeId = visitGen[0]++
+        val className = try { node.className?.toString() ?: "" } catch (_: Exception) { "" }
+        val isScrollableContainer = AccessibilityNodeSafeOps.isScrollableOrToolbarClass(node, className)
+        // Por qué: Identifica la lista vertical de mensajes para asignar un `rowId` estable
+        // a cada fila hija y aislar citas respecto a respuestas cortas dentro de la misma burbuja.
+        val isChatListContainer = isScrollableContainer && currentRowId == 0 && run {
+            if (className.contains("RecyclerView", ignoreCase = true) ||
+                className.contains("ListView", ignoreCase = true)
+            ) {
+                true
+            } else {
+                val listRect = Rect()
+                try {
+                    node.getBoundsInScreen(listRect)
+                    listRect.height() >= (screenHeight * 0.35f).toInt()
+                } catch (_: Exception) {
+                    false
+                }
+            }
+        }
+
         var mergedChildIndices: MutableList<Int>? = null
         val chCount = try { node.childCount } catch (_: Exception) { 0 }
         for (i in 0 until chCount) {
             val child = AccessibilityNodeSafeOps.safeChild(node, i) ?: continue
+            val childRowId = if (isChatListContainer) ++rowGen[0] else currentRowId
             val childIds = collectRawNodes(
                 node = child,
                 minY = minY,
@@ -474,6 +681,10 @@ class NodeTreeScanner(
                 profile = profile,
                 stats = stats,
                 outRawNodes = outRawNodes,
+                currentRowId = childRowId,
+                currentParentNodeId = myNodeId,
+                rowGen = rowGen,
+                visitGen = visitGen,
                 depth = depth + 1
             )
             if (childIds.isNotEmpty()) {
@@ -485,13 +696,10 @@ class NodeTreeScanner(
         }
         val collectedChildren = mergedChildIndices ?: emptyList()
 
-        val className = try { node.className?.toString() ?: "" } catch (_: Exception) { "" }
         if (AccessibilityNodeSafeOps.isIgnoredWidgetClass(className)) {
             stats.skippedWidget++
             return collectedChildren
         }
-
-        val isScrollableContainer = AccessibilityNodeSafeOps.isScrollableOrToolbarClass(node, className)
         val directText = try { node.text?.toString()?.takeIf { it.isNotBlank() } } catch (_: Exception) { null }
         val descText = if (!isScrollableContainer) {
             try { node.contentDescription?.toString()?.takeIf { it.isNotBlank() } } catch (_: Exception) { null }
@@ -535,7 +743,9 @@ class NodeTreeScanner(
                 isScrollableContainer = isScrollableContainer,
                 childCount = chCount,
                 inChatViewport = inChatViewport,
-                childIndices = collectedChildren
+                childIndices = collectedChildren,
+                rowId = currentRowId,
+                parentNodeId = currentParentNodeId
             )
         )
         return listOf(newIndex)
@@ -550,30 +760,31 @@ class NodeTreeScanner(
         profile: ChatAppProfile
     ): Rect {
         val result = Rect(rawRect)
-        // Por qué: Solo expande al contenedor padre en apps con burbujas aisladas; en filas anchas
-        // limita la expansión para no invadir cabeceras ni avatares.
+        // Por qué: Solo expande al contenedor padre inmediato bajo márgenes verticales estrictos
+        // para que respuestas cortas en grupos no absorban la cita ni la cabecera del remitente.
         try {
-            var container = node.parent
-            val maxLevels = if (profile.expandContainerToParent) 1 else 0
-            val maxParentWidthRatio = if (profile.expandContainerToParent) 0.95f else 0.85f
-            for (level in 0..maxLevels) {
-                if (container == null) break
+            val container = node.parent
+            if (container != null) {
                 val pRect = Rect()
                 container.getBoundsInScreen(pRect)
-                val safeExpansion = profile.expandContainerToParent ||
-                    (pRect.width() <= (result.width() * 1.35f) && pRect.height() <= (result.height() * 1.50f))
-                if (safeExpansion &&
-                    pRect.width() <= screenWidth * maxParentWidthRatio &&
+                val maxTopExtend = (14 * density).toInt()
+                val maxBottomExtend = (26 * density).toInt()
+                val maxParentHeight = (rawRect.height() * 1.45f + 16 * density).toInt()
+                val maxParentWidth = (screenWidth * if (profile.expandContainerToParent) 0.90f else 0.85f).toInt()
+                val safeVerticalSpan = pRect.top >= rawRect.top - maxTopExtend &&
+                    pRect.bottom <= rawRect.bottom + maxBottomExtend &&
+                    pRect.height() <= maxParentHeight
+                val safeHorizontalSpan = profile.expandContainerToParent ||
+                    pRect.width() <= (result.width() * 1.35f)
+                if (safeVerticalSpan &&
+                    safeHorizontalSpan &&
+                    pRect.width() <= maxParentWidth &&
                     pRect.height() <= screenHeight &&
                     pRect.width() >= result.width() &&
                     pRect.height() >= result.height() &&
                     Rect.intersects(pRect, result)
                 ) {
                     result.set(pRect)
-                    break
-                }
-                if (level < maxLevels) {
-                    container = container.parent
                 }
             }
         } catch (_: Exception) {

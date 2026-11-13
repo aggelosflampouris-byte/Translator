@@ -76,4 +76,44 @@ class TextNormalizerTest {
         val restored = TextNormalizer.restoreEmojis(protected.text, protected.tokens)
         assertEquals(input, restored)
     }
+
+    @Test
+    fun protectAndRestoreEmojis_protectsTildeGroupMention() {
+        val input = "Multumesc @~Geala Stefan"
+        val protected = TextNormalizer.protectEmojis(input)
+        assertEquals(listOf("@~Geala"), protected.tokens)
+        assertEquals(input, TextNormalizer.restoreEmojis(protected.text, protected.tokens))
+    }
+
+    @Test
+    fun normalizeRomanianChatForTranslation_handlesSlangPhrasesCedillasAndAcronyms() {
+        assertEquals(
+            "îți dau eu cartela să intri când vrei tu și gata",
+            TextNormalizer.normalizeRomanianChatForTranslation("iti dau eu cartela sa intrii cand vr tu si gt")
+        )
+        assertEquals(
+            "e cineva anul 2 care a făcut LA cu prof?",
+            TextNormalizer.normalizeRomanianChatForTranslation("e cnv anu 2 care a fc LA cu prof?")
+        )
+        assertEquals(
+            "Și să fie ștampilate",
+            TextNormalizer.normalizeRomanianChatForTranslation("Si sa die stampilate")
+        )
+        assertEquals(
+            "Să fie bine, nu mă chinui, o să vezi",
+            TextNormalizer.normalizeRomanianChatForTranslation("Sa die bine, nu ma chinui, o sa vezi")
+        )
+        assertEquals(
+            "Cred că legitimația și niște șuruburi",
+            TextNormalizer.normalizeRomanianChatForTranslation("Cred ca legitimatia si niste şuruburi")
+        )
+        assertEquals(
+            "Te pup stefan mulțumesc",
+            TextNormalizer.normalizeRomanianChatForTranslation("Te pup stefan ms")
+        )
+        assertEquals(
+            "Durează 10 ms și 5 pt cu VR și GT",
+            TextNormalizer.normalizeRomanianChatForTranslation("Durează 10 ms și 5 pt cu VR și GT")
+        )
+    }
 }

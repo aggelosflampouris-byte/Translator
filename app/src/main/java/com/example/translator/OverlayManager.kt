@@ -3,6 +3,8 @@ package com.example.translator
 import android.content.Context
 import android.graphics.PixelFormat
 import android.graphics.Rect
+import android.text.TextUtils
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
@@ -25,24 +27,72 @@ class OverlayManager(private val context: Context) {
         val textColor: Int
     )
 
+    data class ExpectedBubbleSlot(
+        val rect: Rect,
+        val sourceText: String
+    )
+
+    data class OverlayRenderItem(
+        val rect: Rect,
+        val sourceText: String,
+        val translatedText: String,
+        val isQuoted: Boolean = false,
+        val maxBottomPx: Int = Int.MAX_VALUE
+    )
+
     companion object {
         private const val TEXT_COLOR_DARK_SURFACE = 0xFFE9EDEF.toInt()
         private const val TEXT_COLOR_LIGHT_SURFACE = 0xFF0F172A.toInt()
+        private const val TEXT_COLOR_QUOTED_DARK = 0xFFD1D7DB.toInt()
+        private const val TEXT_COLOR_QUOTED_LIGHT = 0xFF334155.toInt()
 
         /**
-         * Resuelve el fondo y color de texto de la burbuja según el tema elegido y la app activa.
+         * Determina si un globo pertenece al lado saliente (usuario) sin confundir mensajes entrantes
+         * anchos de grupos cuyo borde derecho supera el 65% de pantalla.
+         */
+        fun isOutgoingBubble(
+            targetLeft: Int,
+            targetRight: Int,
+            screenWidth: Int,
+            alignmentMode: ChatAlignmentMode
+        ): Boolean {
+            if (alignmentMode != ChatAlignmentMode.LEFT_RIGHT_CHAT || screenWidth <= 0) return false
+            val leftRatio = targetLeft.toFloat() / screenWidth.toFloat()
+            val rightRatio = targetRight.toFloat() / screenWidth.toFloat()
+            val centerRatio = (leftRatio + rightRatio) * 0.5f
+            return (leftRatio >= 0.34f && rightRatio > 0.72f) ||
+                (leftRatio >= 0.17f && rightRatio >= 0.89f && centerRatio >= 0.53f)
+        }
+
+        /**
+         * Resuelve el fondo y color de texto de la burbuja según el tema elegido, si es cita y la app activa.
          */
         fun resolveBubbleStyle(
             overlayTheme: String,
             alignmentMode: ChatAlignmentMode,
             isRightSide: Boolean,
             isWhatsAppApp: Boolean,
-            isSystemDarkMode: Boolean = true
+            isSystemDarkMode: Boolean = true,
+            isQuoted: Boolean = false
         ): BubbleStyle {
+            val useLightSurface = overlayTheme == AppDefaults.OVERLAY_THEME_LIGHT ||
+                (overlayTheme == AppDefaults.OVERLAY_THEME_AUTO && !isSystemDarkMode)
+            if (isQuoted) {
+                return if (useLightSurface) {
+                    BubbleStyle(
+                        backgroundRes = R.drawable.bg_translation_bubble_quoted_light,
+                        textColor = TEXT_COLOR_QUOTED_LIGHT
+                    )
+                } else {
+                    BubbleStyle(
+                        backgroundRes = R.drawable.bg_translation_bubble_quoted_dark,
+                        textColor = TEXT_COLOR_QUOTED_DARK
+                    )
+                }
+            }
             val isOutgoing = alignmentMode == ChatAlignmentMode.LEFT_RIGHT_CHAT && isRightSide
             return when {
-                overlayTheme == AppDefaults.OVERLAY_THEME_LIGHT ||
-                    (overlayTheme == AppDefaults.OVERLAY_THEME_AUTO && !isSystemDarkMode) -> BubbleStyle(
+                useLightSurface -> BubbleStyle(
                     backgroundRes = if (isOutgoing) R.drawable.bg_translation_bubble_light_outgoing else R.drawable.bg_translation_bubble_light_incoming,
                     textColor = TEXT_COLOR_LIGHT_SURFACE
                 )
@@ -65,9 +115,13 @@ class OverlayManager(private val context: Context) {
 
     private data class ActiveBubble(
         val view: View,
+        var sourceText: String,
         var text: String,
         var targetRect: Rect,
-        var overlayBounds: Rect
+        var overlayBounds: Rect,
+        var isQuoted: Boolean,
+        var maxBottomPx: Int,
+        var scanId: Long
     )
 
     // Map of bubble ID to ActiveBubble
@@ -97,106 +151,214 @@ class OverlayManager(private val context: Context) {
         }
     }
 
+    private fun overlapRatioOfSmaller(a: Rect, b: Rect): Float {
+        val intersection = Rect()
+        if (!intersection.setIntersect(a, b)) return 0f
+        val intersectArea = intersection.width().toLong() * intersection.height()
+        val minArea = min(
+            a.width().toLong() * a.height(),
+            b.width().toLong() * b.height()
+        )
+        return if (minArea > 0L) intersectArea.toFloat() / minArea.toFloat() else 0f
+    }
+
+    /**
+     * Retira burbujas activas que colisionan significativamente o provienen de un escaneo anterior
+     * en la misma posición antes de agregar o actualizar la nueva traducción.
+     */
+    private fun evictCollidingBubblesLocked(
+        targetRect: Rect,
+        overlayBounds: Rect,
+        sourceText: String,
+        scanId: Long,
+        excludeIds: Set<String> = emptySet()
+    ) {
+        val density = ScreenMetricsHelper.currentBounds(context).density
+        val maxVert = maxVerticalDriftPx(density)
+        val maxHoriz = (20 * density).toInt()
+        val iterator = activeBubbles.iterator()
+        while (iterator.hasNext()) {
+            val (id, existing) = iterator.next()
+            if (excludeIds.contains(id)) continue
+            val sameSlotDuplicate = existing.sourceText == sourceText &&
+                abs(existing.targetRect.top - targetRect.top) <= maxVert &&
+                abs(existing.targetRect.left - targetRect.left) <= maxHoriz
+            val spatialCollision = overlapRatioOfSmaller(existing.overlayBounds, overlayBounds) > 0.25f &&
+                (existing.scanId < scanId || existing.sourceText != sourceText || sameSlotDuplicate)
+            if (sameSlotDuplicate || spatialCollision) {
+                try {
+                    windowManager.removeView(existing.view)
+                } catch (_: Exception) {
+                    // Ignorar si ya fue removida
+                }
+                iterator.remove()
+            }
+        }
+    }
+
     // Called on Main Thread
     @Synchronized
     fun addOrUpdateOverlay(
-        rect: Rect,
-        translatedText: String,
-        profile: ChatAppProfile = TargetAppCatalog.GENERIC_DEFAULT_PROFILE
+        item: OverlayRenderItem,
+        profile: ChatAppProfile = TargetAppCatalog.GENERIC_DEFAULT_PROFILE,
+        scanId: Long = 0L
     ) {
-        if (translatedText.isBlank()) return
+        if (item.translatedText.isBlank()) return
         val draftBounds = currentDraftOverlayBounds
-        if (draftBounds != null && Rect.intersects(draftBounds, rect)) return
+        if (draftBounds != null && Rect.intersects(draftBounds, item.rect)) return
 
-        val matchedId = findMatchingBubble(rect, translatedText)
+        val matchedId = findMatchingBubble(item.rect, item.sourceText, item.translatedText)
         if (matchedId != null) {
             val bubble = activeBubbles[matchedId]
             if (bubble != null) {
                 if (draftBounds != null && Rect.intersects(draftBounds, bubble.overlayBounds)) return
-                updateBubble(bubble, rect, translatedText, profile)
+                updateBubble(
+                    bubble = bubble,
+                    targetRect = item.rect,
+                    sourceText = item.sourceText,
+                    text = item.translatedText,
+                    profile = profile,
+                    isQuoted = item.isQuoted,
+                    maxBottomPx = item.maxBottomPx,
+                    scanId = scanId
+                )
+                evictCollidingBubblesLocked(
+                    targetRect = item.rect,
+                    overlayBounds = bubble.overlayBounds,
+                    sourceText = item.sourceText,
+                    scanId = scanId,
+                    excludeIds = setOf(matchedId)
+                )
                 return
             }
         }
 
         val view = inflater.inflate(R.layout.bubble_overlay, null)
-        val (params, overlayBounds) = calculateBubbleLayout(rect, view, translatedText, profile)
+        val (params, overlayBounds) = calculateBubbleLayout(
+            targetRect = item.rect,
+            view = view,
+            text = item.translatedText,
+            profile = profile,
+            isQuoted = item.isQuoted,
+            maxBottomPx = item.maxBottomPx
+        )
         if (draftBounds != null && Rect.intersects(draftBounds, overlayBounds)) return
+        evictCollidingBubblesLocked(
+            targetRect = item.rect,
+            overlayBounds = overlayBounds,
+            sourceText = item.sourceText,
+            scanId = scanId
+        )
         val newId = "bubble_${bubbleIdCounter.incrementAndGet()}"
-        addBubble(rect, translatedText, newId, view, params, overlayBounds, profile)
+        addBubble(
+            targetRect = item.rect,
+            sourceText = item.sourceText,
+            text = item.translatedText,
+            id = newId,
+            preInflatedView = view,
+            preCalculatedParams = params,
+            preCalculatedBounds = overlayBounds,
+            profile = profile,
+            isQuoted = item.isQuoted,
+            maxBottomPx = item.maxBottomPx,
+            scanId = scanId
+        )
     }
 
     // Called on Main Thread
     @Synchronized
     fun updateOverlays(
-        results: List<Pair<Rect?, String>>,
+        results: List<OverlayRenderItem>,
         isFullSync: Boolean = true,
-        profile: ChatAppProfile = TargetAppCatalog.GENERIC_DEFAULT_PROFILE
+        profile: ChatAppProfile = TargetAppCatalog.GENERIC_DEFAULT_PROFILE,
+        scanId: Long = 0L
     ) {
         val updatedIds = mutableSetOf<String>()
-
         val draftBounds = currentDraftOverlayBounds
-        val acceptedBoundsInBatch = mutableListOf<Rect>()
+        val acceptedTargetRects = mutableListOf<Rect>()
 
         for (item in results) {
-            val rect = item.first ?: continue
-            val translatedText = item.second
-            if (translatedText.isBlank()) continue
+            if (item.translatedText.isBlank()) continue
 
             // Por qué: No renderizar burbujas que colisionen con la pastilla de borrador de texto
-            if (draftBounds != null && Rect.intersects(draftBounds, rect)) {
+            if (draftBounds != null && Rect.intersects(draftBounds, item.rect)) {
                 continue
             }
 
-            // Por qué: Evitar superposiciones entre burbujas calculadas en el mismo fotograma
+            // Por qué: Evitar superposiciones entre objetivos distintos calculados en el mismo fotograma
             var overlapsBatch = false
-            for (accepted in acceptedBoundsInBatch) {
-                if (Rect.intersects(accepted, rect)) {
-                    val intersection = Rect()
-                    if (intersection.setIntersect(accepted, rect)) {
-                        val intersectArea = intersection.width().toLong() * intersection.height()
-                        val minArea = min(
-                            accepted.width().toLong() * accepted.height(),
-                            rect.width().toLong() * rect.height()
-                        )
-                        if (minArea > 0 && intersectArea > minArea * 0.20) {
-                            overlapsBatch = true
-                            break
-                        }
-                    }
+            for (accepted in acceptedTargetRects) {
+                if (overlapRatioOfSmaller(accepted, item.rect) > 0.25f) {
+                    overlapsBatch = true
+                    break
                 }
             }
             if (overlapsBatch) {
                 continue
             }
 
-            val matchedId = findMatchingBubble(rect, translatedText, updatedIds)
+            val matchedId = findMatchingBubble(item.rect, item.sourceText, item.translatedText, updatedIds)
             if (matchedId != null) {
-                // Actualizar burbuja existente
                 val bubble = activeBubbles[matchedId]
                 if (bubble != null) {
                     if (draftBounds != null && Rect.intersects(draftBounds, bubble.overlayBounds)) {
                         continue
                     }
-                    updateBubble(bubble, rect, translatedText, profile)
-                    acceptedBoundsInBatch.add(bubble.overlayBounds)
+                    updateBubble(
+                        bubble = bubble,
+                        targetRect = item.rect,
+                        sourceText = item.sourceText,
+                        text = item.translatedText,
+                        profile = profile,
+                        isQuoted = item.isQuoted,
+                        maxBottomPx = item.maxBottomPx,
+                        scanId = scanId
+                    )
+                    acceptedTargetRects.add(item.rect)
                 }
                 updatedIds.add(matchedId)
             } else {
                 val view = inflater.inflate(R.layout.bubble_overlay, null)
-                val (params, overlayBounds) = calculateBubbleLayout(rect, view, translatedText, profile)
+                val (params, overlayBounds) = calculateBubbleLayout(
+                    targetRect = item.rect,
+                    view = view,
+                    text = item.translatedText,
+                    profile = profile,
+                    isQuoted = item.isQuoted,
+                    maxBottomPx = item.maxBottomPx
+                )
                 if (draftBounds != null && Rect.intersects(draftBounds, overlayBounds)) {
                     continue
                 }
-                acceptedBoundsInBatch.add(overlayBounds)
+                evictCollidingBubblesLocked(
+                    targetRect = item.rect,
+                    overlayBounds = overlayBounds,
+                    sourceText = item.sourceText,
+                    scanId = scanId,
+                    excludeIds = updatedIds
+                )
+                acceptedTargetRects.add(item.rect)
                 // Por qué: Reutilizamos la vista ya inflada y las dimensiones calculadas para evitar doble inflación
                 val newId = "bubble_${bubbleIdCounter.incrementAndGet()}"
-                addBubble(rect, translatedText, newId, view, params, overlayBounds, profile)
+                addBubble(
+                    targetRect = item.rect,
+                    sourceText = item.sourceText,
+                    text = item.translatedText,
+                    id = newId,
+                    preInflatedView = view,
+                    preCalculatedParams = params,
+                    preCalculatedBounds = overlayBounds,
+                    profile = profile,
+                    isQuoted = item.isQuoted,
+                    maxBottomPx = item.maxBottomPx,
+                    scanId = scanId
+                )
                 updatedIds.add(newId)
             }
         }
 
         // Por qué: Si es sincronización completa, eliminar overlays que ya no están visibles en pantalla.
-        // Si no es sincronización completa (ej: renderizado incremental), conservar los activos no colisionantes.
+        // Si no es sincronización completa (ej: renderizado incremental), conservar los válidos recién reconciliados.
         val screenHeight = ScreenMetricsHelper.currentBounds(context).heightPx
         val iterator = activeBubbles.iterator()
         while (iterator.hasNext()) {
@@ -209,7 +371,7 @@ class OverlayManager(private val context: Context) {
             if (shouldRemove) {
                 try {
                     windowManager.removeView(entry.value.view)
-                } catch (e: Exception) {
+                } catch (_: Exception) {
                     // Ignorar si la vista ya fue retirada
                 }
                 iterator.remove()
@@ -219,27 +381,20 @@ class OverlayManager(private val context: Context) {
 
     private fun findMatchingBubble(
         targetRect: Rect,
-        text: String,
+        sourceText: String,
+        translatedText: String,
         claimedIds: Set<String> = emptySet()
     ): String? {
         val density = ScreenMetricsHelper.currentBounds(context).density
-
-        // Por qué: Para asociar una pastilla existente al mismo mensaje físico durante pequeños ajustes
-        // de desplazamiento (scroll settling), la distancia vertical debe ser muy reducida (máximo 30dp)
-        // y la alineación horizontal debe conservarse (máximo 20dp). Si la distancia es mayor, se trata
-        // de otro mensaje distinto (por ejemplo, múltiples saludos repetidos "Bună dimineața!" en días diferentes)
-        // y debe recibir su propia pastilla independiente. Además, cualquier ID ya reclamado en la pasada actual
-        // se excluye para impedir que un mensaje le robe el globo a otro mensaje idéntico.
         val maxVerticalDrift = maxVerticalDriftPx(density)
         val maxHorizontalDrift = (20 * density).toInt()
 
-        // 1. Coincidencia por texto idéntico y proximidad espacial estricta
+        // 1. Prioridad máxima: mismo texto fuente y proximidad espacial (evita apilar sobre el mismo mensaje)
         var bestId: String? = null
         var minVerticalDist = Int.MAX_VALUE
-
         for ((id, bubble) in activeBubbles) {
             if (claimedIds.contains(id)) continue
-            if (bubble.text == text) {
+            if (bubble.sourceText == sourceText) {
                 val dTop = abs(bubble.targetRect.top - targetRect.top)
                 val dLeft = abs(bubble.targetRect.left - targetRect.left)
                 if (dTop <= maxVerticalDrift && dLeft <= maxHorizontalDrift && dTop < minVerticalDist) {
@@ -248,12 +403,23 @@ class OverlayManager(private val context: Context) {
                 }
             }
         }
+        if (bestId != null) return bestId
 
-        if (bestId != null) {
-            return bestId
+        // 2. Coincidencia por texto traducido idéntico y proximidad espacial estricta
+        for ((id, bubble) in activeBubbles) {
+            if (claimedIds.contains(id)) continue
+            if (bubble.text == translatedText) {
+                val dTop = abs(bubble.targetRect.top - targetRect.top)
+                val dLeft = abs(bubble.targetRect.left - targetRect.left)
+                if (dTop <= maxVerticalDrift && dLeft <= maxHorizontalDrift && dTop < minVerticalDist) {
+                    minVerticalDist = dTop
+                    bestId = id
+                }
+            }
         }
+        if (bestId != null) return bestId
 
-        // 2. Coincidencia espacial estricta de respaldo si el texto difiere ligeramente (ej: corrección de puntuación)
+        // 3. Coincidencia espacial estricta de respaldo si el texto difiere ligeramente
         val proximityThreshold = (18 * density).toInt()
         for ((id, bubble) in activeBubbles) {
             if (claimedIds.contains(id)) continue
@@ -268,24 +434,37 @@ class OverlayManager(private val context: Context) {
 
     private fun addBubble(
         targetRect: Rect,
+        sourceText: String,
         text: String,
         id: String,
         preInflatedView: View? = null,
         preCalculatedParams: WindowManager.LayoutParams? = null,
         preCalculatedBounds: Rect? = null,
-        profile: ChatAppProfile = TargetAppCatalog.GENERIC_DEFAULT_PROFILE
+        profile: ChatAppProfile = TargetAppCatalog.GENERIC_DEFAULT_PROFILE,
+        isQuoted: Boolean = false,
+        maxBottomPx: Int = Int.MAX_VALUE,
+        scanId: Long = 0L
     ) {
         val view = preInflatedView ?: inflater.inflate(R.layout.bubble_overlay, null)
         val (params, overlayBounds) = if (preCalculatedParams != null && preCalculatedBounds != null) {
             Pair(preCalculatedParams, preCalculatedBounds)
         } else {
-            calculateBubbleLayout(targetRect, view, text, profile)
+            calculateBubbleLayout(targetRect, view, text, profile, isQuoted, maxBottomPx)
         }
 
         view.alpha = 0f
         if (addWindowViewWithFallback(view, params, "bubble $id")) {
             view.animate().alpha(1f).setDuration(150).start()
-            activeBubbles[id] = ActiveBubble(view, text, targetRect, overlayBounds)
+            activeBubbles[id] = ActiveBubble(
+                view = view,
+                sourceText = sourceText,
+                text = text,
+                targetRect = Rect(targetRect),
+                overlayBounds = overlayBounds,
+                isQuoted = isQuoted,
+                maxBottomPx = maxBottomPx,
+                scanId = scanId
+            )
         } else {
             ServiceBridge.lastScanDebug = "${ServiceBridge.lastScanDebug} | wmErr=addBubbleFailed"
         }
@@ -294,14 +473,38 @@ class OverlayManager(private val context: Context) {
     private fun updateBubble(
         bubble: ActiveBubble,
         targetRect: Rect,
+        sourceText: String,
         text: String,
-        profile: ChatAppProfile = TargetAppCatalog.GENERIC_DEFAULT_PROFILE
+        profile: ChatAppProfile = TargetAppCatalog.GENERIC_DEFAULT_PROFILE,
+        isQuoted: Boolean = false,
+        maxBottomPx: Int = Int.MAX_VALUE,
+        scanId: Long = 0L
     ) {
-        val (params, overlayBounds) = calculateBubbleLayout(targetRect, bubble.view, text, profile)
+        if (bubble.text == text &&
+            bubble.sourceText == sourceText &&
+            bubble.targetRect == targetRect &&
+            bubble.isQuoted == isQuoted &&
+            bubble.maxBottomPx == maxBottomPx
+        ) {
+            bubble.scanId = maxOf(bubble.scanId, scanId)
+            return
+        }
+        val (params, overlayBounds) = calculateBubbleLayout(
+            targetRect = targetRect,
+            view = bubble.view,
+            text = text,
+            profile = profile,
+            isQuoted = isQuoted,
+            maxBottomPx = maxBottomPx
+        )
         bubble.overlayBounds = overlayBounds
-        // Por qué: Mantener targetRect y text actualizados para que las comparaciones de proximidad en frames subsiguientes sean precisas
-        bubble.targetRect = targetRect
+        // Por qué: Mantener metadatos y rectángulos actualizados para evitar reapilamiento en frames subsiguientes
+        bubble.targetRect = Rect(targetRect)
+        bubble.sourceText = sourceText
         bubble.text = text
+        bubble.isQuoted = isQuoted
+        bubble.maxBottomPx = maxBottomPx
+        bubble.scanId = maxOf(bubble.scanId, scanId)
 
         params.type = (bubble.view.layoutParams as? WindowManager.LayoutParams)?.type
             ?: WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
@@ -317,12 +520,16 @@ class OverlayManager(private val context: Context) {
         targetRect: Rect,
         view: View,
         text: String,
-        profile: ChatAppProfile = TargetAppCatalog.GENERIC_DEFAULT_PROFILE
+        profile: ChatAppProfile = TargetAppCatalog.GENERIC_DEFAULT_PROFILE,
+        isQuoted: Boolean = false,
+        maxBottomPx: Int = Int.MAX_VALUE
     ): Pair<WindowManager.LayoutParams, Rect> {
-        val screenWidth = ScreenMetricsHelper.currentBounds(context).widthPx
+        val metrics = ScreenMetricsHelper.currentBounds(context)
+        val screenWidth = metrics.widthPx
+        val density = metrics.density
 
-        // Por qué: Adapta el color y contraste de la burbuja al tema seleccionado, modo día/noche y alineación de la app
-        val isRightSide = targetRect.right > (screenWidth * 0.65f)
+        // Por qué: Adapta el color y contraste al tema, modo día/noche, si es cita y alineación exacta de grupo
+        val isRightSide = isOutgoingBubble(targetRect.left, targetRect.right, screenWidth, profile.alignmentMode)
         val nightMask = context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK
         val isSystemDarkMode = nightMask != android.content.res.Configuration.UI_MODE_NIGHT_NO
         val style = resolveBubbleStyle(
@@ -330,26 +537,73 @@ class OverlayManager(private val context: Context) {
             alignmentMode = profile.alignmentMode,
             isRightSide = isRightSide,
             isWhatsAppApp = profile.id == "whatsapp",
-            isSystemDarkMode = isSystemDarkMode
+            isSystemDarkMode = isSystemDarkMode,
+            isQuoted = isQuoted
         )
         view.setBackgroundResource(style.backgroundRes)
 
+        val horizPad = ((if (isQuoted) 8 else 12) * density).toInt()
+        val vertPad = ((if (isQuoted) 4 else 7) * density).toInt()
+        view.setPadding(horizPad, vertPad, horizPad, vertPad)
+
         val posX = targetRect.left
         val posY = targetRect.top
-        val bubbleWidth = targetRect.width()
+        val bubbleWidth = targetRect.width().coerceAtLeast((24 * density).toInt())
 
         val textView = view.findViewById<TextView>(R.id.translated_text)
         textView.setTextColor(style.textColor)
+        textView.maxLines = Int.MAX_VALUE
+        textView.ellipsize = null
+        val baseSizeSp = if (isQuoted) 12.5f else 14f
+        textView.setTextSize(TypedValue.COMPLEX_UNIT_SP, baseSizeSp)
         textView.text = text
 
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec(bubbleWidth, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
-        )
+        val widthSpec = View.MeasureSpec.makeMeasureSpec(bubbleWidth, View.MeasureSpec.EXACTLY)
+        val unspecHeight = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+        view.measure(widthSpec, unspecHeight)
 
-        // Por qué: Cubre como mínimo la altura completa del contenedor original para evitar
-        // que líneas de texto o marcas de tiempo previas queden descubiertas por debajo o por los lados.
-        val bubbleHeight = max(targetRect.height(), view.measuredHeight)
+        val hasBottomLimit = maxBottomPx != Int.MAX_VALUE
+        val availableHeight = if (hasBottomLimit) {
+            (maxBottomPx - posY).coerceAtLeast((16 * density).toInt())
+        } else {
+            Int.MAX_VALUE
+        }
+
+        if (hasBottomLimit && view.measuredHeight > availableHeight) {
+            val compactSizeSp = if (isQuoted) 11.5f else 12.5f
+            if (compactSizeSp < baseSizeSp) {
+                textView.setTextSize(TypedValue.COMPLEX_UNIT_SP, compactSizeSp)
+                view.measure(widthSpec, unspecHeight)
+            }
+            if (view.measuredHeight > availableHeight) {
+                val maxTextHeight = (availableHeight - vertPad * 2).coerceAtLeast(textView.lineHeight.coerceAtLeast(1))
+                val layout = textView.layout
+                val fittingLines = if (layout != null) {
+                    var count = 0
+                    for (lineIdx in 0 until layout.lineCount) {
+                        if (layout.getLineBottom(lineIdx) <= maxTextHeight) {
+                            count = lineIdx + 1
+                        } else {
+                            break
+                        }
+                    }
+                    count.coerceAtLeast(1)
+                } else {
+                    (maxTextHeight / textView.lineHeight.coerceAtLeast(1)).coerceAtLeast(1)
+                }
+                textView.maxLines = fittingLines
+                textView.ellipsize = TextUtils.TruncateAt.END
+                view.measure(widthSpec, unspecHeight)
+            }
+        }
+
+        // Por qué: Cubre el contenedor original pero nunca invade mensajes inferiores ni el compositor
+        val bubbleHeight = if (hasBottomLimit) {
+            val clampedTargetHeight = min(targetRect.height(), availableHeight)
+            max(clampedTargetHeight, min(view.measuredHeight, availableHeight))
+        } else {
+            max(targetRect.height(), view.measuredHeight)
+        }
 
         val params = (view.layoutParams as? WindowManager.LayoutParams) ?: WindowManager.LayoutParams(
             bubbleWidth,
@@ -798,27 +1052,64 @@ class OverlayManager(private val context: Context) {
         removeSingleMessagePill()
     }
 
-    // Por qué: Elimina de inmediato cualquier burbuja activa cuyas coordenadas ya no coincidan
-    // con ninguno de los mensajes visibles actuales (por ejemplo, tras desplazarse o eliminarse),
-    // usando exactamente el mismo umbral de tolerancia vertical que findMatchingBubble.
+    // Por qué: Reconcilia burbujas activas 1 a 1 contra los ranurados actuales verificando texto fuente
+    // y proximidad horizontal/vertical estricta; elimina de inmediato cualquier globo huérfano o desplazado.
     @Synchronized
-    fun purgeOrphans(currentValidRects: List<Rect>) {
+    fun reconcileActiveBubbles(expectedSlots: List<ExpectedBubbleSlot>) {
         if (activeBubbles.isEmpty()) return
         val density = ScreenMetricsHelper.currentBounds(context).density
-        val tolerance = maxVerticalDriftPx(density)
+        val maxVert = (16 * density).toInt()
+        val maxHoriz = (20 * density).toInt()
+        val claimedSlots = BooleanArray(expectedSlots.size)
 
         val iterator = activeBubbles.iterator()
         while (iterator.hasNext()) {
             val entry = iterator.next()
-            val bubbleRect = entry.value.targetRect
-            val matchesAny = currentValidRects.any { valid ->
-                abs(valid.top - bubbleRect.top) <= tolerance &&
-                abs(valid.bottom - bubbleRect.bottom) <= tolerance
+            val bubble = entry.value
+            val bubbleRect = bubble.targetRect
+            var matchedIndex = -1
+            for (i in expectedSlots.indices) {
+                if (claimedSlots[i]) continue
+                val slot = expectedSlots[i]
+                if (bubble.sourceText == slot.sourceText &&
+                    abs(slot.rect.top - bubbleRect.top) <= maxVert &&
+                    abs(slot.rect.bottom - bubbleRect.bottom) <= maxVert &&
+                    abs(slot.rect.left - bubbleRect.left) <= maxHoriz
+                ) {
+                    matchedIndex = i
+                    break
+                }
             }
-            if (!matchesAny) {
+            if (matchedIndex >= 0) {
+                claimedSlots[matchedIndex] = true
+            } else {
                 try {
-                    windowManager.removeView(entry.value.view)
-                } catch (e: Exception) {
+                    windowManager.removeView(bubble.view)
+                } catch (_: Exception) {
+                    // Ignorar si ya fue removida
+                }
+                iterator.remove()
+            }
+        }
+    }
+
+    @Synchronized
+    fun removeBubbleForSlot(rect: Rect, sourceText: String) {
+        if (activeBubbles.isEmpty()) return
+        val density = ScreenMetricsHelper.currentBounds(context).density
+        val maxVert = (16 * density).toInt()
+        val maxHoriz = (20 * density).toInt()
+        val iterator = activeBubbles.iterator()
+        while (iterator.hasNext()) {
+            val entry = iterator.next()
+            val b = entry.value
+            if (b.sourceText == sourceText &&
+                abs(b.targetRect.top - rect.top) <= maxVert &&
+                abs(b.targetRect.left - rect.left) <= maxHoriz
+            ) {
+                try {
+                    windowManager.removeView(b.view)
+                } catch (_: Exception) {
                     // Ignorar si ya fue removida
                 }
                 iterator.remove()

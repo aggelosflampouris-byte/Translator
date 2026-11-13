@@ -60,13 +60,23 @@ object TranslationSenseEngine {
         "misto", "mișto", "pupa", "pupă", "pupici", "iubire", "iubito", "frumoaso",
         "scumpule", "neata", "neatza", "salutari", "salutări",
         "astepti", "aștepți", "treci", "auzim", "raman", "rămân", "intram", "intrăm",
-        "iesim", "ieșim", "dormi", "dorm", "lucrez", "lucrezi", "muncesc", "muncesti"
+        "iesim", "ieșim", "dormi", "dorm", "lucrez", "lucrezi", "muncesc", "muncesti",
+        "eu", "noi", "voi", "ei", "ele", "aia", "asta", "ăsta", "ala", "ăla", "ăia", "alea",
+        "acel", "acea", "acela", "aceea", "cineva", "cnv", "toți", "toti", "toate",
+        "îl", "îți", "îmi", "își", "încolo", "incolo", "încoace", "incoace", "parcă", "până",
+        "niște", "niste", "cât", "câți", "cati", "câte", "cate", "mai", "deci", "păi", "pai",
+        "dăm", "dau", "dai", "vor", "vrei", "vreți", "vreti", "făcut", "fc", "chinui",
+        "duc", "duci", "duce", "duceți", "duceti", "merg", "merge", "prins", "rămas", "ramas",
+        "intru", "intri", "intrii", "ștampilate", "stampilate", "știe", "stie", "știi", "stii",
+        "poze", "abonament", "abonamente", "abonamentele", "legitimația", "legitimatia",
+        "cartela", "cartele", "metrou", "bilete", "ploaie", "afară", "afara", "lungă", "lunga",
+        "șuruburi", "suruburi", "dovada", "dovadă", "ms"
     )
 
     private val GENERIC_ROMANCE_PREPOSITIONS = setOf("de", "in", "e", "a", "la")
     // Por qué: Vocablos breves coincidentes con inglés o lenguas romances que no deben anular el detector ML Kit por sí solos.
     private val AMBIGUOUS_ROMANCE_OR_ENGLISH_TOKENS = GENERIC_ROMANCE_PREPOSITIONS + setOf(
-        "am", "an", "ai", "care", "drum", "pot", "cum"
+        "am", "an", "ai", "care", "drum", "pot", "cum", "perfect", "exact", "pup"
     )
 
     // Por qué: Tabla declarativa de nombres propios masculinos frecuentes para convertir nominativo a vocativo tras la NMT.
@@ -79,7 +89,8 @@ object TranslationSenseEngine {
         "Δημήτρης" to "Δημήτρη"
     )
 
-    private val WORD_SPLIT_REGEX = Regex("""[^a-zăâîșț]+""")
+    private val WORD_SPLIT_REGEX = Regex("""[^a-zăâîșțşţ]+""")
+    private val TITLE_CASE_NAME_TOKEN_REGEX = Regex("""^[A-ZĂÂÎȘȚ][a-zăâîșț.-]*\.{0,3}$""")
     private val IDIOM_PUNCT_REGEX = Regex("""[;?!,.¡¿]+""")
     private val WHITESPACE_REGEX = Regex("""\s+""")
     private val BIRTHDAY_GREEK_REGEX = Regex("""(Ευτυχισμένα|Χαρούμενα)\s+γενέθλια""", RegexOption.IGNORE_CASE)
@@ -185,6 +196,75 @@ object TranslationSenseEngine {
     }
 
     /**
+     * Evalúa si un conjunto de mensajes visibles en un grupo confirma que la conversación activa
+     * pertenece al idioma origen configurado (p. ej. múltiples burbujas en rumano inequívoco).
+     */
+    fun hasStrongConversationSourceContext(
+        texts: List<String>,
+        sourceLang: String,
+        targetLang: String
+    ): Boolean {
+        if (sourceLang != TranslateLanguage.ROMANIAN || texts.isEmpty()) return false
+        var strongSourceCount = 0
+        var eligibleLatinCount = 0
+        var strongEnglishCount = 0
+
+        for (raw in texts) {
+            val clean = TextNormalizer.normalizeRomanianCedillas(raw).trim()
+            if (clean.length < 2) continue
+            val greekLetters = ScriptDetector.countGreek(clean)
+            val latinLetters = ScriptDetector.countLatin(clean)
+            if (targetLang == TranslateLanguage.GREEK && greekLetters > latinLetters) continue
+            if (latinLetters < 2) continue
+            eligibleLatinCount++
+
+            val words = clean.lowercase().split(WORD_SPLIT_REGEX).filter { it.isNotBlank() }
+            val specificRo = words.count {
+                COMMON_ROMANIAN_WORDS.contains(it) && !AMBIGUOUS_ROMANCE_OR_ENGLISH_TOKENS.contains(it)
+            }
+            val exclusiveEn = words.count {
+                COMMON_ENGLISH_TOKENS.contains(it) &&
+                    !COMMON_ROMANIAN_WORDS.contains(it) &&
+                    !AMBIGUOUS_ROMANCE_OR_ENGLISH_TOKENS.contains(it)
+            }
+            if (ScriptDetector.hasRomanianDiacritics(clean) || (specificRo >= 2 && specificRo >= exclusiveEn)) {
+                strongSourceCount++
+            } else if (exclusiveEn >= 2 && specificRo == 0) {
+                strongEnglishCount++
+            }
+        }
+
+        if (strongSourceCount >= 2) return true
+        return strongSourceCount == 1 && strongEnglishCount == 0 && eligibleLatinCount <= 3
+    }
+
+    /**
+     * Identifica cabeceras cortas de remitente o insignias de rol ("Higher Year Representative",
+     * "Stan Raluca") que aparecen encima del mensaje real dentro de la misma fila grupal.
+     */
+    fun isLikelyRowSenderHeader(text: String, sourceLang: String): Boolean {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty() || trimmed.length > 48 || trimmed.contains('\n')) return false
+        if (TranslationFilter.isSenderHandleOrMentionOnly(trimmed)) return true
+        if (trimmed.indexOfAny(charArrayOf('?', '!', ';', ':', ',')) >= 0) return false
+        val tokens = trimmed.split(WHITESPACE_REGEX).filter { it.isNotBlank() }
+        if (tokens.isEmpty() || tokens.size > 4) return false
+        if (!tokens.all { it.matches(TITLE_CASE_NAME_TOKEN_REGEX) }) return false
+
+        val normalizedWords = TextNormalizer.normalizeRomanianCedillas(trimmed)
+            .lowercase()
+            .split(WORD_SPLIT_REGEX)
+            .filter { it.isNotBlank() }
+        if (sourceLang == TranslateLanguage.ROMANIAN) {
+            val specificRo = normalizedWords.count {
+                COMMON_ROMANIAN_WORDS.contains(it) && !AMBIGUOUS_ROMANCE_OR_ENGLISH_TOKENS.contains(it)
+            }
+            if (specificRo > 0) return false
+        }
+        return true
+    }
+
+    /**
      * Enforces strict source-language eligibility.
      */
     fun isEligibleSourceText(
@@ -193,7 +273,8 @@ object TranslationSenseEngine {
         targetLang: String,
         identifiedLang: String? = null,
         allowDeferredLatinForMlKit: Boolean = false,
-        alreadyCleaned: Boolean = false
+        alreadyCleaned: Boolean = false,
+        conversationMatchesSource: Boolean = false
     ): Boolean {
         val clean = (if (alreadyCleaned) text else TranslationFilter.cleanMessageText(text)).trim()
         if (clean.length < 2) return false
@@ -211,26 +292,46 @@ object TranslationSenseEngine {
             }
         }
 
-        val words = clean.lowercase().split(WORD_SPLIT_REGEX).filter { it.isNotBlank() }
+        val cedillaNormalized = TextNormalizer.normalizeRomanianCedillas(clean)
+        val words = cedillaNormalized.lowercase().split(WORD_SPLIT_REGEX).filter { it.isNotBlank() }
         val englishTokenCount = words.count { COMMON_ENGLISH_TOKENS.contains(it) }
+        val exclusiveEnglishTokenCount = words.count {
+            COMMON_ENGLISH_TOKENS.contains(it) &&
+                !COMMON_ROMANIAN_WORDS.contains(it) &&
+                !AMBIGUOUS_ROMANCE_OR_ENGLISH_TOKENS.contains(it)
+        }
         val romanianTokenCount = words.count { COMMON_ROMANIAN_WORDS.contains(it) }
-        val hasRoDiacritics = ScriptDetector.hasRomanianDiacritics(clean)
+        val hasRoDiacritics = ScriptDetector.hasRomanianDiacritics(cedillaNormalized)
 
         if (sourceLang == TranslateLanguage.ROMANIAN) {
             if (hasRoDiacritics) return true
 
-            if (englishTokenCount >= 2 && romanianTokenCount == 0) {
+            if (exclusiveEnglishTokenCount >= 2 && romanianTokenCount == 0) {
                 return false
             }
 
             val specificRomanianTokens = words.count {
                 COMMON_ROMANIAN_WORDS.contains(it) && !AMBIGUOUS_ROMANCE_OR_ENGLISH_TOKENS.contains(it)
             }
+
+            // Por qué: Frases mixtas o coloquiales en rumano (ej. "I see, thanks, si dam poze..." o "ce e aia")
+            // con múltiples tokens rumanos inequívocos deben traducirse aunque ML Kit detecte "en" al inicio.
+            if (specificRomanianTokens >= 2 && specificRomanianTokens >= exclusiveEnglishTokenCount) {
+                return true
+            }
+
             // Por qué: En mensajes rumanos breves sin diacríticos (ej. "buna ziua", "ce faci"), ML Kit
             // suele reportar danés o italiano; el vocabulario rumano inequívoco sin tokens ingleses debe prevalecer.
             if (specificRomanianTokens > 0 &&
-                englishTokenCount == 0 &&
+                exclusiveEnglishTokenCount == 0 &&
                 (identifiedLang != TranslateLanguage.ENGLISH && identifiedLang != "eng" || specificRomanianTokens >= 2)
+            ) {
+                return true
+            }
+
+            if (conversationMatchesSource &&
+                identifiedLang != targetLang &&
+                (specificRomanianTokens > 0 || (words.size in 1..4 && exclusiveEnglishTokenCount == 0 && latinLetters >= 2))
             ) {
                 return true
             }
@@ -239,11 +340,11 @@ object TranslationSenseEngine {
                 return false
             }
 
-            if (specificRomanianTokens > 0 && englishTokenCount < 2) {
+            if (specificRomanianTokens > 0 && exclusiveEnglishTokenCount < 2) {
                 return true
             }
 
-            if (englishTokenCount > 0 && romanianTokenCount == 0) {
+            if (exclusiveEnglishTokenCount > 0 && romanianTokenCount == 0) {
                 return false
             }
 
@@ -404,6 +505,8 @@ object TranslationSenseEngine {
 
     private fun normalizeRomanian(text: String): String {
         return text.lowercase()
+            .replace('ş', 'ș')
+            .replace('ţ', 'ț')
             .replace("ă", "a")
             .replace("â", "a")
             .replace("î", "i")

@@ -39,11 +39,11 @@ object TranslationFilter {
         RegexOption.IGNORE_CASE
     )
     private val CHAT_STATUS_REGEX = Regex(
-        """[,.\s\n]+(delivered|read|sent|seen|pending|unread|edited|\(edited\)|επεξεργάστηκε|\(επεξεργάστηκε\)|editat|παραδόθηκε|παραδοθηκε|διαβάστηκε|διαβαστηκε|στάλθηκε|σταλθηκε|εστάλη|εσταλη|απεστάλη|απεσταλη|εθεάθη|εθεαθη|εμφανίστηκε|εμφανιστηκε|το είδε|το ειδε|σε εκκρεμότητα|trimis|citit|citiți|cititi|livrat|în așteptare|[✓✔\u2713\u2714\u2705]+)\s*$""",
+        """[,.\s\n]+(delivered|read|sent|seen|pending|unread|edited|\(edited\)|επεξεργάστηκε|\(επεξεργάστηκε\)|τροποποιήθηκε|\(τροποποιήθηκε\)|τροποποιηθηκε|\(τροποποιηθηκε\)|editat|παραδόθηκε|παραδοθηκε|διαβάστηκε|διαβαστηκε|στάλθηκε|σταλθηκε|εστάλη|εσταλη|απεστάλη|απεσταλη|εθεάθη|εθεαθη|εμφανίστηκε|εμφανιστηκε|το είδε|το ειδε|σε εκκρεμότητα|trimis|citit|citiți|cititi|livrat|în așteptare|[✓✔\u2713\u2714\u2705]+)\s*$""",
         RegexOption.IGNORE_CASE
     )
     private val STANDALONE_STATUS_REGEX = Regex(
-        """^([,.:\s\n]*(\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?)?[,.:\s\n]*(delivered|read|sent|seen|pending|unread|edited|\(edited\)|επεξεργάστηκε|\(επεξεργάστηκε\)|editat|παραδόθηκε|παραδοθηκε|διαβάστηκε|διαβαστηκε|στάλθηκε|σταλθηκε|εστάλη|εσταλη|απεστάλη|απεσταλη|εθεάθη|εθεαθη|εμφανίστηκε|εμφανιστηκε|το είδε|το ειδε|σε εκκρεμότητα|σε εκκρεμοτητα|εκκρεμεί|εκκρεμει|trimis|citit|citiți|cititi|livrat|în așteptare|in asteptare|[✓✔\u2713\u2714\u2705]+)[,.:\s\n]*)+$""",
+        """^([,.:\s\n]*(\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?)?[,.:\s\n]*(delivered|read|sent|seen|pending|unread|edited|\(edited\)|επεξεργάστηκε|\(επεξεργάστηκε\)|τροποποιήθηκε|\(τροποποιήθηκε\)|τροποποιηθηκε|\(τροποποιηθηκε\)|editat|παραδόθηκε|παραδοθηκε|διαβάστηκε|διαβαστηκε|στάλθηκε|σταλθηκε|εστάλη|εσταλη|απεστάλη|απεσταλη|εθεάθη|εθεαθη|εμφανίστηκε|εμφανιστηκε|το είδε|το ειδε|σε εκκρεμότητα|σε εκκρεμοτητα|εκκρεμεί|εκκρεμει|trimis|citit|citiți|cititi|livrat|în așteptare|in asteptare|[✓✔\u2713\u2714\u2705]+)[,.:\s\n]*)+$""",
         RegexOption.IGNORE_CASE
     )
     private val TRAILING_TIMESTAMP_REGEX = Regex(
@@ -111,11 +111,40 @@ object TranslationFilter {
         "εστάλη", "εσταλη", "απεστάλη", "απεσταλη", "εθεάθη", "εθεαθη",
         "εμφανίστηκε", "εμφανιστηκε", "το είδε", "το ειδε",
         "σε εκκρεμότητα", "σε εκκρεμοτητα", "εκκρεμεί", "εκκρεμει", "μη αναγνωσμένο", "μη αναγνωσμενο",
-        "επεξεργάστηκε", "επεξεργαστηκε",
+        "επεξεργάστηκε", "επεξεργαστηκε", "τροποποιήθηκε", "(τροποποιήθηκε)", "τροποποιηθηκε", "(τροποποιηθηκε)",
         "read", "delivered", "sent", "seen", "pending", "unread", "edited", "(edited)",
         "citit", "citiți", "cititi", "livrat", "trimis", "editat", "în așteptare", "in asteptare",
         "leído", "leido", "entregado", "enviado", "pendiente"
     )
+
+    private val STANDALONE_AT_MENTION_REGEX = Regex(
+        """^@[~\p{L}\p{N}_.-]+(?:\s+[~\p{L}\p{N}_.-]+){0,3}$"""
+    )
+    private val GROUP_SENDER_TILDE_HANDLE_REGEX = Regex(
+        """^~[\s\u00A0]*[\p{L}\p{N}_.-]+(?:\s+[\p{L}\p{N}_.-]+){0,4}(?:\s*\.{2,3}|\u2026)?$"""
+    )
+
+    /**
+     * Detecta menciones puras (`@~Geala Stefan`) o alias de participante en chats grupales de WhatsApp (`~ stefan`)
+     * para no traducir nombres de remitentes ni encender consultas IPC padre sobre ellos.
+     */
+    fun isSenderHandleOrMentionOnly(text: String): Boolean {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty() || trimmed.contains('\n')) return false
+        if (trimmed.indexOfAny(charArrayOf('?', '!', ';', ':')) >= 0) return false
+        if (trimmed.matches(STANDALONE_AT_MENTION_REGEX) && trimmed.any { it.isLetter() }) {
+            return true
+        }
+        if (trimmed.startsWith('~') && trimmed.matches(GROUP_SENDER_TILDE_HANDLE_REGEX) && trimmed.any { it.isLetter() }) {
+            val withoutTilde = trimmed.removePrefix("~").trim()
+            val firstWord = withoutTilde.substringBefore(' ').lowercase()
+            if (firstWord in setOf("salut", "buna", "bună", "mersi", "multumesc", "mulțumesc", "ce", "nu", "da")) {
+                return false
+            }
+            return true
+        }
+        return false
+    }
 
     /**
      * Comprobación rápida sin asignación de `Regex` para evitar consultas `node.parent` por IPC
@@ -132,6 +161,7 @@ object TranslationFilter {
 
     private fun isFieldPlausibleForParentExpansion(raw: String?, configuredTarget: String): Boolean {
         if (raw.isNullOrBlank()) return false
+        if (isSenderHandleOrMentionOnly(raw)) return false
         var hasLetter = false
         for (i in 0 until raw.length) {
             if (raw[i].isLetter()) {
@@ -205,6 +235,11 @@ object TranslationFilter {
         // Filter out chat system and call notices
         if (SYSTEM_NOTICE_PHRASES.any { lower.contains(it) }) {
             return "sys"
+        }
+
+        // Filter out standalone group-chat sender handles ("~ stefan") and @mentions ("@~Geala Stefan")
+        if (isSenderHandleOrMentionOnly(trimmed)) {
+            return "snd"
         }
 
         // Filter out standalone status or combined timestamp + delivery markers
