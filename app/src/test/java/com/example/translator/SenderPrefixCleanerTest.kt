@@ -147,5 +147,17 @@ class SenderPrefixCleanerTest {
             )
         )
     }
+
+    @Test
+    fun isPlausibleSenderName_andNormalizeName_handlePunctuationAndAccentsWithoutCurlyRegex() {
+        assertEquals("αγγελος", SenderPrefixCleaner.normalizeName("Άγγελος"))
+        assertEquals("stefan", SenderPrefixCleaner.normalizeName("Ștefan"))
+        assertFalse(SenderPrefixCleaner.isPlausibleSenderName("User{test}"))
+        assertFalse(SenderPrefixCleaner.isPlausibleSenderName("User[1]"))
+        assertFalse(SenderPrefixCleaner.isPlausibleSenderName("Ce faci?"))
+        assertFalse(SenderPrefixCleaner.isPlausibleSenderName("«Salut»"))
+        assertTrue(SenderPrefixCleaner.isPlausibleSenderName("ΑΓΓΕΛΟΣ"))
+        assertTrue(SenderPrefixCleaner.isPlausibleSenderName("Λευτέρης Φλαμπούρης"))
+    }
 }
 

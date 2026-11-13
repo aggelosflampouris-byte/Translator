@@ -20,17 +20,20 @@ object SenderPrefixCleaner {
         val selfNames: Set<String> = emptySet()
     )
 
-    // Por qué: Separa un encabezado breve de remitente del cuerpo real cuando van unidos por ':', ',' o salto de línea
+    // Por qué: Separa un encabezado breve de remitente del cuerpo real cuando van unidos por ':', ',' o salto de línea.
+    // Evitamos clases de caracteres con llaves '{}' por incompatibilidad estricta del motor ICU de Android.
     private val LEADING_PREFIX_DELIM_REGEX = Regex(
-        """^([^\n,:]{2,42}?)(?:[ \t]*[:,][ \t]+|[ \t]*\n+[ \t]*)([\s\S]+)$"""
+        """^([^\n,:]{2,42}?)(?:[ \t]*[:,][ \t]+|[ \t]*\n+[ \t]*)(.+)$""",
+        RegexOption.DOT_MATCHES_ALL
     )
 
-    private val COMBINING_MARKS_REGEX = Regex("""\p{Mn}+""")
-    private val SENTENCE_PUNCTUATION_REGEX = Regex("""[?!;()\[\]{}«»"]""")
     private val HEADER_STATUS_REGEX = Regex(
         """^(?:ενεργ[όή]ς(?:/[ήό])?\s+τώρα|ενεργ[όή]ς\s+πριν.*|active\s+now|active\s+\d+.*ago|activ(?:ă)?\s+acum|last\s+seen.*|τελευταία\s+εμφάνιση.*|πληκτρολογεί.*|typing.*)$""",
         RegexOption.IGNORE_CASE
     )
+
+    // Por qué: Caracteres propios de oración o signos que nunca forman parte de un nombre de usuario.
+    private const val INVALID_SENDER_PUNCTUATION = "?!;()[]{}«»\""
 
     // Por qué: Palabras de cortesía, interjecciones y acrónimos frecuentes que no deben interpretarse nunca como nombre propio
     private val NON_SENDER_TOKENS = setOf(
@@ -52,7 +55,13 @@ object SenderPrefixCleaner {
      */
     fun normalizeName(raw: String): String {
         val decomposed = Normalizer.normalize(raw.lowercase().trim(), Normalizer.Form.NFD)
-        val stripped = COMBINING_MARKS_REGEX.replace(decomposed, "")
+        val stripped = buildString(decomposed.length) {
+            for (ch in decomposed) {
+                if (Character.getType(ch) != Character.NON_SPACING_MARK.toInt()) {
+                    append(ch)
+                }
+            }
+        }
         return stripped
             .replace(Regex("""[.,:;\u2026]+$"""), "")
             .replace(Regex("""\s+"""), " ")
@@ -62,8 +71,7 @@ object SenderPrefixCleaner {
     fun isPlausibleSenderName(candidate: String): Boolean {
         val trimmed = candidate.trim()
         if (trimmed.length !in 2..42) return false
-        if (trimmed.any { it.isDigit() }) return false
-        if (SENTENCE_PUNCTUATION_REGEX.containsMatchIn(trimmed)) return false
+        if (trimmed.any { it.isDigit() || it in INVALID_SENDER_PUNCTUATION }) return false
 
         val letterCount = trimmed.count { it.isLetter() }
         if (letterCount < 2) return false

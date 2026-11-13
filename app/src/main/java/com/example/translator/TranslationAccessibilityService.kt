@@ -1480,7 +1480,12 @@ class TranslationAccessibilityService : AccessibilityService() {
         if (isKeyboardVisible(preferredRoot = rootNode)) {
             val edit = findCurrentEditableNode(preferredRoot = rootNode)
             val editRect = Rect().also { edit?.getBoundsInScreen(it) }
-            setTreeScanDiag("abort=kb_visible | fg=$fgPkg (${activeProfile.id}) | root=$lastRootOrigin | scr=${screenWidth}x$screenHeight | editRect=${editRect.flattenToString()}")
+            val kbDiag = "abort=kb_visible | fg=$fgPkg (${activeProfile.id}) | root=$lastRootOrigin | scr=${screenWidth}x$screenHeight | editRect=${editRect.flattenToString()}"
+            // Por qué: No sobrescribir LastTree si ya hay un escaneo de mensajes válido previo al abrir el teclado.
+            ServiceBridge.lastScanDebug = kbDiag
+            if (ServiceBridge.lastTreeScanDebug == "No non-null root scan yet.") {
+                ServiceBridge.lastTreeScanDebug = kbDiag
+            }
             overlayManager.removeAllMessageOverlays()
             if (isKeyboardTranslatorEnabled) {
                 handleOutgoingTyping()
@@ -1835,8 +1840,10 @@ class TranslationAccessibilityService : AccessibilityService() {
         profile: ChatAppProfile,
         stats: ScanStats?,
         headerTexts: MutableList<String>,
-        outRawNodes: MutableList<CollectedTextNode>
+        outRawNodes: MutableList<CollectedTextNode>,
+        depth: Int = 0
     ): List<Int> {
+        if (depth > 64) return emptyList()
         stats?.let { it.visitedNodes++ }
         val nodePkg = node.packageName?.toString() ?: ""
         if (nodePkg.isNotBlank() && !isEnabledTargetPackage(nodePkg)) {
@@ -1860,7 +1867,8 @@ class TranslationAccessibilityService : AccessibilityService() {
                 profile = profile,
                 stats = stats,
                 headerTexts = headerTexts,
-                outRawNodes = outRawNodes
+                outRawNodes = outRawNodes,
+                depth = depth + 1
             )
             if (childIds.isNotEmpty()) {
                 if (mergedChildIndices == null) {
@@ -2051,26 +2059,30 @@ class TranslationAccessibilityService : AccessibilityService() {
         val result = Rect(rawRect)
         // Por qué: Solo expande al contenedor padre en apps con burbujas aisladas; en filas anchas
         // (como Discord o Messenger) limita la expansión para no cubrir avatares ni cabeceras de usuario.
-        var container = node.parent
-        val maxLevels = if (profile.expandContainerToParent) 1 else 0
-        val maxParentWidthRatio = if (profile.expandContainerToParent) 0.95f else 0.85f
-        for (level in 0..maxLevels) {
-            if (container != null) {
-                val pRect = Rect()
-                container.getBoundsInScreen(pRect)
-                val safeExpansion = profile.expandContainerToParent ||
-                    (pRect.width() <= (result.width() * 1.35f) && pRect.height() <= (result.height() * 1.50f))
-                if (safeExpansion &&
-                    pRect.width() <= screenWidth * maxParentWidthRatio &&
-                    pRect.height() <= screenHeight &&
-                    pRect.width() >= result.width() &&
-                    pRect.height() >= result.height() &&
-                    Rect.intersects(pRect, result)) {
-                    result.set(pRect)
-                    break
+        try {
+            var container = node.parent
+            val maxLevels = if (profile.expandContainerToParent) 1 else 0
+            val maxParentWidthRatio = if (profile.expandContainerToParent) 0.95f else 0.85f
+            for (level in 0..maxLevels) {
+                if (container != null) {
+                    val pRect = Rect()
+                    container.getBoundsInScreen(pRect)
+                    val safeExpansion = profile.expandContainerToParent ||
+                        (pRect.width() <= (result.width() * 1.35f) && pRect.height() <= (result.height() * 1.50f))
+                    if (safeExpansion &&
+                        pRect.width() <= screenWidth * maxParentWidthRatio &&
+                        pRect.height() <= screenHeight &&
+                        pRect.width() >= result.width() &&
+                        pRect.height() >= result.height() &&
+                        Rect.intersects(pRect, result)) {
+                        result.set(pRect)
+                        break
+                    }
+                    container = container.parent
                 }
-                container = container.parent
             }
+        } catch (_: Exception) {
+            // Por qué: Un nodo padre reciclado durante la transición de ventana no debe abortar todo el escaneo.
         }
         normalizeFullWidthMessageBounds(result, screenWidth, screenHeight, density)
         return result

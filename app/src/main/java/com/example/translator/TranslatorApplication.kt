@@ -11,7 +11,7 @@ class TranslatorApplication : Application() {
     companion object {
         const val CRASH_PREFS = "crash_prefs"
         const val KEY_LAST_CRASH = "last_crash"
-        private const val KEY_LAST_CRASH_AT = "last_crash_at"
+        const val KEY_LAST_CRASH_AT = "last_crash_at"
         private const val KEY_CRASH_COUNT = "crash_count"
     }
 
