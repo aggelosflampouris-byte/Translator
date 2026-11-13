@@ -367,4 +367,25 @@ class TranslationFilterTest {
             )
         )
     }
+
+    @Test
+    fun cleanMessageText_andShouldTranslate_stripMessengerGreekRepliesAndReactionMetadata() {
+        val selfReplied = "Εσείς απαντήσατε στο χρήστη Λευτέρης: Ce faci?, 1:25 μ.μ., Απεστάλη, Πατήστε δύο φορές για να απαντήσετε"
+        assertEquals("Ce faci?", TranslationFilter.cleanMessageText(selfReplied))
+        assertTrue(TranslationFilter.shouldTranslate(selfReplied, TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN))
+
+        val repliedToYourMsg = "Λευτέρης απάντησε στο μήνυμά σας: Bună ziua, 10:15 μ.μ., 1 αντίδραση ❤️, Κάντε διπλό πάτημα για απάντηση"
+        assertEquals("Bună ziua", TranslationFilter.cleanMessageText(repliedToYourMsg))
+        assertTrue(TranslationFilter.shouldTranslate(repliedToYourMsg, TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN))
+
+        val replyNounAndSeenBy = "Απάντηση στον χρήστη Λευτέρης: Vin imediat, 5:10 μ.μ., Διαβάστηκε από Λευτέρης, Πατήστε 2 φορές για απάντηση"
+        assertEquals("Vin imediat", TranslationFilter.cleanMessageText(replyNounAndSeenBy))
+        assertTrue(TranslationFilter.shouldTranslate(replyNounAndSeenBy, TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN))
+
+        val quotedMsgReply = "Λευτέρης απάντησε στο μήνυμα «Τι πρεπει να κανω εγω»: Nimic, Απεστάλη"
+        assertEquals("Nimic", TranslationFilter.cleanMessageText(quotedMsgReply))
+        assertTrue(TranslationFilter.shouldTranslate(quotedMsgReply, TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN))
+
+        assertFalse(TranslationFilter.shouldTranslate("Εσείς απαντήσατε στον χρήστη Λευτέρης", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK))
+    }
 }

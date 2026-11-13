@@ -320,6 +320,9 @@ class TranslationAccessibilityService : AccessibilityService() {
             coordinator.cancelDebouncedWorkOnly()
             inFlightKeys.clear()
             draftController.resetOnDepartureOrStop()
+            if (effect.switchedToPackage != null || effect.shouldClearOverlays) {
+                treeScanner.clearSenderCache()
+            }
         }
         if (effect.shouldClearOverlays) {
             coordinator.invalidateAndClearAllOverlays()
@@ -666,7 +669,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         val baseDiag = "fg=$fgPkg(${activeProfile.id}) root=${diagnostics.lastRootOrigin} src=$configuredSource->$configuredTarget " +
             "scr=${screenWidth}x$screenHeight d=${"%.2f".format(density)} y=$topInset..$effectiveBottom " +
             "vis=${stats.visitedNodes} ed=${stats.editableNodes} t=${stats.nodesWithText} dsc=${stats.nodesWithDesc} " +
-            "skW=${stats.skippedWidget} skF=${stats.skippedFilter} skTiny=${stats.skippedTinyDesc} skBnd=${stats.skippedBubbleBounds} " +
+            "skW=${stats.skippedWidget} skF=${stats.skippedFilter}${stats.formatFilterBreakdown()} skTiny=${stats.skippedTinyDesc} skBnd=${stats.skippedBubbleBounds} " +
             "cands=${stats.passedCandidates}/${dedupedCandidates.size} smp=${stats.formatSamples()}"
 
         if (dedupedCandidates.isEmpty()) {

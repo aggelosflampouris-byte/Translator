@@ -43,6 +43,7 @@ class DiagnosticRecorder {
     private val seenExternalPackages = LinkedHashMap<String, Int>(8)
     private val perAppScanDiagMap = LinkedHashMap<String, String>(4)
     private val perAppFirstAbortMap = LinkedHashMap<String, String>(4)
+    private val perAppLastSuccessMap = LinkedHashMap<String, String>(4)
 
     fun recordPerAppDiag(pkg: String, summary: String) {
         if (pkg.isBlank()) return
@@ -51,9 +52,11 @@ class DiagnosticRecorder {
             summary.startsWith("ov=") ||
             summary.startsWith("tr(")
         synchronized(perAppScanDiagMap) {
-            // Por qué: Conserva el primer bloqueo de cada app en esta sesión aunque después
-            // logre traducir al abrir el teclado, facilitando diagnósticos en AppHistory.
-            if (!isSuccessProgress && !perAppFirstAbortMap.containsKey(shortPkg)) {
+            // Por qué: Conserva el primer bloqueo y la última traducción exitosa de cada app para no perder
+            // trazabilidad en AppHistory cuando un desplazamiento posterior termina en `empty`.
+            if (isSuccessProgress) {
+                perAppLastSuccessMap[shortPkg] = summary
+            } else if (!perAppFirstAbortMap.containsKey(shortPkg)) {
                 perAppFirstAbortMap[shortPkg] = summary
             }
             perAppScanDiagMap.remove(shortPkg)
@@ -62,16 +65,16 @@ class DiagnosticRecorder {
                 if (oldestKey != null) {
                     perAppScanDiagMap.remove(oldestKey)
                     perAppFirstAbortMap.remove(oldestKey)
+                    perAppLastSuccessMap.remove(oldestKey)
                 }
             }
             perAppScanDiagMap[shortPkg] = summary
             ServiceBridge.lastPerAppScanDebug = perAppScanDiagMap.entries.joinToString(" || ") { (k, latest) ->
-                val firstAbort = perAppFirstAbortMap[k]
-                if (firstAbort != null && firstAbort != latest) {
-                    "$k:$firstAbort>>$latest"
-                } else {
-                    "$k:$latest"
-                }
+                val parts = mutableListOf<String>()
+                perAppFirstAbortMap[k]?.let { if (it != latest) parts.add(it) }
+                perAppLastSuccessMap[k]?.let { if (it != latest && !parts.contains(it)) parts.add(it) }
+                parts.add(latest)
+                "$k:${parts.joinToString(">>")}"
             }
         }
     }
@@ -202,6 +205,7 @@ class DiagnosticRecorder {
         synchronized(perAppScanDiagMap) {
             perAppScanDiagMap.clear()
             perAppFirstAbortMap.clear()
+            perAppLastSuccessMap.clear()
         }
         synchronized(srcProbeHistory) {
             srcProbeHistory.clear()

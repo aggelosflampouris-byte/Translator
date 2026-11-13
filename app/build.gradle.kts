@@ -25,8 +25,8 @@ android {
         applicationId = "com.example.translator"
         minSdk = 24
         targetSdk = 33
-        versionCode = 106
-        versionName = "1.0.106"
+        versionCode = 107
+        versionName = "1.0.107"
     }
 
     signingConfigs {

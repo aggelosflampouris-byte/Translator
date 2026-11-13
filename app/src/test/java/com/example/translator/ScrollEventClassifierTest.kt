@@ -219,5 +219,25 @@ class ScrollEventClassifierTest {
         assertTrue(realOffsetJump.isRelevantVerticalScroll)
         assertTrue(realOffsetJump.shouldInterruptOverlays)
     }
+
+    @Test
+    fun classify_doesNotInterruptOverlaysOnTinySubPixelDeltaJitter() {
+        val jitter = ScrollEventClassifier.classify(
+            hasDeltaApi = true,
+            scrollDeltaX = 0,
+            scrollDeltaY = -1,
+            sourceHeightPx = 1800,
+            screenHeightPx = 2340,
+            windowId = 1,
+            scrollY = 0,
+            maxScrollY = 1500,
+            fromIndex = 2,
+            toIndex = 8,
+            itemCount = 20,
+            prevSignature = null
+        )
+        assertTrue(jitter.isRelevantVerticalScroll)
+        assertFalse(jitter.shouldInterruptOverlays)
+    }
 }
 

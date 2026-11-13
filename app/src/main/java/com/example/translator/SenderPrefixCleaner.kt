@@ -35,6 +35,13 @@ object SenderPrefixCleaner {
     // Por qué: Caracteres propios de oración o signos que nunca forman parte de un nombre de usuario.
     private const val INVALID_SENDER_PUNCTUATION = "?!;()[]{}«»\""
 
+    // Por qué: Vocativos griegos frecuentes que el usuario puede escribir manualmente al inicio de un mensaje
+    // y no deben confundirse con el prefijo de remitente TalkBack en una burbuja verificada.
+    private val GREEK_VOCATIVE_EXCEPTIONS = setOf(
+        "αγγελε", "γιωργο", "γιαννη", "νικο", "κωστα", "δημητρη",
+        "φιλε", "αδερφε", "καλε", "μαλακα", "κυριε", "κυρια", "παιδια", "ρε"
+    )
+
     // Por qué: Palabras de cortesía, interjecciones y acrónimos frecuentes que no deben interpretarse nunca como nombre propio
     private val NON_SENDER_TOKENS = setOf(
         "ok", "oke", "okay", "da", "nu", "ba", "hai", "pa", "na", "uite",
@@ -216,8 +223,13 @@ object SenderPrefixCleaner {
                 allowGenericEnvelopeAllCaps &&
                 hadEnvelopeMetadata &&
                 isAllCapsDisplayName(rawPrefix)
+            val matchesEnvelopeGreekBeforeLatin = !matchesKnownSender &&
+                !matchesEnvelopeAllCaps &&
+                pass == 0 &&
+                hadEnvelopeMetadata &&
+                isGreekDisplayPrefixBeforeLatin(rawPrefix, candidate.second, normPrefix)
 
-            if (matchesKnownSender || matchesEnvelopeAllCaps) {
+            if (matchesKnownSender || matchesEnvelopeAllCaps || matchesEnvelopeGreekBeforeLatin) {
                 current = candidate.second.trim()
                 continue
             }
@@ -232,6 +244,22 @@ object SenderPrefixCleaner {
         }
 
         return current
+    }
+
+    private fun isGreekDisplayPrefixBeforeLatin(
+        rawPrefix: String,
+        remainder: String,
+        normalizedPrefix: String
+    ): Boolean {
+        val trimmedPrefix = rawPrefix.trim()
+        if (trimmedPrefix.any { it.isWhitespace() }) return false
+        val firstLetter = trimmedPrefix.firstOrNull { it.isLetter() } ?: return false
+        if (!firstLetter.isUpperCase()) return false
+        if (ScriptDetector.countGreek(trimmedPrefix) < 3 || ScriptDetector.countLatin(trimmedPrefix) > 0) {
+            return false
+        }
+        if (ScriptDetector.countLatin(remainder) < 2) return false
+        return !NON_SENDER_TOKENS.contains(normalizedPrefix) && !GREEK_VOCATIVE_EXCEPTIONS.contains(normalizedPrefix)
     }
 
     private fun isAllCapsDisplayName(prefix: String): Boolean {

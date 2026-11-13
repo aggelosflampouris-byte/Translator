@@ -20,7 +20,7 @@ object TranslationFilter {
     )
 
     private val LEADING_SENDER_PREFIX_REGEX = Regex(
-        """^(?:(?:you sent|you replied|εσείς στείλατε|εσεις στειλατε|στείλατε|στειλατε|απαντήσατε|απαντησατε|ai trimis|ai răspuns|ai raspuns)(?:\s+(?:στον?\s+χρήστη|στον?\s+χρηστη|στον?\s+εαυτό\s+(?:σας|του|της)|σε|to|la)\s+[^\n:,?!;()]{1,40})?(?:[ \t]*[:,][ \t]+|[ \t]*\n+[ \t]*)|(?:εσείς στείλατε|εσεις στειλατε)\s+|(?:(?:ο|η|ο/η)\s+χρήστης\s+|(?:ο|η|ο/η)\s+χρηστης\s+|(?:ο|η|ο/η)\s+)?[^\n:,?!;()]{1,36}\s+(?:έστειλε|εστειλε|απάντησε|απαντησε|sent|replied|a trimis|a răspuns|a raspuns)(?:\s+(?:στον?\s+χρήστη|στον?\s+χρηστη|στον?\s+εαυτό\s+(?:του|της|τους)|σε|to|la)\s+[^\n:,?!;()]{1,40})?(?:[ \t]*[:,][ \t]+|[ \t]*\n+[ \t]*)|(?:εσείς|εσεις|you)(?:[ \t]*[:,][ \t]+|[ \t]*\n+[ \t]*)|tu[ \t]*:[ \t]+)""",
+        """^(?:(?:you sent|you replied|reply(?:\s+to)?|εσείς στείλατε|εσεις στειλατε|εσείς απαντήσατε|εσεις απαντησατε|στείλατε|στειλατε|απαντήσατε|απαντησατε|απάντηση|απαντηση|ai trimis|ai răspuns|ai raspuns|răspuns|raspuns)(?:\s+(?:(?:στον?\s+χρήστη|στον?\s+χρηστη|στον?\s+εαυτό\s+(?:σας|του|της|τους)|σε\s+(?:τον?\s+)?(?:χρήστη|χρηστη|μήνυμ[άα]|μηνυμα)|σε|προς(?:\s+τον?)?|to|la)\s+[^\n:,?!;()]{1,100}|(?:στο\s+μήνυμ[άα]|στο\s+μηνυμα)(?:\s+(?:σας|του|της|τους))?(?:\s+[^\n:,?!;()]{1,100})?|σε\s+εσάς|σ'\s*εσάς))?(?:\s*«[^»\n]{1,120}»)?(?:[ \t]*[:,][ \t]+|[ \t]*\n+[ \t]*)|(?:εσείς στείλατε|εσεις στειλατε)\s+|(?:(?:ο|η|ο/η)\s+χρήστης\s+|(?:ο|η|ο/η)\s+χρηστης\s+|(?:ο|η|ο/η)\s+)?[^\n:,?!;()]{1,36}\s+(?:έστειλε|εστειλε|απάντησε|απαντησε|sent|replied|a trimis|a răspuns|a raspuns)(?:\s+(?:(?:στον?\s+χρήστη|στον?\s+χρηστη|στον?\s+εαυτό\s+(?:του|της|τους)|σε\s+(?:τον?\s+)?(?:χρήστη|χρηστη|μήνυμ[άα]|μηνυμα)|σε|προς(?:\s+τον?)?|to|la)\s+[^\n:,?!;()]{1,100}|(?:στο\s+μήνυμ[άα]|στο\s+μηνυμα)(?:\s+(?:σας|του|της|τους))?(?:\s+[^\n:,?!;()]{1,100})?|σε\s+εσάς|σ'\s*εσάς))?(?:\s*«[^»\n]{1,120}»)?(?:[ \t]*[:,][ \t]+|[ \t]*\n+[ \t]*)|(?:εσείς|εσεις|you)(?:[ \t]*[:,][ \t]+|[ \t]*\n+[ \t]*)|tu[ \t]*:[ \t]+)""",
         RegexOption.IGNORE_CASE
     )
     // Por qué: En interfaces griegas de Messenger ("Λευτέρης Φλαμπούρης: Salut"), retira el remitente
@@ -34,7 +34,13 @@ object TranslationFilter {
         """^(?!(?:ΝΑΙ|ΟΧΙ|ΣΟΣ)(?:[ \t]*[,:]|[ \t]*\n))(?:[Α-ΩΆΈΉΊΌΎΏΪΫ]{3,20}(?:[ \t]+[Α-ΩΆΈΉΊΌΎΏΪΫ]{2,20}){0,3}|[Α-ΩΆΈΉΊΌΎΏΪΫ][α-ωάέήίόύώϊϋΐΰς'-]{1,20}(?:[ \t]+[Α-ΩΆΈΉΊΌΎΏΪΫ][α-ωάέήίόύώϊϋΐΰς'-]{1,20}){1,3})(?:[ \t]*[,:][ \t]+|[ \t]*\n+[ \t]*)(?=[\s\S]*[a-zA-ZăâîșțĂÂÎȘȚ]{2})"""
     )
     private val TRAILING_ACTION_HINT_REGEX = Regex(
-        """(?:[,.]\s*|\n+\s*)(?:πατήστε δύο φορές|πατηστε δυο φορες|πατήστε παρατεταμένα|πατηστε παρατεταμενα|double[- ]?tap|tap and hold)[^\n]*$""",
+        """(?:[,.]\s*|\n+\s*)(?:πατήστε\s+(?:δύο|δυο|2)\s+φορές|πατηστε\s+(?:δυο|2)\s+φορες|κάντε\s+διπλό\s+πάτημα|καντε\s+διπλο\s+πατημα|πατήστε\s+παρατεταμένα|πατηστε\s+παρατεταμενα|άγγιγμα\s+και\s+παρατεταμένο|αγγιγμα\s+και\s+παρατεταμενο|double[- ]?tap|tap\s+and\s+hold)[^\n]*$""",
+        RegexOption.IGNORE_CASE
+    )
+    // Por qué: TalkBack en Messenger anexa conteos de reacción o lectores entre la hora y la sugerencia final;
+    // retirarlos antes permite limpiar después el estado de entrega y la marca de tiempo restante.
+    private val TRAILING_REACTION_OR_SEEN_REGEX = Regex(
+        """(?:,\s*|\n+\s*)(?:(?:\d+\s+)?(?:αντίδραση|αντιδράσεις|αντιδραση|αντιδρασεις|reaction|reactions|reacție|reacții|reactie|reactii)(?:\s*[:：]?\s*[^\n,]*)?|(?:(?:ο|η|ο/η)\s+χρήστης\s+|(?:ο|η|ο/η)\s+χρηστης\s+|εσείς\s+)?[^\n,]{1,40}\s+(?:αντέδρασε|αντεδρασε|αντιδράσατε|αντιδρασατε|reacted)(?:\s+(?:με|with|cu)\s+[^\n,]*)?|(?:διαβάστηκε|διαβαστηκε|εθεάθη|εθεαθη|το\s+είδε|το\s+ειδε|seen|read)\s+(?:από(?:\s+τον?\s+χρήστη)?|απο(?:\s+τον?\s+χρηστη)?|by|de)\s+[^\n,]+)$""",
         RegexOption.IGNORE_CASE
     )
     private val CHAT_STATUS_REGEX = Regex(
@@ -232,11 +238,13 @@ object TranslationFilter {
             return EnvelopeStripResult("", hadTrailingMetadata = false)
         }
         var cleaned = sanitized
-        for (pass in 0 until 2) {
+        for (pass in 0 until 3) {
             val before = cleaned
             cleaned = cleaned.replace(TRAILING_ACTION_HINT_REGEX, "").trim()
+            cleaned = cleaned.replace(TRAILING_REACTION_OR_SEEN_REGEX, "").trim()
             cleaned = cleaned.replace(CHAT_STATUS_REGEX, "").trim()
             cleaned = cleaned.replace(TRAILING_TIMESTAMP_REGEX, "").trim()
+            cleaned = cleaned.replace(TRAILING_REACTION_OR_SEEN_REGEX, "").trim()
             cleaned = cleaned.replace(CHAT_STATUS_REGEX, "").trim()
             if (cleaned == before) break
         }

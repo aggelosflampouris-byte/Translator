@@ -323,4 +323,40 @@ class TranslationSenseEngineTest {
             )
         }
     }
+
+    @Test
+    fun isEligibleSourceText_acceptsUnaccentedRomanianEvenWhenMlKitGuessesCloseLanguages() {
+        assertTrue(
+            TranslationSenseEngine.isEligibleSourceText(
+                "buna ziua",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
+                identifiedLang = "da"
+            )
+        )
+        assertTrue(
+            TranslationSenseEngine.isEligibleSourceText(
+                "unde esti?",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
+                identifiedLang = "et"
+            )
+        )
+        assertTrue(
+            TranslationSenseEngine.isEligibleSourceText(
+                "ce faci?",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
+                identifiedLang = "it"
+            )
+        )
+        assertFalse(
+            TranslationSenseEngine.isEligibleSourceText(
+                "Take care with the pot and drum",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
+                identifiedLang = "en"
+            )
+        )
+    }
 }

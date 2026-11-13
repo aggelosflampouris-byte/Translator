@@ -64,6 +64,10 @@ object TranslationSenseEngine {
     )
 
     private val GENERIC_ROMANCE_PREPOSITIONS = setOf("de", "in", "e", "a", "la")
+    // Por qué: Vocablos breves coincidentes con inglés o lenguas romances que no deben anular el detector ML Kit por sí solos.
+    private val AMBIGUOUS_ROMANCE_OR_ENGLISH_TOKENS = GENERIC_ROMANCE_PREPOSITIONS + setOf(
+        "am", "an", "ai", "care", "drum", "pot", "cum"
+    )
 
     // Por qué: Tabla declarativa de nombres propios masculinos frecuentes para convertir nominativo a vocativo tras la NMT.
     private val GREEK_NOMINATIVE_TO_VOCATIVE_NAMES = mapOf(
@@ -193,19 +197,28 @@ object TranslationSenseEngine {
         val hasRoDiacritics = ScriptDetector.hasRomanianDiacritics(clean)
 
         if (sourceLang == TranslateLanguage.ROMANIAN) {
-            if (identifiedLang != null && identifiedLang != "und" && identifiedLang != TranslateLanguage.ROMANIAN && identifiedLang != "ron") {
-                if (!hasRoDiacritics) {
-                    return false
-                }
-            }
+            if (hasRoDiacritics) return true
 
-            if (englishTokenCount >= 2 && romanianTokenCount == 0 && !hasRoDiacritics) {
+            if (englishTokenCount >= 2 && romanianTokenCount == 0) {
                 return false
             }
 
-            if (hasRoDiacritics) return true
+            val specificRomanianTokens = words.count {
+                COMMON_ROMANIAN_WORDS.contains(it) && !AMBIGUOUS_ROMANCE_OR_ENGLISH_TOKENS.contains(it)
+            }
+            // Por qué: En mensajes rumanos breves sin diacríticos (ej. "buna ziua", "ce faci"), ML Kit
+            // suele reportar danés o italiano; el vocabulario rumano inequívoco sin tokens ingleses debe prevalecer.
+            if (specificRomanianTokens > 0 &&
+                englishTokenCount == 0 &&
+                (identifiedLang != TranslateLanguage.ENGLISH && identifiedLang != "eng" || specificRomanianTokens >= 2)
+            ) {
+                return true
+            }
 
-            val specificRomanianTokens = words.count { COMMON_ROMANIAN_WORDS.contains(it) && !GENERIC_ROMANCE_PREPOSITIONS.contains(it) }
+            if (identifiedLang != null && identifiedLang != "und" && identifiedLang != TranslateLanguage.ROMANIAN && identifiedLang != "ron") {
+                return false
+            }
+
             if (specificRomanianTokens > 0 && englishTokenCount < 2) {
                 return true
             }

@@ -183,5 +183,48 @@ class NodeCandidateEvaluatorTest {
         assertTrue(filtered.any { it.text == longer.text })
         assertTrue(filtered.any { it.text == distinct.text })
     }
+
+    @Test
+    fun scanStats_retainsBottomChatSamplesAndFilterBreakdownBeyondFirstSixTopNodes() {
+        val rawNodes = (0 until 8).map { idx ->
+            val top = 250 + idx * 180
+            val text = if (idx == 7) {
+                "ΑΓΓΕΛΟΣ, Bună ziua, 1:25 μ.μ., Απεστάλη, Πατήστε δύο φορές για να απαντήσετε"
+            } else {
+                "ΑΓΓΕΛΟΣ, Ελληνικό μήνυμα $idx, 1:25 μ.μ., Απεστάλη, Πατήστε δύο φορές για να απαντήσετε"
+            }
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(147, top, 1000, top + 100),
+                expandedRect = WindowRect(147, top, 1000, top + 100),
+                directText = text,
+                descText = text,
+                shortClass = "ViewGroup",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList()
+            )
+        }
+        val stats = ScanStats()
+        val results = NodeCandidateEvaluator.evaluateBottomUp(
+            rawNodes = rawNodes,
+            minY = minY,
+            maxY = maxY,
+            screenWidth = screenWidth,
+            density = density,
+            configuredSource = TranslateLanguage.ROMANIAN,
+            configuredTarget = TranslateLanguage.GREEK,
+            profile = messengerProfile,
+            discoveredSenders = SenderPrefixCleaner.DiscoveredSenders(selfNames = setOf("αγγελος")),
+            stats = stats
+        )
+
+        assertEquals(1, results.size)
+        assertEquals("Bună ziua", results.single().text)
+        assertEquals("(grk:7)", stats.formatFilterBreakdown())
+        val samplesSummary = stats.formatSamples()
+        assertTrue(samplesSummary.contains("ok"))
+        assertTrue(samplesSummary.contains("[147,1330-1000,1430]"))
+    }
 }
 

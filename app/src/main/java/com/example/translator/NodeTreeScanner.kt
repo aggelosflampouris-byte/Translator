@@ -46,20 +46,58 @@ class ScanStats {
     var skippedTinyDesc: Int = 0
     var skippedBubbleBounds: Int = 0
     var passedCandidates: Int = 0
-    val chatSamples = ArrayList<String>(6)
-    val chromeSamples = ArrayList<String>(6)
+    private val filterReasonCounts = linkedMapOf<String, Int>()
+    private val priorityChatSamples = ArrayList<String>(4)
+    private val headChatSamples = ArrayList<String>(2)
+    private val tailChatSamples = ArrayDeque<String>(4)
+    private val chromeSamples = ArrayList<String>(6)
 
-    fun addSample(entry: String, inChatViewport: Boolean = true) {
+    fun recordFilterRejection(rawTag: String) {
+        val bucket = rawTag.substringBefore('(')
+        filterReasonCounts[bucket] = (filterReasonCounts[bucket] ?: 0) + 1
+    }
+
+    fun formatFilterBreakdown(): String {
+        if (filterReasonCounts.isEmpty()) return ""
+        return filterReasonCounts.entries.joinToString(",", prefix = "(", postfix = ")") { (k, v) -> "$k:$v" }
+    }
+
+    fun addSample(entry: String, inChatViewport: Boolean = true, highPriority: Boolean = false) {
         if (inChatViewport) {
-            if (chatSamples.size < 6) chatSamples.add(entry)
+            if (highPriority && priorityChatSamples.size < 4 && !priorityChatSamples.contains(entry)) {
+                priorityChatSamples.add(entry)
+            }
+            if (headChatSamples.size < 2) {
+                headChatSamples.add(entry)
+            } else {
+                // Por qué: Mantener los últimos nodos del viewport inferior permite diagnosticar
+                // mensajes recientes junto al compositor cuando hay más de 6 burbujas arriba.
+                if (tailChatSamples.size >= 4) {
+                    tailChatSamples.removeFirst()
+                }
+                tailChatSamples.addLast(entry)
+            }
         } else if (chromeSamples.size < 6) {
             chromeSamples.add(entry)
         }
     }
 
     fun formatSamples(): String {
-        return if (chatSamples.isNotEmpty()) {
-            chatSamples.joinToString(";")
+        val combined = linkedSetOf<String>()
+        for (item in priorityChatSamples) {
+            if (combined.size >= 6) break
+            combined.add(item)
+        }
+        for (item in headChatSamples) {
+            if (combined.size >= 6) break
+            combined.add(item)
+        }
+        for (item in tailChatSamples) {
+            if (combined.size >= 6) break
+            combined.add(item)
+        }
+        return if (combined.isNotEmpty()) {
+            combined.joinToString(";")
         } else {
             chromeSamples.joinToString(";")
         }
@@ -116,7 +154,7 @@ object NodeCandidateEvaluator {
                 }
             }
             if (maxChildTextLen > 0) {
-                val outerLen = (item.directText ?: item.descText)?.length ?: 0
+                val outerLen = maxOf(item.directText?.length ?: 0, item.descText?.length ?: 0)
                 if (item.isScrollableContainer || item.childCount > 6 || outerLen <= maxChildTextLen + 12) {
                     subtreeMaxAccepted[i] = maxChildTextLen
                     continue
@@ -189,11 +227,14 @@ object NodeCandidateEvaluator {
 
         if (cleanText.isBlank() || rejectReason != null) {
             val tag = rejectReason ?: "emp"
+            val isInterestingReject = tag == "sys" || tag == "elig" || (tag.startsWith("grk(") && !tag.endsWith("/0)"))
             stats?.let {
                 it.skippedFilter++
+                it.recordFilterRejection(tag)
                 it.addSample(
                     "${item.shortClass}(t=${directText?.length ?: 0},d=${descText?.length ?: 0},[${rawRect.left},${rawRect.top}-${rawRect.right},${rawRect.bottom}],flt:$tag)",
-                    inChatViewport = item.inChatViewport
+                    inChatViewport = item.inChatViewport,
+                    highPriority = isInterestingReject
                 )
             }
             return 0
@@ -230,7 +271,8 @@ object NodeCandidateEvaluator {
                 it.passedCandidates++
                 it.addSample(
                     "${item.shortClass}(t=${directText?.length ?: 0},d=${descText?.length ?: 0},[${clampedRect.left},${clampedRect.top}-${clampedRect.right},${clampedRect.bottom}],ok)",
-                    inChatViewport = item.inChatViewport
+                    inChatViewport = item.inChatViewport,
+                    highPriority = true
                 )
             }
             return chosenRaw.length

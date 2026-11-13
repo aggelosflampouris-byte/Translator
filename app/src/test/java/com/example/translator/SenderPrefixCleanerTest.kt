@@ -146,6 +146,26 @@ class SenderPrefixCleanerTest {
                 discoveredSenders = emptySenders
             )
         )
+        // Por qué: En burbujas verificadas de TalkBack (hadEnvelopeMetadata=true), un nombre propio griego
+        // en nominativo ante cuerpo latino también se retira aunque solo haya un mensaje visible.
+        assertEquals(
+            "Da",
+            SenderPrefixCleaner.stripSenderPrefix(
+                textAfterSuffixStrip = "Άγγελος, Da",
+                isOutgoing = true,
+                hadEnvelopeMetadata = true,
+                discoveredSenders = emptySenders
+            )
+        )
+        assertEquals(
+            "Άγγελε, ce mai faci?",
+            SenderPrefixCleaner.stripSenderPrefix(
+                textAfterSuffixStrip = "Άγγελε, ce mai faci?",
+                isOutgoing = true,
+                hadEnvelopeMetadata = true,
+                discoveredSenders = emptySenders
+            )
+        )
     }
 
     @Test

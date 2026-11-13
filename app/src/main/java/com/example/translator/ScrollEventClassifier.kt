@@ -50,7 +50,15 @@ object ScrollEventClassifier {
 
         if (hasDeltaApi) {
             if (scrollDeltaY != 0) {
-                return ScrollDecision(true, "dy=$scrollDeltaY", currentSig, shouldInterruptOverlays = true)
+                // Por qué: Microajustes menores a 12px (p. ej. dy=-1 en relayouts de Messenger)
+                // deben reprogramar un escaneo suave sin borrar burbujas ni abortar traducciones en curso.
+                val isRealScrollMovement = kotlin.math.abs(scrollDeltaY) >= 12
+                return ScrollDecision(
+                    isRelevantVerticalScroll = true,
+                    reason = "dy=$scrollDeltaY",
+                    nextSignature = currentSig,
+                    shouldInterruptOverlays = isRealScrollMovement
+                )
             }
             if (scrollDeltaX != 0) {
                 return ScrollDecision(false, "horiz_only(dx=$scrollDeltaX)", prevSignature, shouldInterruptOverlays = false)
