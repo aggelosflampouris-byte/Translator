@@ -18,6 +18,23 @@ data class DraftSession(
     val createdAtMillis: Long
 )
 
+data class LearnedCorrectionEntry(
+    val sourceLang: String,
+    val targetLang: String,
+    val rejected: String,
+    val preferred: String,
+    val hits: Int,
+    val updatedAt: Long
+)
+
+data class LearnedMemoryEntry(
+    val key: String,
+    val sourceLang: String,
+    val targetLang: String,
+    val sourceNormalized: String,
+    val translation: String
+)
+
 /**
  * On-device, private memory of what the user has taught the translator.
  *
@@ -49,6 +66,23 @@ class LearningStore private constructor(context: Context) {
             return instance ?: synchronized(this) {
                 instance ?: LearningStore(context.applicationContext).also { instance = it }
             }
+        }
+
+        /**
+         * Valida y normaliza una regla manual del glosario (`término erróneo -> término preferido`).
+         */
+        fun normalizeCustomCorrection(
+            sourceLang: String,
+            targetLang: String,
+            wrongTerm: String,
+            preferredTerm: String
+        ): Pair<String, String>? {
+            if (sourceLang.isBlank() || targetLang.isBlank() || sourceLang == targetLang) return null
+            val rejected = wrongTerm.trim().replace(WHITESPACE_REGEX, " ").lowercase()
+            val preferred = preferredTerm.trim().replace(WHITESPACE_REGEX, " ")
+            if (rejected.isEmpty() || preferred.isEmpty()) return null
+            if (rejected == preferred.lowercase()) return null
+            return rejected to preferred
         }
     }
 
@@ -109,6 +143,96 @@ class LearningStore private constructor(context: Context) {
         synchronized(lock) {
             return Pair(corrections.size, memory.size)
         }
+    }
+
+    fun listCorrections(limit: Int = 200): List<LearnedCorrectionEntry> {
+        synchronized(lock) {
+            return corrections.values
+                .sortedWith(compareByDescending<CorrectionRecord> { it.hits }.thenByDescending { it.updatedAt })
+                .take(limit)
+                .map {
+                    LearnedCorrectionEntry(
+                        sourceLang = it.sourceLang,
+                        targetLang = it.targetLang,
+                        rejected = it.rejected,
+                        preferred = it.preferred,
+                        hits = it.hits,
+                        updatedAt = it.updatedAt
+                    )
+                }
+        }
+    }
+
+    fun listMemories(limit: Int = 200): List<LearnedMemoryEntry> {
+        synchronized(lock) {
+            return memory.entries
+                .asSequence()
+                .mapNotNull { (key, translation) ->
+                    val parts = key.split('|', limit = 3)
+                    if (parts.size != 3) null else LearnedMemoryEntry(
+                        key = key,
+                        sourceLang = parts[0],
+                        targetLang = parts[1],
+                        sourceNormalized = parts[2],
+                        translation = translation
+                    )
+                }
+                .sortedBy { it.sourceNormalized }
+                .take(limit)
+                .toList()
+        }
+    }
+
+    fun addCustomCorrection(
+        sourceLang: String,
+        targetLang: String,
+        wrongTerm: String,
+        preferredTerm: String
+    ): Boolean {
+        val normalized = normalizeCustomCorrection(sourceLang, targetLang, wrongTerm, preferredTerm) ?: return false
+        val (rejected, preferred) = normalized
+        val key = correctionKey(sourceLang, targetLang, rejected)
+        val now = System.currentTimeMillis()
+        val updated = synchronized(lock) {
+            val existing = corrections[key]
+            val hits = maxOf((existing?.hits ?: 0), MIN_HITS_FOR_AUTO_CORRECTION)
+            CorrectionRecord(sourceLang, targetLang, rejected, preferred, hits, now).also {
+                corrections[key] = it
+            }
+        }
+        persistCorrection(key, updated)
+        return true
+    }
+
+    fun deleteCorrection(sourceLang: String, targetLang: String, rejected: String): Boolean {
+        val key = correctionKey(sourceLang, targetLang, rejected)
+        val removed = synchronized(lock) {
+            corrections.remove(key) != null
+        }
+        if (removed) {
+            deleteCorrection(key)
+        }
+        return removed
+    }
+
+    fun deleteMemory(memoryKey: String): Boolean {
+        val removed = synchronized(lock) {
+            memory.remove(memoryKey) != null
+        }
+        if (removed) {
+            diskExecutor.execute {
+                try {
+                    helper.writableDatabase.delete(
+                        LearningDatabaseHelper.TABLE_MEMORY,
+                        "memory_key = ?",
+                        arrayOf(memoryKey)
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to delete memory entry", e)
+                }
+            }
+        }
+        return removed
     }
 
     // ── Aprendizaje ──────────────────────────────────────────────────────────

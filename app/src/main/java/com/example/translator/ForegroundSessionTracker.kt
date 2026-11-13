@@ -56,7 +56,7 @@ class ForegroundSessionTracker(
         return isKeyboardPackage(pkg)
     }
 
-    fun syncAccessibilityPackageScope() {
+    fun syncAccessibilityPackageScope(isActive: Boolean = ServiceBridge.isTranslatingActive) {
         try {
             val currentInfo = service.serviceInfo
             val info = currentInfo ?: AccessibilityServiceInfo()
@@ -68,18 +68,23 @@ class ForegroundSessionTracker(
             } else {
                 null
             }
-            val desiredFlags = info.flags or
-                AccessibilityServiceInfo.DEFAULT or
+            val desiredFlags = AccessibilityServiceInfo.DEFAULT or
                 AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
-                AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
-                AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
-            val desiredEventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
-                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
-                AccessibilityEvent.TYPE_VIEW_SCROLLED or
-                AccessibilityEvent.TYPE_VIEW_FOCUSED or
-                AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED or
-                AccessibilityEvent.TYPE_VIEW_CLICKED
+                if (isActive) AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS else 0
+            // Por qué: Mientras la traducción está pausada, solo observamos cambios de ventana
+            // para evitar ráfagas Binder de scrolling/teclado en otras aplicaciones.
+            val desiredEventTypes = if (isActive) {
+                AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
+                    AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
+                    AccessibilityEvent.TYPE_VIEW_SCROLLED or
+                    AccessibilityEvent.TYPE_VIEW_FOCUSED or
+                    AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED or
+                    AccessibilityEvent.TYPE_VIEW_CLICKED
+            } else {
+                AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+            }
             val desiredFeedback = AccessibilityServiceInfo.FEEDBACK_GENERIC
+            val desiredTimeoutMs = 60L
 
             val packagesMatch = (info.packageNames == null && desiredPackages == null) ||
                 (info.packageNames != null && desiredPackages != null && info.packageNames.contentEquals(desiredPackages))
@@ -87,12 +92,14 @@ class ForegroundSessionTracker(
                 !packagesMatch ||
                 info.flags != desiredFlags ||
                 info.eventTypes != desiredEventTypes ||
-                info.feedbackType != desiredFeedback
+                info.feedbackType != desiredFeedback ||
+                info.notificationTimeout != desiredTimeoutMs
             ) {
                 info.packageNames = desiredPackages
                 info.flags = desiredFlags
                 info.eventTypes = desiredEventTypes
                 info.feedbackType = desiredFeedback
+                info.notificationTimeout = desiredTimeoutMs
                 service.serviceInfo = info
             }
         } catch (e: Exception) {

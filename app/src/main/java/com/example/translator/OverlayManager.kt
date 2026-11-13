@@ -36,11 +36,13 @@ class OverlayManager(private val context: Context) {
             overlayTheme: String,
             alignmentMode: ChatAlignmentMode,
             isRightSide: Boolean,
-            isWhatsAppApp: Boolean
+            isWhatsAppApp: Boolean,
+            isSystemDarkMode: Boolean = true
         ): BubbleStyle {
             val isOutgoing = alignmentMode == ChatAlignmentMode.LEFT_RIGHT_CHAT && isRightSide
             return when {
-                overlayTheme == AppDefaults.OVERLAY_THEME_LIGHT -> BubbleStyle(
+                overlayTheme == AppDefaults.OVERLAY_THEME_LIGHT ||
+                    (overlayTheme == AppDefaults.OVERLAY_THEME_AUTO && !isSystemDarkMode) -> BubbleStyle(
                     backgroundRes = if (isOutgoing) R.drawable.bg_translation_bubble_light_outgoing else R.drawable.bg_translation_bubble_light_incoming,
                     textColor = TEXT_COLOR_LIGHT_SURFACE
                 )
@@ -319,13 +321,16 @@ class OverlayManager(private val context: Context) {
     ): Pair<WindowManager.LayoutParams, Rect> {
         val screenWidth = ScreenMetricsHelper.currentBounds(context).widthPx
 
-        // Por qué: Adapta el color y contraste de la burbuja al tema seleccionado y al modo de alineación de la app
+        // Por qué: Adapta el color y contraste de la burbuja al tema seleccionado, modo día/noche y alineación de la app
         val isRightSide = targetRect.right > (screenWidth * 0.65f)
+        val nightMask = context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK
+        val isSystemDarkMode = nightMask != android.content.res.Configuration.UI_MODE_NIGHT_NO
         val style = resolveBubbleStyle(
             overlayTheme = overlayTheme,
             alignmentMode = profile.alignmentMode,
             isRightSide = isRightSide,
-            isWhatsAppApp = profile.id == "whatsapp"
+            isWhatsAppApp = profile.id == "whatsapp",
+            isSystemDarkMode = isSystemDarkMode
         )
         view.setBackgroundResource(style.backgroundRes)
 
@@ -394,11 +399,13 @@ class OverlayManager(private val context: Context) {
     ) {
         val textView = view.findViewById<TextView>(R.id.draft_text)
         val badgeView = view.findViewById<TextView>(R.id.draft_badge)
-        val replaceBtn = view.findViewById<View>(R.id.draft_action_replace)
+        val replaceBtn = view.findViewById<TextView>(R.id.draft_action_replace)
 
         textView.text = text
         textView.setTextColor(if (showReplace) 0xFFF8FAFC.toInt() else 0xFF94A3B8.toInt())
         badgeView.text = "⇄ $targetLangCode"
+        badgeView.setTextColor(0xFF94A3B8.toInt())
+        replaceBtn.text = "Replace"
         replaceBtn.visibility = if (showReplace) View.VISIBLE else View.GONE
 
         if (showReplace) {
@@ -543,6 +550,81 @@ class OverlayManager(private val context: Context) {
         }
     }
 
+    fun showDraftUndoOverlay(
+        inputRect: Rect,
+        onUndoClicked: () -> Unit,
+        onDismissClicked: () -> Unit
+    ) {
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            mainHandler.post { showDraftUndoOverlay(inputRect, onUndoClicked, onDismissClicked) }
+            return
+        }
+
+        val metrics = ScreenMetricsHelper.currentBounds(context)
+        val screenWidth = metrics.widthPx
+        val density = metrics.density
+        val fallbackBottom = (metrics.heightPx - (120 * density).toInt()).coerceAtLeast((220 * density).toInt())
+        val anchorRect = if (inputRect.top > (100 * density).toInt()) {
+            inputRect
+        } else {
+            Rect((12 * density).toInt(), fallbackBottom, screenWidth - (12 * density).toInt(), fallbackBottom + (48 * density).toInt())
+        }
+
+        synchronized(this) {
+            val view = draftOverlayView ?: inflater.inflate(R.layout.draft_preview_overlay, null)
+            val textView = view.findViewById<TextView>(R.id.draft_text)
+            val badgeView = view.findViewById<TextView>(R.id.draft_badge)
+            val actionBtn = view.findViewById<TextView>(R.id.draft_action_replace)
+
+            badgeView.text = "✓"
+            badgeView.setTextColor(0xFF10B981.toInt())
+            badgeView.setOnClickListener(null)
+            textView.text = "Replaced in chat"
+            textView.setTextColor(0xFFF8FAFC.toInt())
+            actionBtn.text = "Undo"
+            actionBtn.visibility = View.VISIBLE
+
+            view.findViewById<View>(R.id.draft_container).setOnClickListener { onUndoClicked() }
+            actionBtn.setOnClickListener { onUndoClicked() }
+            view.findViewById<View>(R.id.draft_action_close).setOnClickListener { onDismissClicked() }
+
+            val layout = computeDraftLayout(view, anchorRect, screenWidth, density)
+            currentDraftOverlayBounds = layout.overlayBounds
+
+            if (draftOverlayView == null) {
+                val params = WindowManager.LayoutParams(
+                    layout.bubbleWidth,
+                    layout.bubbleHeight,
+                    WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                    PixelFormat.TRANSLUCENT
+                ).apply {
+                    gravity = Gravity.TOP or Gravity.START
+                    x = layout.posX
+                    y = layout.posY
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                        layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                    }
+                }
+                if (addWindowViewWithFallback(view, params, "draft undo overlay")) {
+                    draftOverlayView = view
+                }
+            } else {
+                val params = view.layoutParams as WindowManager.LayoutParams
+                params.width = layout.bubbleWidth
+                params.height = layout.bubbleHeight
+                params.x = layout.posX
+                params.y = layout.posY
+                try {
+                    windowManager.updateViewLayout(view, params)
+                } catch (_: Exception) {
+                    // Ignorar errores transitorios de WindowManager
+                }
+            }
+        }
+    }
+
     fun removeDraftOverlay() {
         currentDraftOverlayBounds = null
         if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
@@ -573,10 +655,11 @@ class OverlayManager(private val context: Context) {
         targetRect: Rect,
         translatedText: String,
         targetLangCode: String = "EL",
+        originalText: String? = null,
         onDismiss: () -> Unit = {}
     ) {
         if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
-            mainHandler.post { showSingleMessagePill(targetRect, translatedText, targetLangCode, onDismiss) }
+            mainHandler.post { showSingleMessagePill(targetRect, translatedText, targetLangCode, originalText, onDismiss) }
             return
         }
 
@@ -594,51 +677,86 @@ class OverlayManager(private val context: Context) {
 
             val badgeView = view.findViewById<TextView>(R.id.pill_badge)
             val textView = view.findViewById<TextView>(R.id.pill_translated_text)
+            val peekBtn = view.findViewById<TextView>(R.id.pill_btn_peek)
             val copyBtn = view.findViewById<View>(R.id.pill_btn_copy)
             val closeBtn = view.findViewById<View>(R.id.pill_btn_close)
 
-            badgeView.text = "⇄ $targetLangCode"
-            textView.text = translatedText
+            val canPeekOriginal = !originalText.isNullOrBlank() && originalText != translatedText
+            var showingOriginal = false
 
-            copyBtn.setOnClickListener {
-                ClipboardHelper.copySensitiveText(context, "Translation", translatedText)
-                android.widget.Toast.makeText(context, "Copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
+            fun renderPillContent() {
+                if (showingOriginal && canPeekOriginal) {
+                    badgeView.text = "ORIG"
+                    textView.text = originalText
+                    peekBtn.text = "Translated"
+                } else {
+                    badgeView.text = "⇄ $targetLangCode"
+                    textView.text = translatedText
+                    peekBtn.text = "Original"
+                }
             }
 
-            closeBtn.setOnClickListener {
-                removeSingleMessagePill()
-                onDismiss()
-            }
+            peekBtn.visibility = if (canPeekOriginal) View.VISIBLE else View.GONE
+            renderPillContent()
 
             val maxWidth = (screenWidth * 0.88f).toInt()
-            view.measure(
-                View.MeasureSpec.makeMeasureSpec(maxWidth, View.MeasureSpec.AT_MOST),
-                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
-            )
-            val pillWidth = view.measuredWidth.coerceAtLeast((180 * density).toInt())
-            val pillHeight = view.measuredHeight
-
-            val posX = targetRect.left.coerceIn((12 * density).toInt(), (screenWidth - pillWidth - (12 * density).toInt()).coerceAtLeast((12 * density).toInt()))
-            val posY = if (targetRect.top - pillHeight - (8 * density).toInt() > (48 * density).toInt()) {
-                targetRect.top - pillHeight - (8 * density).toInt()
-            } else {
-                targetRect.bottom + (8 * density).toInt()
-            }
-
-            val params = WindowManager.LayoutParams(
-                pillWidth,
-                pillHeight,
+            val params = (view.layoutParams as? WindowManager.LayoutParams) ?: WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT
             ).apply {
                 gravity = Gravity.TOP or Gravity.START
-                x = posX
-                y = posY
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
                     layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
                 }
+            }
+
+            fun measureAndComputePosition() {
+                view.measure(
+                    View.MeasureSpec.makeMeasureSpec(maxWidth, View.MeasureSpec.AT_MOST),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+                )
+                val pillWidth = view.measuredWidth.coerceAtLeast((180 * density).toInt())
+                val pillHeight = view.measuredHeight
+                params.width = pillWidth
+                params.height = pillHeight
+                params.x = targetRect.left.coerceIn(
+                    (12 * density).toInt(),
+                    (screenWidth - pillWidth - (12 * density).toInt()).coerceAtLeast((12 * density).toInt())
+                )
+                params.y = if (targetRect.top - pillHeight - (8 * density).toInt() > (48 * density).toInt()) {
+                    targetRect.top - pillHeight - (8 * density).toInt()
+                } else {
+                    targetRect.bottom + (8 * density).toInt()
+                }
+            }
+
+            measureAndComputePosition()
+
+            peekBtn.setOnClickListener {
+                if (!canPeekOriginal) return@setOnClickListener
+                showingOriginal = !showingOriginal
+                renderPillContent()
+                measureAndComputePosition()
+                try {
+                    windowManager.updateViewLayout(view, params)
+                } catch (_: Exception) {
+                    // Ignorar si ya fue cerrada
+                }
+            }
+
+            copyBtn.setOnClickListener {
+                val activeText = if (showingOriginal && canPeekOriginal) originalText else translatedText
+                ClipboardHelper.copySensitiveText(context, "Translation", activeText)
+                android.widget.Toast.makeText(context, "Copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
+            }
+
+            closeBtn.setOnClickListener {
+                removeSingleMessagePill()
+                onDismiss()
             }
 
             if (singlePillView == null) {

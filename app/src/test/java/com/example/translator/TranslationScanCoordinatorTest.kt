@@ -178,5 +178,86 @@ class TranslationScanCoordinatorTest {
         assertEquals(1, maxConcurrent)
         assertEquals(2, completed)
     }
+
+    @Test
+    fun tapMode_doesNotStartPeriodicLoopJob() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val coordinator = TranslationScanCoordinator(
+            scope = backgroundScope,
+            workerDispatcher = dispatcher,
+            postToMain = { it.invoke() },
+            isTranslatingActive = { true },
+            isTapMode = { true },
+            isScrollQuieted = { true },
+            uptimeMs = { 10_000L + testScheduler.currentTime },
+            isKeyboardVisible = { false },
+            onClearAllOverlays = {},
+            onClearMessageOverlays = {},
+            executeScan = { _, _, _, _ -> ScanOutcome.TRANSLATED_OR_EMPTY }
+        )
+
+        coordinator.startPeriodicLoop()
+        runCurrent()
+
+        assertFalse(coordinator.isLoopAlive)
+    }
+
+    @Test
+    fun periodicLoop_skipsStationaryOrBackgroundTicks_untilDirtyInTargetApp() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        var inTargetApp = true
+        var interactive = true
+        var scanCalls = 0
+
+        val coordinator = TranslationScanCoordinator(
+            scope = backgroundScope,
+            workerDispatcher = dispatcher,
+            postToMain = { it.invoke() },
+            isTranslatingActive = { true },
+            isTapMode = { false },
+            isScrollQuieted = { true },
+            uptimeMs = { 10_000L + testScheduler.currentTime },
+            isKeyboardVisible = { false },
+            onClearAllOverlays = {},
+            onClearMessageOverlays = {},
+            executeScan = { _, _, _, _ ->
+                scanCalls++
+                ScanOutcome.TRANSLATED_OR_EMPTY
+            },
+            isInTargetForeground = { inTargetApp },
+            isInteractive = { interactive }
+        )
+
+        coordinator.startPeriodicLoop()
+        advanceTimeBy(100L)
+        runCurrent()
+        assertEquals(1, scanCalls)
+
+        // Pantalla sin cambios: los siguientes ticks de 2s no vuelven a escanear.
+        advanceTimeBy(6_000L)
+        runCurrent()
+        assertEquals(1, scanCalls)
+
+        // Fuera de app objetivo o pantalla apagada: aunque se marque sucia, el bucle periódico no escanea.
+        inTargetApp = false
+        coordinator.markScreenDirty()
+        advanceTimeBy(2_500L)
+        runCurrent()
+        assertEquals(1, scanCalls)
+
+        interactive = false
+        inTargetApp = true
+        advanceTimeBy(2_500L)
+        runCurrent()
+        assertEquals(1, scanCalls)
+
+        // Al volver a pantalla interactiva en app objetivo, el estado sucio pendiente dispara un único escaneo.
+        interactive = true
+        advanceTimeBy(2_500L)
+        runCurrent()
+        assertEquals(2, scanCalls)
+
+        coordinator.stopAll()
+    }
 }
 

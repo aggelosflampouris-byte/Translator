@@ -92,10 +92,13 @@ object TranslationNotificationManager {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val title = if (isTranslating) "OverChat Active" else "OverChat Paused"
-        val subtitle = "$srcCode to $tgtCode"
-
-        val toggleActionTitle = if (isTranslating) "Pause" else "Resume"
+        val title = context.getString(
+            if (isTranslating) R.string.notif_title_active else R.string.notif_title_paused
+        )
+        val subtitle = context.getString(R.string.notif_subtitle_pair, srcCode, tgtCode)
+        val toggleActionTitle = context.getString(
+            if (isTranslating) R.string.notif_action_pause else R.string.notif_action_resume
+        )
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_translate_sphere)
@@ -104,12 +107,20 @@ object TranslationNotificationManager {
             .setContentIntent(contentPendingIntent)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .addAction(R.drawable.ic_translate_sphere, "Translate Screen", scanPendingIntent)
+            .addAction(
+                R.drawable.ic_translate_sphere,
+                context.getString(R.string.notif_action_translate_screen),
+                scanPendingIntent
+            )
             .addAction(R.drawable.ic_translate_sphere, toggleActionTitle, togglePendingIntent)
-            .addAction(R.drawable.ic_translate_sphere, "Stop", stopPendingIntent)
+            .addAction(
+                R.drawable.ic_translate_sphere,
+                context.getString(R.string.notif_action_stop),
+                stopPendingIntent
+            )
             .setStyle(
                 NotificationCompat.BigTextStyle()
-                    .bigText("$subtitle\nUse 'Translate Screen' to translate visible chat messages.")
+                    .bigText("$subtitle\n${context.getString(R.string.notif_big_text_hint)}")
             )
 
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager

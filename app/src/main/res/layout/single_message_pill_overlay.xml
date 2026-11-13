@@ -39,6 +39,22 @@
             android:layout_weight="1" />
 
         <TextView
+            android:id="@+id/pill_btn_peek"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_draft_badge"
+            android:paddingStart="9dp"
+            android:paddingEnd="9dp"
+            android:paddingTop="3dp"
+            android:paddingBottom="3dp"
+            android:text="Original"
+            android:textColor="#94A3B8"
+            android:textSize="11sp"
+            android:fontFamily="sans-serif-medium"
+            android:layout_marginEnd="6dp"
+            android:visibility="gone" />
+
+        <TextView
             android:id="@+id/pill_btn_copy"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"

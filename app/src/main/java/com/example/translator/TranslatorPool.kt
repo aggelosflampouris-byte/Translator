@@ -38,16 +38,35 @@ object TranslatorPool {
         readyPairs.add(pairKey(sourceLang, targetLang))
     }
 
+    /**
+     * Cierra los clientes de ML Kit que no correspondan a los pares activos para liberar memoria nativa.
+     */
+    @Synchronized
+    fun evictExcept(keepPairs: Set<Pair<String, String>>) {
+        val keepKeys = keepPairs.mapTo(mutableSetOf()) { pairKey(it.first, it.second) }
+        val iterator = translators.entries.iterator()
+        while (iterator.hasNext()) {
+            val (key, translator) = iterator.next()
+            if (!keepKeys.contains(key)) {
+                readyPairs.remove(key)
+                closeSafely(translator)
+                iterator.remove()
+            }
+        }
+    }
+
     @Synchronized
     fun releaseAll() {
         readyPairs.clear()
-        translators.values.forEach {
-            try {
-                it.close()
-            } catch (e: Exception) {
-                Log.w("TranslatorPool", "Error closing translator", e)
-            }
-        }
+        translators.values.forEach(::closeSafely)
         translators.clear()
+    }
+
+    private fun closeSafely(translator: Translator) {
+        try {
+            translator.close()
+        } catch (e: Exception) {
+            Log.w("TranslatorPool", "Error closing translator", e)
+        }
     }
 }

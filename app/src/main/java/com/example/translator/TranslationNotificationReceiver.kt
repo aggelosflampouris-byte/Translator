@@ -51,10 +51,9 @@ class TranslationNotificationReceiver : BroadcastReceiver() {
             TranslationNotificationManager.ACTION_STOP -> {
                 ServiceBridge.isTranslatingActive = false
                 ServiceBridge.isBubbleRunning = false
-                ServiceBridge.onBubbleAppearanceSync?.invoke(false)
+                ServiceBridge.onBubbleVisibilityChanged?.invoke(false)
                 ServiceBridge.onTranslationStateChanged?.invoke(false)
                 TranslationNotificationManager.cancelNotification(context)
-                context.stopService(Intent(context, FloatingBubbleService::class.java))
                 TranslationTileService.requestSync(context)
                 ServiceBridge.notifyUiStateChanged()
                 Toast.makeText(context, "OverChat Stopped", Toast.LENGTH_SHORT).show()

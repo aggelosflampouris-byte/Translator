@@ -36,10 +36,14 @@ class TranslationScanCoordinator(
     private val onClearAllOverlays: () -> Unit,
     private val onClearMessageOverlays: (clearDraftToo: Boolean) -> Unit,
     private val executeScan: suspend (overlayEpoch: Long, generation: Long, eventSourceToken: Any?, isManualRequest: Boolean) -> ScanOutcome,
-    private val onLoopTick: (isInitial: Boolean) -> Unit = {}
+    private val onLoopTick: (isInitial: Boolean) -> Unit = {},
+    private val isInTargetForeground: () -> Boolean = { true },
+    private val isInteractive: () -> Boolean = { true }
 ) {
     val scanGeneration = AtomicLong(0)
     val overlayEpoch = AtomicLong(0)
+    private val dirtyVersion = AtomicLong(1)
+    @Volatile private var screenNeedsRescan: Boolean = true
     @Volatile private var lastDrawnOverlayEpoch: Long = -1L
     @Volatile private var lastClearedOverlayEpoch: Long = -1L
 
@@ -92,31 +96,46 @@ class TranslationScanCoordinator(
     }
 
     /**
+     * Marca la pantalla actual como modificada para que el siguiente pulso del bucle o debounce vuelva a escanear.
+     */
+    fun markScreenDirty() {
+        dirtyVersion.incrementAndGet()
+        screenNeedsRescan = true
+    }
+
+    /**
      * Avanza la época tras entrar de nuevo a una app activa para aislar limpiezas antiguas en cola.
      */
     fun advanceForegroundEpoch(): Long {
         entryNullRootRetries = 0
+        markScreenDirty()
         return overlayEpoch.incrementAndGet()
     }
 
     fun startPeriodicLoop() {
         activeScanLoopJob?.cancel()
+        if (!isTranslatingActive() || isTapMode()) {
+            return
+        }
+        markScreenDirty()
         activeScanLoopJob = scope.launch(workerDispatcher) {
             delay(50L)
-            if (!isTranslatingActive()) return@launch
-            onLoopTick(true)
-            val nowInit = uptimeMs()
-            if (!isTapMode() && isScrollQuieted(nowInit)) {
-                runSingleFlightScan(eventSourceToken = null, isManualRequest = false, ignoreThrottle = true)
+            if (!isTranslatingActive() || isTapMode()) return@launch
+            if (isInteractive()) {
+                onLoopTick(true)
+                val nowInit = uptimeMs()
+                if (isScrollQuieted(nowInit)) {
+                    runSingleFlightScan(eventSourceToken = null, isManualRequest = false, ignoreThrottle = true)
+                }
             }
 
-            while (isTranslatingActive()) {
+            while (isTranslatingActive() && !isTapMode()) {
                 delay(2000L)
-                if (!isTranslatingActive()) break
+                if (!isTranslatingActive() || isTapMode()) break
+                if (!isInteractive() || !isInTargetForeground()) continue
                 onLoopTick(false)
-                if (isTapMode()) continue
                 val nowLoop = uptimeMs()
-                if (isScrollQuieted(nowLoop)) {
+                if (screenNeedsRescan && isScrollQuieted(nowLoop)) {
                     runSingleFlightScan(eventSourceToken = null, isManualRequest = false)
                 }
             }
@@ -151,6 +170,7 @@ class TranslationScanCoordinator(
         val now = uptimeMs()
         lastScrollTimestampMs = now
         isScreenScrolling = true
+        markScreenDirty()
         pendingScanWindowStartMs = 0L
         scanDebounceJob?.cancel()
         scrollSettleJob?.cancel()
@@ -176,6 +196,7 @@ class TranslationScanCoordinator(
 
     fun scheduleContentScan(delayMs: Long, eventSourceToken: Any? = null) {
         if (!isTranslatingActive() || isTapMode()) return
+        markScreenDirty()
 
         val now = uptimeMs()
         val waitForScrollMs = if (!isScrollQuieted(now)) {
@@ -220,6 +241,7 @@ class TranslationScanCoordinator(
 
     fun requestManualScan(delayBeforeAttemptMs: Long = 0L) {
         if (!isTranslatingActive()) return
+        markScreenDirty()
         manualScanJob?.cancel()
         manualScanJob = scope.launch(workerDispatcher) {
             if (delayBeforeAttemptMs > 0L) delay(delayBeforeAttemptMs)
@@ -245,11 +267,16 @@ class TranslationScanCoordinator(
             lastCompletedOrStartedScanMs = now
             val epoch = overlayEpoch.get()
             val generation = scanGeneration.get()
+            val dirtySnapshot = dirtyVersion.get()
             val outcome = executeScan(epoch, generation, eventSourceToken, isManualRequest)
             when (outcome) {
                 ScanOutcome.TRANSLATED_OR_EMPTY -> {
                     entryNullRootRetries = 0
                     entryRetryJob?.cancel()
+                    // Por qué: Solo limpia la bandera si no llegaron eventos nuevos durante el escaneo en curso.
+                    if (dirtyVersion.get() == dirtySnapshot) {
+                        screenNeedsRescan = false
+                    }
                 }
                 ScanOutcome.ABORT_NO_FG -> {
                     entryNullRootRetries = 0

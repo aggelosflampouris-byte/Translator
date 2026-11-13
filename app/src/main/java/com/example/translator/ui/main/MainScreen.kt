@@ -3,11 +3,13 @@ package com.example.translator.ui.main
 import android.Manifest
 import android.content.Context
 import android.content.Intent
-import android.content.SharedPreferences
-import android.content.pm.PackageManager
+import android.database.ContentObserver
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
+import android.view.accessibility.AccessibilityManager
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -15,6 +17,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -31,376 +34,172 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation3.runtime.NavKey
 import com.example.translator.AppDefaults
-import com.example.translator.AppUpdater
 import com.example.translator.BuildConfig
 import com.example.translator.ClipboardHelper
-import com.example.translator.FloatingBubbleService
-import com.example.translator.LearningStore
 import com.example.translator.R
-import com.example.translator.ServiceBridge
-import com.example.translator.TargetAppCatalog
 import com.example.translator.TargetApps
-import com.example.translator.TranslationNotificationManager
-import com.example.translator.TranslationPipeline
-import com.example.translator.TranslationTileService
-import com.example.translator.TranslatorApplication
-import java.io.File
-import java.util.Locale
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 /**
  * Pantalla principal de configuración y activación de OverChat.
  *
- * Por qué: Mantiene únicamente el estado de pantalla, la descarga de modelos y la barra inferior fija,
- * delegando tarjetas y diálogos a componentes especializados.
+ * Por qué: Observa flujos reactivos desde [MainViewModel] y delega tarjetas, diálogos y
+ * gestión de glosario en componentes especializados sin lógica de negocio en la capa Compose.
  */
 @Composable
 fun MainScreen(
     onItemClick: (NavKey) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    viewModel: MainViewModel = viewModel()
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val snackbarHostState = remember { SnackbarHostState() }
-    val coroutineScope = rememberCoroutineScope()
 
-    val appUpdater = remember { AppUpdater.get(context) }
-    var pendingUpdate by remember { mutableStateOf<AppUpdater.UpdateInfo?>(null) }
-    var isCheckingForUpdate by remember { mutableStateOf(false) }
-    var isDownloadingUpdate by remember { mutableStateOf(false) }
-    var downloadProgress by remember { mutableStateOf(0f) }
-    var downloadStatusText by remember { mutableStateOf("") }
-    var downloadedApkFile by remember { mutableStateOf<File?>(null) }
-    var downloadErrorMessage by remember { mutableStateOf<String?>(null) }
-    var downloadJob by remember { mutableStateOf<Job?>(null) }
+    val prefs by viewModel.preferences.collectAsStateWithLifecycle()
+    val runtime by viewModel.runtimeState.collectAsStateWithLifecycle()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
-    // Por qué: Verifica silenciosamente al iniciar si existe una versión más reciente en GitHub.
-    LaunchedEffect(Unit) {
-        val info = appUpdater.checkForUpdates()
-        if (info != null) {
-            pendingUpdate = info
-            downloadedApkFile = appUpdater.findReadyUpdateFile(info)
-        }
-    }
-
-    fun handleInstallResult(result: AppUpdater.InstallResult) {
-        when (result) {
-            is AppUpdater.InstallResult.Success -> pendingUpdate = null
-            is AppUpdater.InstallResult.PermissionRequired -> coroutineScope.launch {
-                snackbarHostState.showSnackbar("Enable 'Allow from this source' to install update")
-            }
-            is AppUpdater.InstallResult.Error -> {
-                downloadedApkFile = null
-                downloadErrorMessage = result.message
-            }
-            is AppUpdater.InstallResult.FileNotFound -> {
-                downloadedApkFile = null
-                downloadErrorMessage = "The downloaded update file is missing."
-            }
-        }
-    }
-
-    fun startUpdateDownload(info: AppUpdater.UpdateInfo) {
-        downloadErrorMessage = null
-        isDownloadingUpdate = true
-        downloadProgress = 0f
-        downloadStatusText = "Connecting..."
-        val destination = appUpdater.getUpdateFile(info.version)
-        downloadJob = coroutineScope.launch {
-            val success = appUpdater.downloadApk(
-                apkUrl = info.apkUrl,
-                destinationFile = destination,
-                expectedSize = info.apkSize,
-                sha256Url = info.sha256Url,
-                expectedSha256 = info.expectedSha256
-            ) { bytesDownloaded, totalBytes ->
-                downloadProgress = if (totalBytes > 0) bytesDownloaded.toFloat() / totalBytes.toFloat() else 0f
-                val mbDownloaded = bytesDownloaded / (1024f * 1024f)
-                val mbTotal = totalBytes / (1024f * 1024f)
-                val percent = if (totalBytes > 0) (bytesDownloaded * 100 / totalBytes).toInt() else 0
-                downloadStatusText = String.format(Locale.US, "%.1f MB / %.1f MB (%d%%)", mbDownloaded, mbTotal, percent)
-            }
-            isDownloadingUpdate = false
-            if (success) {
-                downloadedApkFile = destination
-                handleInstallResult(appUpdater.installApk(context, destination))
-            } else {
-                downloadErrorMessage = "Download failed. Check your internet connection."
-            }
-        }
-    }
-
-    pendingUpdate?.let { info ->
-        AppUpdateDialog(
-            info = info,
-            isDownloading = isDownloadingUpdate,
-            downloadProgress = downloadProgress,
-            downloadStatusText = downloadStatusText,
-            downloadedApkFile = downloadedApkFile,
-            downloadErrorMessage = downloadErrorMessage,
-            onDownloadOrRetry = { startUpdateDownload(info) },
-            onInstall = { file -> handleInstallResult(appUpdater.installApk(context, file)) },
-            onCancelDownload = {
-                downloadJob?.cancel()
-                isDownloadingUpdate = false
-                downloadStatusText = ""
-            },
-            onOpenBrowser = { appUpdater.openUpdatePage(context, info.htmlUrl) },
-            onDismiss = {
-                pendingUpdate = null
-                downloadErrorMessage = null
-            }
-        )
-    }
-
-    val prefs = remember { context.getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE) }
-    val availableLanguages = AppDefaults.AVAILABLE_LANGUAGES
-    var sourceLanguage by remember {
-        val saved = prefs.getString(AppDefaults.KEY_SOURCE_LANGUAGE, AppDefaults.SOURCE_LANGUAGE) ?: AppDefaults.SOURCE_LANGUAGE
-        mutableStateOf(if (availableLanguages.contains(saved)) saved else AppDefaults.SOURCE_LANGUAGE)
-    }
-    var targetLanguage by remember {
-        val saved = prefs.getString(AppDefaults.KEY_TARGET_LANGUAGE, AppDefaults.TARGET_LANGUAGE) ?: AppDefaults.TARGET_LANGUAGE
-        mutableStateOf(if (availableLanguages.contains(saved)) saved else AppDefaults.TARGET_LANGUAGE)
-    }
-    var keyboardTranslatorEnabled by remember {
-        mutableStateOf(prefs.getBoolean(AppDefaults.KEY_KEYBOARD_ENABLED, true))
-    }
-    var translationMode by remember {
-        mutableStateOf(prefs.getString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_ALL) ?: AppDefaults.MODE_ALL)
-    }
-    var glossaryEnabled by remember {
-        mutableStateOf(prefs.getBoolean(AppDefaults.KEY_AI_ENABLED, true))
-    }
-
-    val learningStore = remember { LearningStore.get(context) }
-    var learningEnabled by remember {
-        mutableStateOf(prefs.getBoolean(AppDefaults.KEY_LEARNING_ENABLED, true))
-    }
-    var learningStats by remember { mutableStateOf(learningStore.stats()) }
+    var showGlossaryDialog by remember { mutableStateOf(false) }
     var showResetLearningDialog by remember { mutableStateOf(false) }
     var showDiagnosticsDialog by remember { mutableStateOf(false) }
-    var controlInterface by remember {
-        mutableStateOf(prefs.getString(AppDefaults.KEY_CONTROL_INTERFACE, AppDefaults.INTERFACE_NOTIFICATION) ?: AppDefaults.INTERFACE_NOTIFICATION)
-    }
-    var enabledPackages by remember {
-        mutableStateOf(TargetAppCatalog.getEnabledPackages(prefs, context.packageName))
-    }
-    var overlayTheme by remember {
-        mutableStateOf(
-            prefs.getString(AppDefaults.KEY_OVERLAY_THEME, AppDefaults.OVERLAY_THEME_AUTO)
-                ?: AppDefaults.OVERLAY_THEME_AUTO
-        )
-    }
 
-    // Por qué: Sincroniza los cambios hechos en pantallas secundarias (como TargetAppsScreen).
-    DisposableEffect(prefs) {
-        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-            when (key) {
-                AppDefaults.KEY_ENABLED_PACKAGES -> {
-                    enabledPackages = TargetAppCatalog.getEnabledPackages(prefs, context.packageName)
-                }
-                AppDefaults.KEY_OVERLAY_THEME -> {
-                    overlayTheme = prefs.getString(AppDefaults.KEY_OVERLAY_THEME, AppDefaults.OVERLAY_THEME_AUTO)
-                        ?: AppDefaults.OVERLAY_THEME_AUTO
-                }
-            }
-        }
-        prefs.registerOnSharedPreferenceChangeListener(listener)
-        onDispose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
-    }
-
-    var isNotificationPermissionGranted by remember {
-        mutableStateOf(
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                ContextCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.POST_NOTIFICATIONS
-                ) == PackageManager.PERMISSION_GRANTED
-            } else {
-                true
-            }
-        )
-    }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        isNotificationPermissionGranted = granted
+        viewModel.onNotificationPermissionResult(granted)
     }
 
-    var modelStatus by remember { mutableStateOf("Checking language models...") }
-
-    // Por qué: Descarga los modelos en ambos sentidos (pantalla y borrador de teclado) para operar 100% offline.
-    fun ensureModelsDownloaded(source: String, target: String) {
-        modelStatus = "Downloading language models..."
-        TranslationPipeline.ensureModelsDownloaded(
-            source = source,
-            target = target,
-            onSuccess = {
-                modelStatus = "Language models ready (offline)"
-            },
-            onError = {
-                modelStatus = "Model download error. Check connection."
+    LaunchedEffect(viewModel) {
+        viewModel.events.collect { event ->
+            when (event) {
+                is MainUiEvent.ShowToast -> {
+                    Toast.makeText(context, event.message, Toast.LENGTH_SHORT).show()
+                }
+                is MainUiEvent.ShowSnackbar -> {
+                    snackbarHostState.showSnackbar(event.message)
+                }
+                is MainUiEvent.ShowInstallPermissionSnackbar -> {
+                    val result = snackbarHostState.showSnackbar(
+                        message = "Allow unknown apps or open in browser to install update",
+                        actionLabel = if (event.htmlUrl != null) "Open Browser" else null,
+                        duration = SnackbarDuration.Long
+                    )
+                    if (result == SnackbarResult.ActionPerformed) {
+                        event.htmlUrl?.let(viewModel::openUpdateInBrowser)
+                    }
+                }
             }
-        )
-    }
-
-    LaunchedEffect(sourceLanguage, targetLanguage) {
-        if (!prefs.contains(AppDefaults.KEY_SOURCE_LANGUAGE)) {
-            prefs.edit().putString(AppDefaults.KEY_SOURCE_LANGUAGE, sourceLanguage).apply()
         }
-        if (!prefs.contains(AppDefaults.KEY_TARGET_LANGUAGE)) {
-            prefs.edit().putString(AppDefaults.KEY_TARGET_LANGUAGE, targetLanguage).apply()
-        }
-        ensureModelsDownloaded(sourceLanguage, targetLanguage)
-    }
-
-    var canDrawOverlays by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
-    var isAccessibilityEnabled by remember { mutableStateOf(checkAccessibilityEnabled(context)) }
-
-    val crashPrefs = remember {
-        context.getSharedPreferences(TranslatorApplication.CRASH_PREFS, Context.MODE_PRIVATE)
-    }
-    var crashLog by remember {
-        mutableStateOf(crashPrefs.getString(TranslatorApplication.KEY_LAST_CRASH, null))
-    }
-
-    crashLog?.let { currentCrashLog ->
-        CrashReportDialog(
-            crashLog = currentCrashLog,
-            onCopyLog = {
-                ClipboardHelper.copySensitiveText(context, "Crash Log", currentCrashLog)
-                Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
-            },
-            onDismiss = {
-                crashPrefs.edit().remove(TranslatorApplication.KEY_LAST_CRASH).apply()
-                crashLog = null
-            }
-        )
     }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                canDrawOverlays = Settings.canDrawOverlays(context)
-                isAccessibilityEnabled = checkAccessibilityEnabled(context)
-                enabledPackages = TargetAppCatalog.getEnabledPackages(prefs, context.packageName)
-                learningStats = learningStore.stats()
-                ServiceBridge.notifyUiStateChanged()
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    isNotificationPermissionGranted = ContextCompat.checkSelfPermission(
-                        context,
-                        Manifest.permission.POST_NOTIFICATIONS
-                    ) == PackageManager.PERMISSION_GRANTED
-                }
+                viewModel.onResumeRefreshed()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    LaunchedEffect(isAccessibilityEnabled) {
-        if (!isAccessibilityEnabled) {
-            while (true) {
-                delay(500)
-                if (checkAccessibilityEnabled(context)) {
-                    isAccessibilityEnabled = true
-                    break
-                }
+    DisposableEffect(context) {
+        val accessibilityManager =
+            context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager
+        val stateListener = AccessibilityManager.AccessibilityStateChangeListener {
+            viewModel.onAccessibilityStateChanged()
+        }
+        val contentObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                viewModel.onAccessibilityStateChanged()
             }
         }
-    }
-
-    val isNotificationRequired = controlInterface == AppDefaults.INTERFACE_NOTIFICATION && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
-    val allPermissionsGranted = canDrawOverlays && isAccessibilityEnabled && (!isNotificationRequired || isNotificationPermissionGranted)
-    var isServiceActive by remember { mutableStateOf(ServiceBridge.isAnyServiceActive()) }
-
-    DisposableEffect(Unit) {
-        ServiceBridge.onUiStateChanged = {
-            isServiceActive = ServiceBridge.isAnyServiceActive()
-        }
+        accessibilityManager?.addAccessibilityStateChangeListener(stateListener)
+        context.contentResolver.registerContentObserver(
+            Settings.Secure.getUriFor(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES),
+            false,
+            contentObserver
+        )
         onDispose {
-            ServiceBridge.onUiStateChanged = null
+            accessibilityManager?.removeAccessibilityStateChangeListener(stateListener)
+            context.contentResolver.unregisterContentObserver(contentObserver)
         }
     }
 
-    // Por qué: El botón principal permanece fijo en la barra inferior para iniciar o detener sin desplazarse.
+    uiState.crashLog?.let { currentCrashLog ->
+        CrashReportDialog(
+            crashLog = currentCrashLog,
+            onCopyLog = {
+                ClipboardHelper.copySensitiveText(context, "Crash Log", currentCrashLog)
+                Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+            },
+            onDismiss = viewModel::dismissCrashLog
+        )
+    }
+
+    uiState.pendingUpdate?.let { info ->
+        AppUpdateDialog(
+            info = info,
+            isDownloading = uiState.isDownloadingUpdate,
+            downloadProgress = uiState.downloadProgress,
+            downloadStatusText = uiState.downloadStatusText,
+            downloadedApkFile = uiState.downloadedApkFile,
+            downloadErrorMessage = uiState.downloadErrorMessage,
+            onDownloadOrRetry = { viewModel.downloadUpdate(info) },
+            onInstall = viewModel::installUpdateFile,
+            onCancelDownload = viewModel::cancelUpdateDownload,
+            onOpenBrowser = { viewModel.openUpdateInBrowser(info.htmlUrl) },
+            onDismiss = viewModel::dismissUpdateDialog
+        )
+    }
+
+    val isNotificationRequired = prefs.controlInterface == AppDefaults.INTERFACE_NOTIFICATION &&
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+    val allPermissionsGranted = uiState.isAccessibilityEnabled &&
+        (!isNotificationRequired || uiState.isNotificationPermissionGranted)
+    val isServiceActive = runtime.isAnyServiceActive
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             MainActionBottomBar(
                 allPermissionsGranted = allPermissionsGranted,
                 isServiceActive = isServiceActive,
-                controlInterface = controlInterface,
-                onStart = {
-                    ensureModelsDownloaded(sourceLanguage, targetLanguage)
-                    if (controlInterface == AppDefaults.INTERFACE_NOTIFICATION) {
-                        ServiceBridge.isNotificationActive = true
-                        if (ServiceBridge.isBubbleRunning) {
-                            context.stopService(Intent(context, FloatingBubbleService::class.java))
-                            ServiceBridge.isBubbleRunning = false
-                        }
-                        ServiceBridge.isTranslatingActive = true
-                        ServiceBridge.onTranslationStateChanged?.invoke(true)
-                        TranslationNotificationManager.showNotification(context, isTranslating = true)
-                        TranslationTileService.requestSync(context)
-                        isServiceActive = true
-                        Toast.makeText(context, "OverChat active in notification drawer", Toast.LENGTH_SHORT).show()
-                    } else {
-                        TranslationNotificationManager.cancelNotification(context)
-                        ServiceBridge.isTranslatingActive = false
-                        ServiceBridge.isBubbleRunning = true
-                        context.startService(Intent(context, FloatingBubbleService::class.java))
-                        TranslationTileService.requestSync(context)
-                        ServiceBridge.notifyUiStateChanged()
-                        isServiceActive = true
-                        Toast.makeText(context, "Floating bubble opened", Toast.LENGTH_SHORT).show()
-                    }
-                },
-                onStop = {
-                    ServiceBridge.isNotificationActive = false
-                    context.stopService(Intent(context, FloatingBubbleService::class.java))
-                    TranslationNotificationManager.cancelNotification(context)
-                    ServiceBridge.isBubbleRunning = false
-                    ServiceBridge.isTranslatingActive = false
-                    ServiceBridge.onTranslationStateChanged?.invoke(false)
-                    TranslationTileService.requestSync(context)
-                    ServiceBridge.notifyUiStateChanged()
-                    isServiceActive = false
-                    Toast.makeText(context, "OverChat stopped", Toast.LENGTH_SHORT).show()
-                }
+                controlInterface = prefs.controlInterface,
+                onStart = viewModel::startService,
+                onStop = viewModel::stopService
             )
         }
     ) { innerPadding ->
         val scrollState = rememberScrollState()
-        val settingsEnabled = !isServiceActive
 
         Column(
             modifier = modifier
@@ -413,109 +212,76 @@ fun MainScreen(
         ) {
             MainScreenHeader(
                 isServiceActive = isServiceActive,
-                isCheckingForUpdate = isCheckingForUpdate,
-                onOpenDiagnostics = { showDiagnosticsDialog = true },
-                onCheckUpdates = {
-                    if (!isCheckingForUpdate && !isDownloadingUpdate) {
-                        isCheckingForUpdate = true
-                        coroutineScope.launch {
-                            val info = appUpdater.checkForUpdates()
-                            isCheckingForUpdate = false
-                            if (info != null) {
-                                pendingUpdate = info
-                                downloadedApkFile = appUpdater.findReadyUpdateFile(info)
-                            } else {
-                                snackbarHostState.showSnackbar("You're on the latest version (v${BuildConfig.VERSION_NAME})")
-                            }
-                        }
-                    }
-                }
+                isCheckingForUpdate = uiState.isCheckingForUpdate,
+                onCheckUpdates = { viewModel.checkForUpdates(manual = true) }
             )
 
             if (showDiagnosticsDialog) {
                 ScanDiagnosticsDialog(
-                    sourceLanguage = sourceLanguage,
-                    targetLanguage = targetLanguage,
-                    translationMode = translationMode,
-                    enabledPackages = enabledPackages,
+                    sourceLanguage = prefs.sourceLanguage,
+                    targetLanguage = prefs.targetLanguage,
+                    translationMode = prefs.translationMode,
+                    enabledPackages = prefs.enabledPackages,
                     onCopied = {
                         showDiagnosticsDialog = false
-                        coroutineScope.launch { snackbarHostState.showSnackbar("Diagnostics copied") }
+                        Toast.makeText(context, "Diagnostics copied", Toast.LENGTH_SHORT).show()
                     },
                     onDismiss = { showDiagnosticsDialog = false }
                 )
             }
 
             TranslationSettingsCard(
-                sourceLanguage = sourceLanguage,
-                targetLanguage = targetLanguage,
-                availableLanguages = availableLanguages,
-                modelStatus = modelStatus,
-                translationMode = translationMode,
-                glossaryEnabled = glossaryEnabled,
-                settingsEnabled = settingsEnabled,
-                onSourceSelected = { selected ->
-                    if (selected == targetLanguage) {
-                        targetLanguage = sourceLanguage
-                        prefs.edit().putString(AppDefaults.KEY_TARGET_LANGUAGE, targetLanguage).apply()
-                    }
-                    sourceLanguage = selected
-                    prefs.edit().putString(AppDefaults.KEY_SOURCE_LANGUAGE, selected).apply()
-                },
-                onTargetSelected = { selected ->
-                    if (selected == sourceLanguage) {
-                        sourceLanguage = targetLanguage
-                        prefs.edit().putString(AppDefaults.KEY_SOURCE_LANGUAGE, sourceLanguage).apply()
-                    }
-                    targetLanguage = selected
-                    prefs.edit().putString(AppDefaults.KEY_TARGET_LANGUAGE, selected).apply()
-                },
-                onSwapLanguages = {
-                    val temp = sourceLanguage
-                    sourceLanguage = targetLanguage
-                    targetLanguage = temp
-                    prefs.edit()
-                        .putString(AppDefaults.KEY_SOURCE_LANGUAGE, sourceLanguage)
-                        .putString(AppDefaults.KEY_TARGET_LANGUAGE, targetLanguage)
-                        .apply()
-                },
-                onTranslationModeChanged = { mode ->
-                    translationMode = mode
-                    prefs.edit().putString(AppDefaults.KEY_TRANSLATE_MODE, mode).apply()
-                },
-                onGlossaryChanged = { isChecked ->
-                    glossaryEnabled = isChecked
-                    prefs.edit().putBoolean(AppDefaults.KEY_AI_ENABLED, isChecked).apply()
-                }
+                sourceLanguage = prefs.sourceLanguage,
+                targetLanguage = prefs.targetLanguage,
+                availableLanguages = AppDefaults.AVAILABLE_LANGUAGES,
+                modelStatus = uiState.modelStatus,
+                translationMode = prefs.translationMode,
+                glossaryEnabled = prefs.glossaryEnabled,
+                settingsEnabled = true,
+                onSourceSelected = viewModel::setSourceLanguage,
+                onTargetSelected = viewModel::setTargetLanguage,
+                onSwapLanguages = viewModel::swapLanguages,
+                onTranslationModeChanged = viewModel::setTranslationMode,
+                onGlossaryChanged = viewModel::setGlossaryEnabled
             )
 
             TypingAndControlsCard(
-                keyboardTranslatorEnabled = keyboardTranslatorEnabled,
-                learningEnabled = learningEnabled,
-                learningStats = learningStats,
-                controlInterface = controlInterface,
-                settingsEnabled = settingsEnabled,
-                onKeyboardTranslatorChanged = { isChecked ->
-                    keyboardTranslatorEnabled = isChecked
-                    prefs.edit().putBoolean(AppDefaults.KEY_KEYBOARD_ENABLED, isChecked).apply()
-                },
-                onLearningChanged = { isChecked ->
-                    learningEnabled = isChecked
-                    prefs.edit().putBoolean(AppDefaults.KEY_LEARNING_ENABLED, isChecked).apply()
+                keyboardTranslatorEnabled = prefs.keyboardTranslatorEnabled,
+                learningEnabled = prefs.learningEnabled,
+                learningStats = uiState.learningStats,
+                controlInterface = prefs.controlInterface,
+                autoCheckUpdates = prefs.autoCheckUpdates,
+                idleAutoPauseMinutes = prefs.idleAutoPauseMinutes,
+                settingsEnabled = true,
+                onKeyboardTranslatorChanged = viewModel::setKeyboardTranslatorEnabled,
+                onLearningChanged = viewModel::setLearningEnabled,
+                onOpenGlossary = {
+                    viewModel.refreshGlossarySnapshot()
+                    showGlossaryDialog = true
                 },
                 onRequestResetLearning = { showResetLearningDialog = true },
-                onControlInterfaceChanged = { selected ->
-                    controlInterface = selected
-                    prefs.edit().putString(AppDefaults.KEY_CONTROL_INTERFACE, selected).apply()
-                }
+                onControlInterfaceChanged = viewModel::setControlInterface,
+                onAutoCheckUpdatesChanged = viewModel::setAutoCheckUpdates,
+                onIdleAutoPauseChanged = viewModel::setIdleAutoPauseEnabled
             )
+
+            if (showGlossaryDialog) {
+                GlossaryDialog(
+                    sourceLanguage = prefs.sourceLanguage,
+                    targetLanguage = prefs.targetLanguage,
+                    corrections = uiState.glossaryCorrections,
+                    memories = uiState.glossaryMemories,
+                    onAddCorrection = viewModel::addGlossaryCorrection,
+                    onDeleteCorrection = viewModel::deleteGlossaryCorrection,
+                    onDeleteMemory = viewModel::deleteGlossaryMemory,
+                    onDismiss = { showGlossaryDialog = false }
+                )
+            }
 
             if (showResetLearningDialog) {
                 ResetLearningDialog(
                     onConfirm = {
-                        learningStore.clearAll()
-                        ServiceBridge.onLearningDataCleared?.invoke()
-                        learningStats = learningStore.stats()
+                        viewModel.resetLearning()
                         showResetLearningDialog = false
                     },
                     onDismiss = { showResetLearningDialog = false }
@@ -523,28 +289,18 @@ fun MainScreen(
             }
 
             SupportedAppsAndThemeCard(
-                enabledPackages = enabledPackages,
-                overlayTheme = overlayTheme,
-                settingsEnabled = settingsEnabled,
+                enabledPackages = prefs.enabledPackages,
+                overlayTheme = prefs.overlayTheme,
+                settingsEnabled = true,
                 onManageApps = { onItemClick(TargetApps) },
-                onOverlayThemeChanged = { value ->
-                    overlayTheme = value
-                    prefs.edit().putString(AppDefaults.KEY_OVERLAY_THEME, value).apply()
-                }
+                onOverlayThemeChanged = viewModel::setOverlayTheme
             )
 
             SystemPermissionsCard(
-                canDrawOverlays = canDrawOverlays,
-                isAccessibilityEnabled = isAccessibilityEnabled,
-                isNotificationPermissionGranted = isNotificationPermissionGranted,
+                isAccessibilityEnabled = uiState.isAccessibilityEnabled,
+                isNotificationRequired = isNotificationRequired,
+                isNotificationPermissionGranted = uiState.isNotificationPermissionGranted,
                 allPermissionsGranted = allPermissionsGranted,
-                onRequestOverlayPermission = {
-                    val intent = Intent(
-                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                        Uri.parse("package:${context.packageName}")
-                    )
-                    context.startActivity(intent)
-                },
                 onRequestAccessibilityPermission = {
                     context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                 },
@@ -559,6 +315,22 @@ fun MainScreen(
                     context.startActivity(intent)
                 }
             )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(
+                    onClick = { showDiagnosticsDialog = true },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.perm_diagnostics),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
     }
 }
@@ -567,7 +339,6 @@ fun MainScreen(
 private fun MainScreenHeader(
     isServiceActive: Boolean,
     isCheckingForUpdate: Boolean,
-    onOpenDiagnostics: () -> Unit,
     onCheckUpdates: () -> Unit
 ) {
     Row(
@@ -581,7 +352,7 @@ private fun MainScreenHeader(
         ) {
             Image(
                 painter = painterResource(id = R.drawable.ic_overchat_logo),
-                contentDescription = "OverChat Logo",
+                contentDescription = stringResource(R.string.app_name),
                 modifier = Modifier
                     .size(42.dp)
                     .clip(RoundedCornerShape(10.dp))
@@ -590,7 +361,7 @@ private fun MainScreenHeader(
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "OverChat",
+                        text = stringResource(R.string.app_name),
                         style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onBackground
                     )
@@ -598,19 +369,19 @@ private fun MainScreenHeader(
                         Spacer(modifier = Modifier.width(8.dp))
                         Surface(
                             shape = RoundedCornerShape(6.dp),
-                            color = MaterialTheme.colorScheme.secondaryContainer
+                            color = MaterialTheme.colorScheme.primaryContainer
                         ) {
                             Text(
-                                text = "Locked",
+                                text = stringResource(R.string.status_active),
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
                         }
                     }
                 }
                 Text(
-                    text = "Real-Time Chat Translator",
+                    text = stringResource(R.string.app_subtitle),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -619,34 +390,17 @@ private fun MainScreenHeader(
             }
         }
 
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            modifier = Modifier.clickable(onClick = onCheckUpdates)
         ) {
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                modifier = Modifier.clickable(onClick = onOpenDiagnostics)
-            ) {
-                Text(
-                    text = "Debug",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
-                )
-            }
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                modifier = Modifier.clickable(onClick = onCheckUpdates)
-            ) {
-                Text(
-                    text = if (isCheckingForUpdate) "Checking..." else "v${BuildConfig.VERSION_NAME}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                )
-            }
+            Text(
+                text = if (isCheckingForUpdate) "Checking..." else "v${BuildConfig.VERSION_NAME}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+            )
         }
     }
 }
@@ -680,7 +434,7 @@ private fun MainActionBottomBar(
                         onClick = {}
                     ) {
                         Text(
-                            text = "Grant Required Permissions Above",
+                            text = stringResource(R.string.action_grant_permissions),
                             style = MaterialTheme.typography.labelLarge,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -696,7 +450,7 @@ private fun MainActionBottomBar(
                         onClick = onStop
                     ) {
                         Text(
-                            text = "Stop OverChat",
+                            text = stringResource(R.string.action_stop_service),
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.error,
                             maxLines = 1,
@@ -712,12 +466,13 @@ private fun MainActionBottomBar(
                         shape = RoundedCornerShape(12.dp),
                         onClick = onStart
                     ) {
+                        val actionRes = when (controlInterface) {
+                            AppDefaults.INTERFACE_NOTIFICATION -> R.string.action_start_notification
+                            AppDefaults.INTERFACE_BUBBLE -> R.string.action_start_sphere
+                            else -> R.string.action_start_translation
+                        }
                         Text(
-                            text = if (controlInterface == AppDefaults.INTERFACE_NOTIFICATION) {
-                                "Start Notification Menu"
-                            } else {
-                                "Start Floating Bubble"
-                            },
+                            text = stringResource(actionRes),
                             style = MaterialTheme.typography.labelLarge,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis

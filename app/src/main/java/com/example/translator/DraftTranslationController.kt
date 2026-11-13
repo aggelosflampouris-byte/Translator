@@ -98,6 +98,9 @@ class DraftTranslationController(
     @Volatile private var lastInsertedText: String? = null
     @Volatile private var lastInsertedAtMs: Long = 0L
     @Volatile private var lastInsertedObserved: Boolean = false
+    @Volatile private var lastReplacedOriginalText: String? = null
+    @Volatile private var undoBannerActive: Boolean = false
+    private var undoBannerDismissJob: Job? = null
     @Volatile private var dismissedDraftText: String? = null
     @Volatile private var lastRenderedDraftSource: String? = null
     @Volatile private var lastRenderedDraftTop: Int = 0
@@ -265,7 +268,7 @@ class DraftTranslationController(
         }
 
         val rawText = try { node.text?.toString()?.trim() ?: "" } catch (_: Exception) { "" }
-        val hintText = try { node.hintText?.toString()?.trim() ?: "" } catch (_: Exception) { "" }
+        val hintText = safeHintText(node) ?: ""
 
         val activeInserted = lastInsertedText
         if (activeInserted != null) {
@@ -275,7 +278,9 @@ class DraftTranslationController(
                 pendingTypingTargetLang = null
                 pendingTypingWindowStartMs = 0L
                 diagnostics.setDraftDiag("skip=inserted")
-                postToMain(null) { overlayManager.removeDraftOverlay() }
+                if (!undoBannerActive) {
+                    postToMain(null) { overlayManager.removeDraftOverlay() }
+                }
                 return
             }
             val elapsedSinceInsert = SystemClock.uptimeMillis() - lastInsertedAtMs
@@ -285,10 +290,12 @@ class DraftTranslationController(
             }
             lastInsertedText = null
             lastInsertedObserved = false
+            dismissUndoBanner()
         }
 
         if (isPlaceholderText(rawText, hintText, node)) {
             typingJob?.cancel()
+            dismissUndoBanner()
             pendingTypingSource = null
             pendingTypingTargetLang = null
             pendingTypingWindowStartMs = 0L
@@ -301,7 +308,9 @@ class DraftTranslationController(
 
         if (rawText == dismissedDraftText) {
             diagnostics.setDraftDiag("skip=dismissed")
-            postToMain(null) { overlayManager.removeDraftOverlay() }
+            if (!undoBannerActive) {
+                postToMain(null) { overlayManager.removeDraftOverlay() }
+            }
             return
         }
         dismissedDraftText = null
@@ -355,7 +364,7 @@ class DraftTranslationController(
             val refreshedEventNode = try { eventSource?.takeIf { it.isEditable && it.refresh() } } catch (_: Exception) { null }
             val liveNode = findCurrentEditableNode() ?: refreshedPassedNode ?: refreshedEventNode ?: node
             val liveText = try { liveNode.text?.toString()?.trim() } catch (_: Exception) { null } ?: rawText
-            val liveHint = try { liveNode.hintText?.toString()?.trim() } catch (_: Exception) { null } ?: hintText
+            val liveHint = safeHintText(liveNode) ?: hintText
             pendingTypingSource = null
             pendingTypingTargetLang = null
 
@@ -427,7 +436,12 @@ class DraftTranslationController(
                                     createdAtMillis = SystemClock.uptimeMillis()
                                 )
                                 scope.launch(workerDispatcher) {
-                                    insertTranslatedTextIntoInput(finalTranslatedDraft, liveNode)
+                                    insertTranslatedTextIntoInput(
+                                        text = finalTranslatedDraft,
+                                        fallbackNode = liveNode,
+                                        originalSourceText = liveText,
+                                        fallbackInputRect = freshRect
+                                    )
                                 }
                             },
                             onDismissClicked = {
@@ -477,6 +491,10 @@ class DraftTranslationController(
 
     fun resetOnDepartureOrStop() {
         typingJob?.cancel()
+        undoBannerDismissJob?.cancel()
+        undoBannerDismissJob = null
+        undoBannerActive = false
+        lastReplacedOriginalText = null
         cachedEditableNode = null
         cachedEditablePkg = null
         pendingTypingSource = null
@@ -492,11 +510,24 @@ class DraftTranslationController(
 
     fun cancelTypingAndHideDraft(diagReason: String? = null) {
         typingJob?.cancel()
+        undoBannerDismissJob?.cancel()
+        undoBannerDismissJob = null
+        undoBannerActive = false
+        lastReplacedOriginalText = null
         pendingTypingSource = null
         pendingTypingTargetLang = null
         pendingTypingWindowStartMs = 0L
         if (diagReason != null) diagnostics.setDraftDiag(diagReason)
         postToMain(null) { overlayManager.removeDraftOverlay() }
+    }
+
+    private fun safeHintText(node: AccessibilityNodeInfo?): String? {
+        if (node == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return null
+        return try {
+            node.hintText?.toString()?.trim()
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun isPlaceholderText(
@@ -566,7 +597,7 @@ class DraftTranslationController(
 
     private fun observeInputForLearning(inputNode: AccessibilityNodeInfo, isLearningEnabled: Boolean) {
         val rawText = try { inputNode.text?.toString()?.trim() ?: "" } catch (_: Exception) { "" }
-        val hintText = try { inputNode.hintText?.toString()?.trim() ?: "" } catch (_: Exception) { "" }
+        val hintText = safeHintText(inputNode) ?: ""
         val isEmptyField = rawText.isEmpty() ||
             rawText.equals(hintText, ignoreCase = true) ||
             PLACEHOLDER_TOKENS.contains(rawText.lowercase())
@@ -601,46 +632,55 @@ class DraftTranslationController(
         }
     }
 
-    private suspend fun insertTranslatedTextIntoInput(text: String, fallbackNode: AccessibilityNodeInfo? = null) {
+    private suspend fun insertTranslatedTextIntoInput(
+        text: String,
+        fallbackNode: AccessibilityNodeInfo? = null,
+        originalSourceText: String? = null,
+        fallbackInputRect: Rect? = null
+    ) {
         try {
             val node = findCurrentEditableNode() ?: fallbackNode
             if (node != null) {
                 typingJob?.cancel()
+                undoBannerDismissJob?.cancel()
+                undoBannerActive = false
+                lastReplacedOriginalText = originalSourceText
                 lastInsertedObserved = false
                 lastInsertedAtMs = SystemClock.uptimeMillis()
                 lastInsertedText = text
-                val arguments = Bundle().apply {
-                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+                val nodeRect = Rect().apply {
+                    try { node.getBoundsInScreen(this) } catch (_: Exception) {}
                 }
-                val directSuccess = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
-                val pastedSuccess = if (!directSuccess) {
-                    withContext(Dispatchers.Main) {
-                        ClipboardHelper.copySensitiveText(service, "Translated Text", text)
-                    }
-                    val allRange = Bundle().apply {
-                        val existingLen = node.text?.length ?: 0
-                        putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, 0)
-                        putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, existingLen)
-                    }
-                    node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, allRange)
-                    node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
-                } else {
-                    false
-                }
+                val anchorRect = if (nodeRect.top > 0) nodeRect else (fallbackInputRect ?: Rect())
+                val inserted = applyTextToEditableNode(node, text)
 
-                if (directSuccess || pastedSuccess) {
-                    val selArgs = Bundle().apply {
-                        putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, text.length)
-                        putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, text.length)
-                    }
-                    node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, selArgs)
-                    node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-                    postToMain(null) {
-                        overlayManager.removeDraftOverlay()
-                        Toast.makeText(service, "Replaced in chat", Toast.LENGTH_SHORT).show()
+                if (inserted) {
+                    if (!originalSourceText.isNullOrBlank()) {
+                        undoBannerActive = true
+                        postToMain(null) {
+                            overlayManager.showDraftUndoOverlay(
+                                inputRect = anchorRect,
+                                onUndoClicked = {
+                                    scope.launch(workerDispatcher) {
+                                        undoLastDraftInsert(node)
+                                    }
+                                },
+                                onDismissClicked = { dismissUndoBanner() }
+                            )
+                        }
+                        undoBannerDismissJob = scope.launch(workerDispatcher) {
+                            delay(3800L)
+                            dismissUndoBanner()
+                        }
+                    } else {
+                        postToMain(null) {
+                            overlayManager.removeDraftOverlay()
+                            Toast.makeText(service, "Replaced in chat", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 } else {
                     lastInsertedText = null
+                    lastReplacedOriginalText = null
                     withContext(Dispatchers.Main) {
                         ClipboardHelper.copySensitiveText(service, "Translated Text", text)
                         overlayManager.removeDraftOverlay()
@@ -657,9 +697,72 @@ class DraftTranslationController(
         } catch (e: Exception) {
             Log.e("Translator", "Failed to set text in input", e)
             lastInsertedText = null
+            lastReplacedOriginalText = null
             postToMain(null) {
                 overlayManager.removeDraftOverlay()
             }
+        }
+    }
+
+    private suspend fun applyTextToEditableNode(node: AccessibilityNodeInfo, text: String): Boolean {
+        val arguments = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+        }
+        val directSuccess = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
+        val pastedSuccess = if (!directSuccess) {
+            withContext(Dispatchers.Main) {
+                ClipboardHelper.copySensitiveText(service, "Translated Text", text)
+            }
+            val allRange = Bundle().apply {
+                val existingLen = node.text?.length ?: 0
+                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, 0)
+                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, existingLen)
+            }
+            node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, allRange)
+            node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+        } else {
+            false
+        }
+        if (directSuccess || pastedSuccess) {
+            val selArgs = Bundle().apply {
+                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, text.length)
+                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, text.length)
+            }
+            node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, selArgs)
+            node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            return true
+        }
+        return false
+    }
+
+    private fun dismissUndoBanner() {
+        undoBannerDismissJob?.cancel()
+        undoBannerDismissJob = null
+        if (undoBannerActive) {
+            undoBannerActive = false
+            lastReplacedOriginalText = null
+            postToMain(null) { overlayManager.removeDraftOverlay() }
+        }
+    }
+
+    private suspend fun undoLastDraftInsert(fallbackNode: AccessibilityNodeInfo?) {
+        val original = lastReplacedOriginalText ?: return
+        undoBannerDismissJob?.cancel()
+        undoBannerDismissJob = null
+        undoBannerActive = false
+        lastReplacedOriginalText = null
+        // Por qué: Cancela la sesión pendiente para que Undo no sea aprendido como edición enviada ni dispare traducción inmediata.
+        pendingDraftSession = null
+        lastInsertedText = null
+        lastInsertedObserved = false
+        dismissedDraftText = original
+        lastRenderedDraftSource = original
+        val node = findCurrentEditableNode() ?: fallbackNode
+        val restored = if (node != null) applyTextToEditableNode(node, original) else false
+        postToMain(null) {
+            overlayManager.removeDraftOverlay()
+            val message = if (restored) "Original text restored" else "Could not restore draft"
+            Toast.makeText(service, message, Toast.LENGTH_SHORT).show()
         }
     }
 }

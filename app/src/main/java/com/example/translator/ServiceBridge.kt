@@ -1,42 +1,63 @@
 package com.example.translator
 
+import kotlinx.coroutines.flow.StateFlow
+
 /**
- * Puente ligero desacoplado para comunicar el estado entre servicios.
+ * Puente ligero desacoplado para comunicar el estado entre componentes.
  *
- * Por qué: Anteriormente, [FloatingBubbleService] y [TranslationAccessibilityService]
- * mantenían referencias estáticas a sus propias instancias (`instance`, `currentInstance`),
- * lo que provocaba fugas de memoria al impedir la recolección de basura del Context
- * y generaba un acoplamiento global oculto.
- *
- * [ServiceBridge] almacena únicamente estados primitivos y un callback, evitando retener
- * cualquier referencia a un Service o Context.
+ * Por qué: Respalda los estados de ejecución mediante [TranslatorSessionController] (`StateFlow`)
+ * para que Compose y los servicios consuman una única fuente reactiva sin referencias estáticas a `Context`.
  */
 object ServiceBridge {
 
-    // ── FloatingBubbleService state ────────────────────────────────────────────
+    val sessionController = TranslatorSessionController()
+    val runtimeState: StateFlow<TranslatorRuntimeState>
+        get() = sessionController.runtimeState
 
-    /** True while [FloatingBubbleService] is alive (between onCreate and onDestroy). */
-    @Volatile var isBubbleRunning: Boolean = false
+    // ── Floating Sphere & Session state ────────────────────────────────────────
 
-    /** True when the user has tapped the sphere to activate translation. */
-    @Volatile var isTranslatingActive: Boolean = false
+    /** True while the floating sphere overlay is shown. */
+    var isBubbleRunning: Boolean
+        get() = sessionController.current.isBubbleRunning
+        set(value) {
+            sessionController.setBubbleRunning(value)
+        }
+
+    /** True when translation scanning/typing assistance is active. */
+    var isTranslatingActive: Boolean
+        get() = sessionController.current.isTranslatingActive
+        set(value) {
+            sessionController.setTranslatingActive(value)
+        }
 
     // ── TranslationAccessibilityService state ──────────────────────────────────
 
     /** True while [TranslationAccessibilityService] is bound and connected. */
-    @Volatile var isAccessibilityActive: Boolean = false
+    var isAccessibilityActive: Boolean
+        get() = sessionController.current.isAccessibilityActive
+        set(value) {
+            sessionController.setAccessibilityActive(value)
+        }
 
     /**
      * Callback registered by [TranslationAccessibilityService] in [onServiceConnected].
-     * Invoked by [FloatingBubbleService] when the user toggles translation on/off.
-     * Cleared in [onUnbind] / [onDestroy] — never holds a Service reference after unbind.
+     * Invoked when the user toggles translation on/off from Notification, Tile, Sphere or MainScreen.
      */
     @Volatile var onTranslationStateChanged: ((Boolean) -> Unit)? = null
+
+    /**
+     * Callback para mostrar u ocultar inmediatamente la esfera flotante (`TYPE_ACCESSIBILITY_OVERLAY`).
+     */
+    @Volatile var onBubbleVisibilityChanged: ((Boolean) -> Unit)? = null
 
     // ── System Notification Menu & Tile state ───────────────────────────────────
 
     /** True while the persistent system notification menu is posted in the notification shade. */
-    @Volatile var isNotificationActive: Boolean = false
+    var isNotificationActive: Boolean
+        get() = sessionController.current.isNotificationActive
+        set(value) {
+            sessionController.setNotificationActive(value)
+        }
 
     /**
      * Callback to trigger an immediate scan and translation of the visible target chat.
@@ -45,8 +66,8 @@ object ServiceBridge {
     @Volatile var onScanRequested: (() -> Unit)? = null
 
     /**
-     * Callback para sincronizar inmediatamente la apariencia del globo flotante si está visible.
-     * Se limpia en `FloatingBubbleService.onDestroy`.
+     * Callback para sincronizar inmediatamente la apariencia de la esfera flotante si está visible.
+     * Se limpia al desconectar [TranslationAccessibilityService].
      */
     @Volatile var onBubbleAppearanceSync: ((Boolean) -> Unit)? = null
 

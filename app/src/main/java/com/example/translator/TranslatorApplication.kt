@@ -13,6 +13,7 @@ class TranslatorApplication : Application() {
         const val KEY_LAST_CRASH = "last_crash"
         const val KEY_LAST_CRASH_AT = "last_crash_at"
         private const val KEY_CRASH_COUNT = "crash_count"
+        private const val KEY_LEGACY_MODELS_PURGED = "legacy_models_purged_v1"
     }
 
     override fun onCreate() {
@@ -65,13 +66,15 @@ class TranslatorApplication : Application() {
         }
     }
 
-    // Por qué: Elimina en segundo plano cualquier archivo .gguf/.tmp residual (~1.3 GB) de versiones anteriores
+    // Por qué: Elimina una sola vez cualquier archivo .gguf/.tmp residual (~1.3 GB) de versiones anteriores
     private fun purgeLegacyModelFilesAsync() {
+        val prefs = getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
+        if (prefs.getBoolean(KEY_LEGACY_MODELS_PURGED, false)) return
         Thread {
             try {
                 val legacyDir = java.io.File(getExternalFilesDir(null), "models")
-                if (legacyDir.exists()) {
-                    legacyDir.deleteRecursively()
+                if (!legacyDir.exists() || legacyDir.deleteRecursively()) {
+                    prefs.edit().putBoolean(KEY_LEGACY_MODELS_PURGED, true).apply()
                 }
             } catch (e: Exception) {
                 Log.w("Translator", "Failed to purge legacy model directory", e)

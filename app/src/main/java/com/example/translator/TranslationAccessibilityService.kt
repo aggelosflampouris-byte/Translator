@@ -3,15 +3,14 @@ package com.example.translator
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.Intent
-import android.content.SharedPreferences
 import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import android.util.LruCache
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
@@ -54,6 +53,7 @@ class TranslationAccessibilityService : AccessibilityService() {
     )
 
     private lateinit var overlayManager: OverlayManager
+    private lateinit var floatingSphereController: FloatingSphereOverlayController
     private lateinit var learningStore: LearningStore
     private lateinit var pipeline: TranslationPipeline
     private lateinit var diagnostics: DiagnosticRecorder
@@ -61,6 +61,8 @@ class TranslationAccessibilityService : AccessibilityService() {
     private lateinit var treeScanner: NodeTreeScanner
     private lateinit var coordinator: TranslationScanCoordinator
     private lateinit var draftController: DraftTranslationController
+    private lateinit var settingsObserver: ServiceSettingsObserver
+    private lateinit var powerMonitor: ScreenPowerMonitor
 
     private val languageIdentifier = LanguageIdentification.getClient()
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -74,22 +76,21 @@ class TranslationAccessibilityService : AccessibilityService() {
     private val inFlightKeys = ConcurrentHashMap.newKeySet<String>()
     private val resourcesReleased = AtomicBoolean(false)
 
-    @Volatile private var configuredSource: String = AppDefaults.SOURCE_LANGUAGE
-    @Volatile private var configuredTarget: String = AppDefaults.TARGET_LANGUAGE
-    @Volatile private var isKeyboardTranslatorEnabled: Boolean = true
-    @Volatile private var isGlossaryAndValidationEnabled: Boolean = true
-    @Volatile private var isLearningEnabled: Boolean = true
-    @Volatile private var translationMode: String = AppDefaults.MODE_ALL
+    private val configuredSource: String get() = settingsObserver.configuredSource
+    private val configuredTarget: String get() = settingsObserver.configuredTarget
+    private val isKeyboardTranslatorEnabled: Boolean get() = settingsObserver.isKeyboardTranslatorEnabled
+    private val isGlossaryAndValidationEnabled: Boolean get() = settingsObserver.isGlossaryAndValidationEnabled
+    private val isLearningEnabled: Boolean get() = settingsObserver.isLearningEnabled
+    private val translationMode: String get() = settingsObserver.translationMode
 
     private var overlayWatchdogJob: Job? = null
     private var pendingBatchJob: Job? = null
     @Volatile private var lastBgEventFgCheckMs: Long = 0L
-    private var powerManager: PowerManager? = null
 
-    private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { prefs, key ->
-        when (key) {
-            AppDefaults.KEY_ENABLED_PACKAGES -> {
-                val updated = TargetAppCatalog.getEnabledPackages(prefs, packageName)
+    private fun initSettingsAndPowerMonitors(): Set<String> {
+        settingsObserver = ServiceSettingsObserver(
+            context = this,
+            onEnabledPackagesChanged = { updated ->
                 sessionTracker.enabledTargetPackages = updated
                 sessionTracker.syncAccessibilityPackageScope()
                 serviceScope.launch {
@@ -100,60 +101,71 @@ class TranslationAccessibilityService : AccessibilityService() {
                         coordinator.scheduleContentScan(100L)
                     }
                 }
-            }
-            AppDefaults.KEY_SOURCE_LANGUAGE -> {
-                configuredSource = prefs.getString(key, AppDefaults.SOURCE_LANGUAGE) ?: AppDefaults.SOURCE_LANGUAGE
+            },
+            onLanguagePairChanged = { _, _ ->
                 draftController.onLanguageSettingsChanged()
                 coordinator.invalidateAndClearAllOverlays()
                 notifyPairChangeAndScan()
-            }
-            AppDefaults.KEY_TARGET_LANGUAGE -> {
-                configuredTarget = prefs.getString(key, AppDefaults.TARGET_LANGUAGE) ?: AppDefaults.TARGET_LANGUAGE
-                draftController.onLanguageSettingsChanged()
-                coordinator.invalidateAndClearAllOverlays()
-                notifyPairChangeAndScan()
-            }
-            AppDefaults.KEY_KEYBOARD_ENABLED -> {
-                isKeyboardTranslatorEnabled = prefs.getBoolean(key, true)
-                if (!isKeyboardTranslatorEnabled) {
+            },
+            onKeyboardTranslatorChanged = { enabled ->
+                if (!enabled) {
                     draftController.cancelTypingAndHideDraft("disabled")
                 }
-            }
-            AppDefaults.KEY_AI_ENABLED -> {
-                isGlossaryAndValidationEnabled = prefs.getBoolean(key, true)
+            },
+            onLearningOrGlossaryChanged = {
                 synchronized(translationCache) { translationCache.evictAll() }
                 coordinator.scheduleContentScan(100L)
-            }
-            AppDefaults.KEY_LEARNING_ENABLED -> {
-                isLearningEnabled = prefs.getBoolean(key, true)
-                synchronized(translationCache) { translationCache.evictAll() }
-                coordinator.scheduleContentScan(100L)
-            }
-            AppDefaults.KEY_TRANSLATE_MODE -> {
-                translationMode = prefs.getString(key, AppDefaults.MODE_ALL) ?: AppDefaults.MODE_ALL
-                if (translationMode == AppDefaults.MODE_TAP) {
+            },
+            onTranslationModeChanged = { mode ->
+                if (mode == AppDefaults.MODE_TAP) {
                     coordinator.cancelDebouncedWorkOnly()
+                    coordinator.stopAll()
                     mainHandler.post { overlayManager.removeAllMessageOverlays() }
                 } else {
+                    if (ServiceBridge.isTranslatingActive) {
+                        ensureOverlayWatchdogRunning()
+                        coordinator.startPeriodicLoop()
+                    }
                     coordinator.scheduleContentScan(100L)
                 }
-            }
-            AppDefaults.KEY_OVERLAY_THEME -> {
-                val theme = prefs.getString(key, AppDefaults.OVERLAY_THEME_AUTO) ?: AppDefaults.OVERLAY_THEME_AUTO
+            },
+            onOverlayThemeChanged = { theme ->
                 overlayManager.setOverlayTheme(theme)
                 mainHandler.post { overlayManager.removeAllMessageOverlays() }
                 coordinator.scheduleContentScan(100L)
+            },
+            onIdleAutoPauseChanged = { minutes ->
+                powerMonitor.onIdleMinutesUpdated(minutes)
             }
-        }
+        )
+        val initialPackages = settingsObserver.register()
+        powerMonitor = ScreenPowerMonitor(
+            context = this,
+            scope = serviceScope,
+            workerDispatcher = workerDispatcher,
+            isTranslatingActive = { ServiceBridge.isTranslatingActive },
+            onScreenOff = { handleScreenOff() },
+            onScreenInteractive = { handleScreenInteractive() },
+            onIdleAutoPauseTriggered = { reason -> performIdleAutoPause(reason) }
+        )
+        powerMonitor.register(settingsObserver.idleAutoPauseMinutes)
+        return initialPackages
     }
 
     private fun notifyPairChangeAndScan() {
+        TranslatorPool.evictExcept(
+            setOf(
+                configuredSource to configuredTarget,
+                configuredTarget to configuredSource
+            )
+        )
         if (ServiceBridge.isNotificationActive) {
             TranslationNotificationManager.showNotification(this, ServiceBridge.isTranslatingActive)
         }
         serviceScope.launch(Dispatchers.Default) {
             TranslationPipeline.preloadModels(this@TranslationAccessibilityService)
         }
+        coordinator.markScreenDirty()
         coordinator.scheduleContentScan(100L)
     }
 
@@ -193,7 +205,20 @@ class TranslationAccessibilityService : AccessibilityService() {
         resourcesReleased.set(false)
 
         overlayManager = OverlayManager(this)
-        powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+        floatingSphereController = FloatingSphereOverlayController(
+            context = this,
+            windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager,
+            onToggleActive = { toggleTranslationFromSphere() },
+            onSwapLanguages = { swapLanguagesFromSphere() },
+            onToggleTranslationMode = { toggleTranslationModeFromSphere() },
+            onOpenApp = { openMainAppFromSphere() },
+            onHideBubble = {
+                ServiceBridge.isBubbleRunning = false
+                floatingSphereController.hide()
+                TranslationTileService.requestSync(this)
+                ServiceBridge.notifyUiStateChanged()
+            }
+        )
         learningStore = LearningStore.get(this)
         pipeline = TranslationPipeline(
             engine = MLKitTranslationEngine(),
@@ -224,7 +249,9 @@ class TranslationAccessibilityService : AccessibilityService() {
             onLoopTick = { isInitial ->
                 diagnostics.scanLoopTicks++
                 updateRuntimeTraceNow(if (isInitial) "loopInit" else "loop")
-            }
+            },
+            isInTargetForeground = { sessionTracker.state.lastForegroundTargetPackage != null },
+            isInteractive = { powerMonitor.isInteractiveNow() }
         )
         draftController = DraftTranslationController(
             service = this,
@@ -244,18 +271,8 @@ class TranslationAccessibilityService : AccessibilityService() {
             identifyLanguage = ::identifyLanguageAsync
         )
 
-        val prefs = getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
-        configuredSource = prefs.getString(AppDefaults.KEY_SOURCE_LANGUAGE, AppDefaults.SOURCE_LANGUAGE) ?: AppDefaults.SOURCE_LANGUAGE
-        configuredTarget = prefs.getString(AppDefaults.KEY_TARGET_LANGUAGE, AppDefaults.TARGET_LANGUAGE) ?: AppDefaults.TARGET_LANGUAGE
-        isKeyboardTranslatorEnabled = prefs.getBoolean(AppDefaults.KEY_KEYBOARD_ENABLED, true)
-        isGlossaryAndValidationEnabled = prefs.getBoolean(AppDefaults.KEY_AI_ENABLED, true)
-        isLearningEnabled = prefs.getBoolean(AppDefaults.KEY_LEARNING_ENABLED, true)
-        translationMode = prefs.getString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_ALL) ?: AppDefaults.MODE_ALL
-        sessionTracker.enabledTargetPackages = TargetAppCatalog.getEnabledPackages(prefs, packageName)
-        overlayManager.setOverlayTheme(
-            prefs.getString(AppDefaults.KEY_OVERLAY_THEME, AppDefaults.OVERLAY_THEME_AUTO) ?: AppDefaults.OVERLAY_THEME_AUTO
-        )
-        prefs.registerOnSharedPreferenceChangeListener(prefListener)
+        sessionTracker.enabledTargetPackages = initSettingsAndPowerMonitors()
+        overlayManager.setOverlayTheme(settingsObserver.overlayTheme)
 
         ServiceBridge.isAccessibilityActive = true
         diagnostics.connectCount++
@@ -263,7 +280,12 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         ServiceBridge.onTranslationStateChanged = { isActive ->
             diagnostics.stateChangeCount++
+            sessionTracker.syncAccessibilityPackageScope(isActive)
+            floatingSphereController.syncAppearance(isActive)
             if (!isActive) {
+                powerMonitor.cancelIdlePauseTimer()
+                overlayWatchdogJob?.cancel()
+                overlayWatchdogJob = null
                 pendingBatchJob?.cancel()
                 pendingBatchJob = null
                 coordinator.stopAll()
@@ -272,16 +294,40 @@ class TranslationAccessibilityService : AccessibilityService() {
                 inFlightKeys.clear()
                 updateRuntimeTraceNow("off")
             } else {
+                powerMonitor.markTargetInteraction()
+                powerMonitor.cancelIdlePauseTimer()
                 val latestPrefs = getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
                 sessionTracker.enabledTargetPackages = TargetAppCatalog.getEnabledPackages(latestPrefs, packageName)
-                sessionTracker.syncAccessibilityPackageScope()
-                ensureOverlayWatchdogRunning()
-                coordinator.startPeriodicLoop()
+                if (powerMonitor.isInteractiveNow()) {
+                    ensureOverlayWatchdogRunning()
+                    if (translationMode != AppDefaults.MODE_TAP) {
+                        coordinator.startPeriodicLoop()
+                    }
+                } else {
+                    powerMonitor.scheduleIdleAutoPauseAfterScreenOff()
+                }
                 updateRuntimeTraceNow("on")
             }
         }
 
+        ServiceBridge.onBubbleAppearanceSync = { isActive ->
+            floatingSphereController.syncAppearance(isActive)
+        }
+
+        ServiceBridge.onBubbleVisibilityChanged = { visible ->
+            if (visible) {
+                ServiceBridge.isBubbleRunning = true
+                floatingSphereController.show(ServiceBridge.isTranslatingActive)
+            } else {
+                ServiceBridge.isBubbleRunning = false
+                floatingSphereController.hide()
+            }
+            TranslationTileService.requestSync(this)
+            ServiceBridge.notifyUiStateChanged()
+        }
+
         ServiceBridge.onScanRequested = {
+            powerMonitor.markTargetInteraction()
             ensureOverlayWatchdogRunning()
             coordinator.requestManualScan(delayBeforeAttemptMs = 0L)
         }
@@ -294,33 +340,52 @@ class TranslationAccessibilityService : AccessibilityService() {
             TranslationPipeline.preloadModels(this@TranslationAccessibilityService)
         }
 
-        sessionTracker.syncAccessibilityPackageScope()
+        sessionTracker.syncAccessibilityPackageScope(ServiceBridge.isTranslatingActive)
+        if (ServiceBridge.isBubbleRunning) {
+            floatingSphereController.show(ServiceBridge.isTranslatingActive)
+        }
         if (ServiceBridge.isTranslatingActive) {
-            ensureOverlayWatchdogRunning()
-            coordinator.startPeriodicLoop()
+            if (powerMonitor.isInteractiveNow()) {
+                ensureOverlayWatchdogRunning()
+                if (translationMode != AppDefaults.MODE_TAP) {
+                    coordinator.startPeriodicLoop()
+                }
+            } else {
+                powerMonitor.scheduleIdleAutoPauseAfterScreenOff()
+            }
         }
         updateRuntimeTraceNow("ready")
         Log.d("Translator", "TranslationAccessibilityService connected")
     }
 
     private fun ensureOverlayWatchdogRunning() {
+        if (!powerMonitor.isInteractiveNow()) return
         if (overlayWatchdogJob?.isActive == true) return
         if (!ServiceBridge.isTranslatingActive && !overlayManager.hasOverlays()) return
         overlayWatchdogJob = serviceScope.launch(workerDispatcher) {
-            while (ServiceBridge.isTranslatingActive || overlayManager.hasOverlays()) {
-                delay(250L)
+            while ((ServiceBridge.isTranslatingActive || overlayManager.hasOverlays()) &&
+                powerMonitor.isInteractiveNow()
+            ) {
+                // Por qué: Acelera la detección de salida a 250ms solo mientras hay burbujas visibles en pantalla,
+                // reduciendo 4x los despertares en reposo cuando la pantalla está limpia.
+                val delayMs = if (overlayManager.hasOverlays()) 250L else 1000L
+                delay(delayMs)
                 if (!ServiceBridge.isTranslatingActive && !overlayManager.hasOverlays()) break
-                if (powerManager?.isInteractive == false) {
-                    if (overlayManager.hasOverlays()) {
-                        coordinator.invalidateAndClearAllOverlays()
-                    }
-                    continue
-                }
-                if (ServiceBridge.isTranslatingActive && !coordinator.isLoopAlive) {
+                if (!powerMonitor.isInteractiveNow()) break
+                if (ServiceBridge.isTranslatingActive &&
+                    translationMode != AppDefaults.MODE_TAP &&
+                    !coordinator.isLoopAlive
+                ) {
                     coordinator.startPeriodicLoop()
                 }
                 val fg = sessionTracker.resolveForeground(captureExternalSnapshot = false)
                 applyForegroundTransition(fg.packageName, fg.resolveReason)
+                if (fg.packageName != null) {
+                    powerMonitor.markTargetInteraction()
+                } else if (powerMonitor.shouldTriggerIdleAutoPause()) {
+                    performIdleAutoPause("idle_away")
+                    break
+                }
                 if (overlayManager.hasOverlays() && (fg.packageName == null || !ServiceBridge.isTranslatingActive)) {
                     coordinator.invalidateAndClearAllOverlays()
                 }
@@ -329,7 +394,54 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun handleScreenOff() {
+        overlayWatchdogJob?.cancel()
+        overlayWatchdogJob = null
+        pendingBatchJob?.cancel()
+        pendingBatchJob = null
+        coordinator.stopAll()
+        draftController.resetOnDepartureOrStop()
+        coordinator.invalidateAndClearAllOverlays()
+        inFlightKeys.clear()
+        updateRuntimeTraceNow("scrOff")
+    }
+
+    private fun handleScreenInteractive() {
+        if (!ServiceBridge.isTranslatingActive) {
+            updateRuntimeTraceNow("scrOnIdle")
+            return
+        }
+        if (powerMonitor.shouldTriggerIdleAutoPause()) {
+            performIdleAutoPause("idle_scroff")
+            return
+        }
+        coordinator.markScreenDirty()
+        ensureOverlayWatchdogRunning()
+        if (translationMode != AppDefaults.MODE_TAP && !coordinator.isLoopAlive) {
+            coordinator.startPeriodicLoop()
+        }
+        updateRuntimeTraceNow("scrOn")
+    }
+
+    private fun performIdleAutoPause(reason: String) {
+        if (!ServiceBridge.isTranslatingActive) return
+        mainHandler.post {
+            if (!ServiceBridge.isTranslatingActive) return@post
+            ServiceBridge.isTranslatingActive = false
+            ServiceBridge.onTranslationStateChanged?.invoke(false)
+            if (ServiceBridge.isNotificationActive) {
+                TranslationNotificationManager.showNotification(this, isTranslating = false)
+            }
+            TranslationTileService.requestSync(this)
+            ServiceBridge.notifyUiStateChanged()
+            updateRuntimeTraceNow(reason)
+        }
+    }
+
     private fun applyForegroundTransition(activeTargetPkg: String?, resolveReason: String) {
+        if (activeTargetPkg != null) {
+            powerMonitor.markTargetInteraction()
+        }
         val effect = sessionTracker.applyTransition(
             activeTargetPkg = activeTargetPkg,
             resolveReason = resolveReason,
@@ -371,6 +483,9 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
 
         val isTargetEvt = sessionTracker.isEnabledTargetPackage(packageName)
+        if (isTargetEvt && ServiceBridge.isTranslatingActive) {
+            powerMonitor.markTargetInteraction(nowMs)
+        }
         val isStateChange = eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
         val needSourceNode = isTargetEvt || isStateChange
 
@@ -872,7 +987,12 @@ class TranslationAccessibilityService : AccessibilityService() {
                     postToMain(epochAtClick) {
                         if (ServiceBridge.isTranslatingActive) {
                             coordinator.recordOverlayDrawn(epochAtClick)
-                            overlayManager.showSingleMessagePill(rect, corrected, targetCode)
+                            overlayManager.showSingleMessagePill(
+                                targetRect = rect,
+                                translatedText = corrected,
+                                targetLangCode = targetCode,
+                                originalText = cleanText
+                            )
                         }
                     }
                 }
@@ -919,10 +1039,12 @@ class TranslationAccessibilityService : AccessibilityService() {
         if (!resourcesReleased.compareAndSet(false, true)) return
         ServiceBridge.isAccessibilityActive = false
         ServiceBridge.isTranslatingActive = false
+        ServiceBridge.isBubbleRunning = false
         ServiceBridge.onTranslationStateChanged = null
+        ServiceBridge.onBubbleVisibilityChanged = null
+        ServiceBridge.onBubbleAppearanceSync = null
         ServiceBridge.onScanRequested = null
         ServiceBridge.onLearningDataCleared = null
-        ServiceBridge.onBubbleAppearanceSync?.invoke(false)
         TranslationTileService.requestSync(this)
         ServiceBridge.notifyUiStateChanged()
         pendingBatchJob?.cancel()
@@ -935,15 +1057,22 @@ class TranslationAccessibilityService : AccessibilityService() {
         diagnostics.clearAll()
         TranslationNotificationManager.cancelNotification(this)
         mainHandler.post {
+            if (::floatingSphereController.isInitialized) {
+                floatingSphereController.hide()
+            }
             if (::overlayManager.isInitialized) {
                 overlayManager.removeAllOverlays()
             }
         }
-        try {
-            val prefs = getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
-            prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
-        } catch (e: Exception) {
-            Log.w("Translator", "Error unregistering prefListener", e)
+        if (::powerMonitor.isInitialized) {
+            powerMonitor.unregister()
+        }
+        if (::settingsObserver.isInitialized) {
+            try {
+                settingsObserver.unregister()
+            } catch (e: Exception) {
+                Log.w("Translator", "Error unregistering settingsObserver", e)
+            }
         }
         try {
             languageIdentifier.close()
@@ -952,6 +1081,65 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
         TranslatorPool.releaseAll()
         synchronized(translationCache) { translationCache.evictAll() }
+    }
+
+    private fun toggleTranslationFromSphere() {
+        val next = !ServiceBridge.isTranslatingActive
+        ServiceBridge.isTranslatingActive = next
+        ServiceBridge.onTranslationStateChanged?.invoke(next)
+        if (ServiceBridge.isNotificationActive) {
+            TranslationNotificationManager.showNotification(this, isTranslating = next)
+        }
+        TranslationTileService.requestSync(this)
+        ServiceBridge.notifyUiStateChanged()
+        Toast.makeText(
+            this,
+            if (next) "Translation Active" else "Translation Paused (Idle)",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    private fun swapLanguagesFromSphere() {
+        val prefs = getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
+        val newSource = configuredTarget
+        val newTarget = configuredSource
+        prefs.edit()
+            .putString(AppDefaults.KEY_SOURCE_LANGUAGE, newSource)
+            .putString(AppDefaults.KEY_TARGET_LANGUAGE, newTarget)
+            .apply()
+        Toast.makeText(
+            this,
+            "Swapped: ${newSource.uppercase()} -> ${newTarget.uppercase()}",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    private fun toggleTranslationModeFromSphere() {
+        val nextMode = if (translationMode == AppDefaults.MODE_TAP) {
+            AppDefaults.MODE_ALL
+        } else {
+            AppDefaults.MODE_TAP
+        }
+        getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(AppDefaults.KEY_TRANSLATE_MODE, nextMode)
+            .apply()
+        Toast.makeText(
+            this,
+            if (nextMode == AppDefaults.MODE_TAP) "Mode: Tap Message" else "Mode: Auto-Translate",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    private fun openMainAppFromSphere() {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        try {
+            startActivity(intent)
+        } catch (e: Exception) {
+            Log.w("Translator", "Failed to open MainActivity from floating sphere", e)
+        }
     }
 
     override fun onUnbind(intent: Intent?): Boolean {

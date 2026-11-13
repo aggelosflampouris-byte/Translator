@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Permisos estrictamente necesarios: superposición sobre apps de mensajería habilitadas, Internet, notificaciones del sistema e instalación de actualizaciones -->
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Permisos estrictamente necesarios: Internet para modelos/actualizaciones, notificaciones opcionales e instalación de actualizaciones -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
@@ -35,10 +34,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <service
-            android:name=".FloatingBubbleService"
-            android:exported="false" />
 
         <!-- Receptor de acciones del menú de notificaciones del sistema -->
         <receiver

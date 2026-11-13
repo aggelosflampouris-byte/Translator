@@ -191,5 +191,20 @@ class AdaptiveLearningTest {
         // When source is Romanian ("ro"), the English job offer is still rejected
         assertFalse(TranslationSenseEngine.isEligibleSourceText(jobOffer, "ro", "el", "en"))
     }
+
+    @Test
+    fun normalizeCustomCorrection_validatesAndNormalizesGlossaryEntries() {
+        assertNull(LearningStore.normalizeCustomCorrection("ro", "ro", "foo", "bar"))
+        assertNull(LearningStore.normalizeCustomCorrection("ro", "el", "   ", "bar"))
+        assertNull(LearningStore.normalizeCustomCorrection("ro", "el", "casa", "CASA"))
+
+        val pair = LearningStore.normalizeCustomCorrection("ro", "el", "  Compania   Mea ", "  Η   παρέα μας ")
+        assertEquals("compania mea" to "Η παρέα μας", pair)
+        val applied = CorrectionApplier.apply(
+            "Compania Mea este gata",
+            listOf(TermCorrection(pair!!.first, pair.second))
+        )
+        assertEquals("Η παρέα μας este gata", applied)
+    }
 }
 

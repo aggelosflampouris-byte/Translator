@@ -2,7 +2,6 @@ package com.example.translator.ui.main
 
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Context
-import android.os.Build
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
 import androidx.compose.foundation.layout.Arrangement
@@ -24,7 +23,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.example.translator.R
 import com.example.translator.ServiceBridge
 
 /**
@@ -32,11 +33,10 @@ import com.example.translator.ServiceBridge
  */
 @Composable
 fun SystemPermissionsCard(
-    canDrawOverlays: Boolean,
     isAccessibilityEnabled: Boolean,
+    isNotificationRequired: Boolean,
     isNotificationPermissionGranted: Boolean,
     allPermissionsGranted: Boolean,
-    onRequestOverlayPermission: () -> Unit,
     onRequestAccessibilityPermission: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
     onOpenAppInfo: () -> Unit
@@ -54,7 +54,7 @@ fun SystemPermissionsCard(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "System Permissions",
+                        text = stringResource(R.string.perm_card_title),
                         style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -85,20 +85,14 @@ fun SystemPermissionsCard(
             if (!allPermissionsGranted) {
                 Spacer(modifier = Modifier.height(10.dp))
                 PermissionStatusRow(
-                    label = "Display over other apps",
-                    granted = canDrawOverlays,
-                    onFix = onRequestOverlayPermission
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                PermissionStatusRow(
-                    label = "Accessibility Service",
+                    label = stringResource(R.string.perm_accessibility_label),
                     granted = isAccessibilityEnabled,
                     onFix = onRequestAccessibilityPermission
                 )
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                if (isNotificationRequired) {
                     Spacer(modifier = Modifier.height(8.dp))
                     PermissionStatusRow(
-                        label = "Notifications",
+                        label = stringResource(R.string.perm_notifications_label),
                         granted = isNotificationPermissionGranted,
                         onFix = onRequestNotificationPermission
                     )
@@ -118,7 +112,7 @@ fun SystemPermissionsCard(
                             modifier = Modifier.weight(1f)
                         )
                         TextButton(onClick = onOpenAppInfo) {
-                            Text("App Info", style = MaterialTheme.typography.labelMedium)
+                            Text(stringResource(R.string.perm_app_info), style = MaterialTheme.typography.labelMedium)
                         }
                     }
                 }
@@ -148,7 +142,7 @@ private fun PermissionStatusRow(
                 modifier = Modifier.padding(end = 12.dp)
             ) {
                 Text(
-                    text = if (granted) "Active" else "Required",
+                    text = stringResource(if (granted) R.string.status_active else R.string.status_required),
                     style = MaterialTheme.typography.labelSmall,
                     color = if (granted) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)

@@ -38,11 +38,16 @@ fun TypingAndControlsCard(
     learningEnabled: Boolean,
     learningStats: Pair<Int, Int>,
     controlInterface: String,
+    autoCheckUpdates: Boolean,
+    idleAutoPauseMinutes: Int,
     settingsEnabled: Boolean,
     onKeyboardTranslatorChanged: (Boolean) -> Unit,
     onLearningChanged: (Boolean) -> Unit,
+    onOpenGlossary: () -> Unit,
     onRequestResetLearning: () -> Unit,
-    onControlInterfaceChanged: (String) -> Unit
+    onControlInterfaceChanged: (String) -> Unit,
+    onAutoCheckUpdatesChanged: (Boolean) -> Unit,
+    onIdleAutoPauseChanged: (Boolean) -> Unit
 ) {
     OutlinedCard(
         modifier = Modifier.fillMaxWidth(),
@@ -108,6 +113,17 @@ fun TypingAndControlsCard(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+                TextButton(
+                    onClick = onOpenGlossary,
+                    enabled = settingsEnabled,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = "Manage",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (settingsEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                    )
+                }
                 if (learningStats.first + learningStats.second > 0) {
                     TextButton(
                         onClick = onRequestResetLearning,
@@ -162,12 +178,89 @@ fun TypingAndControlsCard(
                     enabled = settingsEnabled,
                     label = {
                         Text(
-                            text = "Floating Bubble",
+                            text = "Floating",
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                     },
                     modifier = Modifier.weight(1f)
+                )
+                FilterChip(
+                    selected = controlInterface == AppDefaults.INTERFACE_TILE,
+                    onClick = { onControlInterfaceChanged(AppDefaults.INTERFACE_TILE) },
+                    enabled = settingsEnabled,
+                    label = {
+                        Text(
+                            text = "QS Tile",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 10.dp),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Auto-Check Updates",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "Checks GitHub releases when app opens.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Switch(
+                    checked = autoCheckUpdates,
+                    enabled = settingsEnabled,
+                    onCheckedChange = onAutoCheckUpdatesChanged
+                )
+            }
+
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 10.dp),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Idle Auto-Pause (${AppDefaults.DEFAULT_IDLE_AUTO_PAUSE_MINUTES}m)",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "Pauses automatically when idle away from chat apps.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Switch(
+                    checked = idleAutoPauseMinutes > 0,
+                    enabled = settingsEnabled,
+                    onCheckedChange = onIdleAutoPauseChanged
                 )
             }
         }

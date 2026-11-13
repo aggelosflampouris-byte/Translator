@@ -74,7 +74,9 @@ class TranslationTileService : TileService() {
         ServiceBridge.onTranslationStateChanged?.invoke(newState)
         ServiceBridge.onBubbleAppearanceSync?.invoke(newState)
 
-        if (ServiceBridge.isNotificationActive || (newState && !ServiceBridge.isBubbleRunning)) {
+        val prefs = getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
+        val controlInterface = prefs.getString(AppDefaults.KEY_CONTROL_INTERFACE, AppDefaults.INTERFACE_NOTIFICATION)
+        if (ServiceBridge.isNotificationActive || (newState && controlInterface == AppDefaults.INTERFACE_NOTIFICATION)) {
             TranslationNotificationManager.showNotification(this, isTranslating = newState)
         } else {
             ServiceBridge.notifyUiStateChanged()

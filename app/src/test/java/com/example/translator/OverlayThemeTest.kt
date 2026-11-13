@@ -120,5 +120,37 @@ class OverlayThemeTest {
         assertEquals(R.drawable.bg_translation_bubble_incoming, discordStream.backgroundRes)
         assertEquals(darkSurfaceText, discordStream.textColor)
     }
+
+    @Test
+    fun `auto theme switches to light palette when device is in day mode`() {
+        val lightIncoming = OverlayManager.resolveBubbleStyle(
+            overlayTheme = AppDefaults.OVERLAY_THEME_AUTO,
+            alignmentMode = ChatAlignmentMode.LEFT_RIGHT_CHAT,
+            isRightSide = false,
+            isWhatsAppApp = true,
+            isSystemDarkMode = false
+        )
+        val lightOutgoing = OverlayManager.resolveBubbleStyle(
+            overlayTheme = AppDefaults.OVERLAY_THEME_AUTO,
+            alignmentMode = ChatAlignmentMode.LEFT_RIGHT_CHAT,
+            isRightSide = true,
+            isWhatsAppApp = false,
+            isSystemDarkMode = false
+        )
+        val forcedClassicWhatsApp = OverlayManager.resolveBubbleStyle(
+            overlayTheme = AppDefaults.OVERLAY_THEME_WHATSAPP,
+            alignmentMode = ChatAlignmentMode.LEFT_RIGHT_CHAT,
+            isRightSide = true,
+            isWhatsAppApp = true,
+            isSystemDarkMode = false
+        )
+
+        assertEquals(R.drawable.bg_translation_bubble_light_incoming, lightIncoming.backgroundRes)
+        assertEquals(lightSurfaceText, lightIncoming.textColor)
+        assertEquals(R.drawable.bg_translation_bubble_light_outgoing, lightOutgoing.backgroundRes)
+        assertEquals(lightSurfaceText, lightOutgoing.textColor)
+        assertEquals(R.drawable.bg_translation_bubble_outgoing, forcedClassicWhatsApp.backgroundRes)
+        assertEquals(darkSurfaceText, forcedClassicWhatsApp.textColor)
+    }
 }
 
