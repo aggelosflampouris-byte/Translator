@@ -140,7 +140,7 @@ object ForegroundTargetResolver {
                         if (TargetAppCatalog.isLauncherPackage(activeWindowPkg) &&
                             noTargetWindowBelowLauncher &&
                             hasActiveVisibleTargetSignal &&
-                            recentEventAgeMs in 0..RECENT_EVENT_GRACE_MS &&
+                            recentEventAgeMs in 0..UNATTRIBUTED_WINDOW_GRACE_MS &&
                             isEnabledTarget(recentEventPkg)
                         ) {
                             return ForegroundResolutionResult(recentEventPkg, "launcher_override=$recentEventPkg")

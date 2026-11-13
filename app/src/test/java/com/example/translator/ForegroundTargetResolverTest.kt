@@ -269,6 +269,20 @@ class ForegroundTargetResolverTest {
         )
         assertEquals("com.facebook.orca", result.targetPackage)
 
+        val idleReadingResult = ForegroundTargetResolver.resolve(
+            activeWindowPkg = "com.sec.android.app.launcher",
+            activeWindowBounds = WindowRect(0, 0, 1080, 2340),
+            appWindows = listOf(launcherWin),
+            screenWidthPx = 1080,
+            screenHeightPx = 2340,
+            recentEventPkg = "com.facebook.orca",
+            recentEventAgeMs = 30_000L,
+            hasActiveVisibleTargetSignal = true,
+            enabledTargetPackages = enabledPkgs,
+            selfPackage = selfPkg
+        )
+        assertEquals("com.facebook.orca", idleReadingResult.targetPackage)
+
         val staleResult = ForegroundTargetResolver.resolve(
             activeWindowPkg = "com.sec.android.app.launcher",
             activeWindowBounds = WindowRect(0, 0, 1080, 2340),
@@ -276,7 +290,7 @@ class ForegroundTargetResolverTest {
             screenWidthPx = 1080,
             screenHeightPx = 2340,
             recentEventPkg = "com.facebook.orca",
-            recentEventAgeMs = ForegroundTargetResolver.RECENT_EVENT_GRACE_MS + 500L,
+            recentEventAgeMs = ForegroundTargetResolver.UNATTRIBUTED_WINDOW_GRACE_MS + 500L,
             hasActiveVisibleTargetSignal = true,
             enabledTargetPackages = enabledPkgs,
             selfPackage = selfPkg

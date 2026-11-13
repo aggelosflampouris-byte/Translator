@@ -73,15 +73,13 @@ object ScrollEventClassifier {
             ) {
                 return ScrollDecision(false, "layout_jitter($fromIndex..$toIndex)", currentSig, shouldInterruptOverlays = false)
             }
-            val isLargeJump = prevSignature != null && (
-                kotlin.math.abs(scrollY - prevSignature.scrollY) >= 80 ||
-                    (fromIndex >= 0 && prevSignature.fromIndex >= 0 && kotlin.math.abs(fromIndex - prevSignature.fromIndex) >= 3)
-                )
+            val isRealOffsetJump = prevSignature != null &&
+                kotlin.math.abs(scrollY - prevSignature.scrollY) >= 80
             return ScrollDecision(
                 isRelevantVerticalScroll = true,
                 reason = "pos_changed($scrollY,$fromIndex..$toIndex)",
                 nextSignature = currentSig,
-                shouldInterruptOverlays = isLargeJump
+                shouldInterruptOverlays = isRealOffsetJump
             )
         }
 

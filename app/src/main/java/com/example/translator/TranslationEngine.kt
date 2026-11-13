@@ -51,6 +51,9 @@ class MLKitTranslationEngine : TranslationEngine {
                     Log.w("MLKitEngine", "ML Kit line translation failed", error)
                     if (continuation.isActive) continuation.resume(null)
                 }
+                .addOnCanceledListener {
+                    if (continuation.isActive) continuation.resume(null)
+                }
             return@suspendCancellableCoroutine
         }
 
@@ -65,9 +68,15 @@ class MLKitTranslationEngine : TranslationEngine {
                         Log.w("MLKitEngine", "ML Kit line translation failed", error)
                         if (continuation.isActive) continuation.resume(null)
                     }
+                    .addOnCanceledListener {
+                        if (continuation.isActive) continuation.resume(null)
+                    }
             }
             .addOnFailureListener { error ->
                 Log.w("MLKitEngine", "ML Kit model download failed for $sourceLang->$targetLang", error)
+                if (continuation.isActive) continuation.resume(null)
+            }
+            .addOnCanceledListener {
                 if (continuation.isActive) continuation.resume(null)
             }
     }

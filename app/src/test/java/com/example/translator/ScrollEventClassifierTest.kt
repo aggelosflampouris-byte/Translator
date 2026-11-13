@@ -166,5 +166,58 @@ class ScrollEventClassifierTest {
         assertTrue(realScroll.isRelevantVerticalScroll)
         assertTrue(realScroll.shouldInterruptOverlays)
     }
+
+    @Test
+    fun classify_doesNotInterruptOverlaysWhenFromIndexJumpsWithZeroDeltaAndUnchangedScrollY() {
+        val prev = ScrollEventClassifier.classify(
+            hasDeltaApi = true,
+            scrollDeltaX = 0,
+            scrollDeltaY = 0,
+            sourceHeightPx = 1800,
+            screenHeightPx = 2340,
+            windowId = 1,
+            scrollY = 500,
+            maxScrollY = 2000,
+            fromIndex = 0,
+            toIndex = 4,
+            itemCount = 20,
+            prevSignature = null
+        )
+        assertFalse(prev.shouldInterruptOverlays)
+
+        val indexOnlyJump = ScrollEventClassifier.classify(
+            hasDeltaApi = true,
+            scrollDeltaX = 0,
+            scrollDeltaY = 0,
+            sourceHeightPx = 1800,
+            screenHeightPx = 2340,
+            windowId = 1,
+            scrollY = 500,
+            maxScrollY = 2000,
+            fromIndex = 10,
+            toIndex = 15,
+            itemCount = 21,
+            prevSignature = prev.nextSignature
+        )
+        assertTrue(indexOnlyJump.isRelevantVerticalScroll)
+        assertFalse(indexOnlyJump.shouldInterruptOverlays)
+
+        val realOffsetJump = ScrollEventClassifier.classify(
+            hasDeltaApi = true,
+            scrollDeltaX = 0,
+            scrollDeltaY = 0,
+            sourceHeightPx = 1800,
+            screenHeightPx = 2340,
+            windowId = 1,
+            scrollY = 620,
+            maxScrollY = 2000,
+            fromIndex = 11,
+            toIndex = 16,
+            itemCount = 21,
+            prevSignature = indexOnlyJump.nextSignature
+        )
+        assertTrue(realOffsetJump.isRelevantVerticalScroll)
+        assertTrue(realOffsetJump.shouldInterruptOverlays)
+    }
 }
 
