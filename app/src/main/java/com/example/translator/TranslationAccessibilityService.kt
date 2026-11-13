@@ -177,6 +177,8 @@ class TranslationAccessibilityService : AccessibilityService() {
     @Volatile private var lastEditProbeMs: Long = 0L
     private val srcProbeHistory = ArrayDeque<String>(4)
     private val seenExternalPackages = LinkedHashMap<String, Int>(8)
+    private val cachedMessengerSelfSenders = LinkedHashSet<String>(4)
+    @Volatile private var cachedMessengerPartnerSenders: Set<String> = emptySet()
 
     private fun recordSeenExternalPackage(pkg: String) {
         synchronized(seenExternalPackages) {
@@ -1264,8 +1266,15 @@ class TranslationAccessibilityService : AccessibilityService() {
         return null
     }
 
-    private fun findActiveTargetRootNode(eventSource: AccessibilityNodeInfo? = null): AccessibilityNodeInfo? {
-        val activePkg = resolveForegroundTargetPackage() ?: return null
+    private fun findActiveTargetRootNode(
+        eventSource: AccessibilityNodeInfo? = null,
+        preResolvedFgPkg: String? = null
+    ): AccessibilityNodeInfo? {
+        val activePkg = preResolvedFgPkg ?: resolveForegroundTargetPackage()
+        if (activePkg == null) {
+            lastRootOrigin = "no_fg"
+            return null
+        }
         handleForegroundTargetTransition(activePkg)
 
         var hollowFallback: AccessibilityNodeInfo? = null
@@ -1450,7 +1459,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             return 0
         }
 
-        val rootNode = findActiveTargetRootNode(eventSource)
+        val rootNode = findActiveTargetRootNode(eventSource, preResolvedFgPkg = fgPkg)
         if (rootNode == null) {
             val flagMode = if (includeNotImportantViewsFlag) "full" else "noNotImp"
             ServiceBridge.lastScanDebug = "abort=null_root($lastRootOrigin) | fg=$fgPkg | flags=$flagMode | $lastResolveReason | $lastExternalWindowsSummary"
@@ -1646,6 +1655,46 @@ class TranslationAccessibilityService : AccessibilityService() {
         return candidates.size
     }
 
+    private data class CollectedTextNode(
+        val rawRect: Rect,
+        val expandedRect: Rect,
+        val directText: String?,
+        val descText: String?,
+        val shortClass: String,
+        val isScrollableContainer: Boolean,
+        val childCount: Int,
+        val inChatViewport: Boolean,
+        val childIndices: List<Int>
+    )
+
+    private fun updateAndSnapshotMessengerSenders(
+        discovered: SenderPrefixCleaner.DiscoveredSenders
+    ): SenderPrefixCleaner.DiscoveredSenders {
+        synchronized(cachedMessengerSelfSenders) {
+            for (name in discovered.selfNames) {
+                if (!cachedMessengerSelfSenders.contains(name) && cachedMessengerSelfSenders.size >= 4) {
+                    val oldest = cachedMessengerSelfSenders.firstOrNull()
+                    if (oldest != null) cachedMessengerSelfSenders.remove(oldest)
+                }
+                cachedMessengerSelfSenders.add(name)
+            }
+            cachedMessengerPartnerSenders = discovered.partnerNames
+            return SenderPrefixCleaner.DiscoveredSenders(
+                partnerNames = discovered.partnerNames,
+                selfNames = cachedMessengerSelfSenders.toSet()
+            )
+        }
+    }
+
+    private fun snapshotCachedMessengerSenders(): SenderPrefixCleaner.DiscoveredSenders {
+        synchronized(cachedMessengerSelfSenders) {
+            return SenderPrefixCleaner.DiscoveredSenders(
+                partnerNames = cachedMessengerPartnerSenders,
+                selfNames = cachedMessengerSelfSenders.toSet()
+            )
+        }
+    }
+
     private fun collectMessageCandidates(
         node: AccessibilityNodeInfo,
         outList: MutableList<MessageCandidate>,
@@ -1656,6 +1705,239 @@ class TranslationAccessibilityService : AccessibilityService() {
         requireTranslatable: Boolean = true,
         profile: ChatAppProfile = TargetAppCatalog.GENERIC_DEFAULT_PROFILE,
         stats: ScanStats? = null
+    ): Int {
+        val screenWidth = getScreenWidthPx()
+        val screenHeight = getScreenHeightPx()
+        val density = resources.displayMetrics.density
+
+        if (!SenderPrefixCleaner.supportsAccessibilitySenderPrefix(profile.id)) {
+            return collectStandardMessageCandidates(
+                node = node,
+                outList = outList,
+                minY = minY,
+                maxY = maxY,
+                screenWidth = screenWidth,
+                screenHeight = screenHeight,
+                density = density,
+                configuredSource = configuredSource,
+                configuredTarget = configuredTarget,
+                requireTranslatable = requireTranslatable,
+                profile = profile,
+                stats = stats
+            )
+        }
+
+        // Por qué: En apps como Messenger (Litho) cada burbuja antepone el nombre del remitente
+        // ("ΑΓΓΕΛΟΣ, <mensaje>"); recolectar el árbol en una sola pasada IPC permite inferir remitentes
+        // desde la cabecera y el consenso lateral antes de filtrar o traducir cualquier burbuja.
+        val headerTexts = mutableListOf<String>()
+        val rawNodes = mutableListOf<CollectedTextNode>()
+        collectRawMessengerNodes(
+            node = node,
+            minY = minY,
+            maxY = maxY,
+            screenWidth = screenWidth,
+            screenHeight = screenHeight,
+            density = density,
+            profile = profile,
+            stats = stats,
+            headerTexts = headerTexts,
+            outRawNodes = rawNodes
+        )
+        if (rawNodes.isEmpty()) return 0
+
+        val headerPartnerNames = SenderPrefixCleaner.extractPartnerNamesFromHeaderTexts(headerTexts)
+        val viewportSamples = ArrayList<SenderPrefixCleaner.BubbleTextSample>(rawNodes.size)
+        for (item in rawNodes) {
+            if (!item.inChatViewport) continue
+            if (!TranslationSenseEngine.isMessageBubble(item.expandedRect.left, item.expandedRect.right, screenWidth, profile.alignmentMode)) {
+                continue
+            }
+            item.directText?.let { raw ->
+                val stripped = TranslationFilter.stripTrailingEnvelopeMetadata(raw).text
+                if (stripped.isNotBlank()) {
+                    viewportSamples.add(SenderPrefixCleaner.BubbleTextSample(stripped, item.expandedRect.left, item.expandedRect.right))
+                }
+            }
+            item.descText?.let { raw ->
+                if (raw != item.directText) {
+                    val stripped = TranslationFilter.stripTrailingEnvelopeMetadata(raw).text
+                    if (stripped.isNotBlank()) {
+                        viewportSamples.add(SenderPrefixCleaner.BubbleTextSample(stripped, item.expandedRect.left, item.expandedRect.right))
+                    }
+                }
+            }
+        }
+
+        val discovered = SenderPrefixCleaner.discoverSideSenders(
+            samples = viewportSamples,
+            headerPartnerNames = headerPartnerNames,
+            screenWidth = screenWidth
+        )
+        val effectiveSenders = updateAndSnapshotMessengerSenders(discovered)
+
+        val subtreeMaxAccepted = IntArray(rawNodes.size)
+        for (i in rawNodes.indices) {
+            val item = rawNodes[i]
+            var maxChildTextLen = 0
+            for (childIdx in item.childIndices) {
+                if (subtreeMaxAccepted[childIdx] > maxChildTextLen) {
+                    maxChildTextLen = subtreeMaxAccepted[childIdx]
+                }
+            }
+            if (maxChildTextLen > 0) {
+                val outerLen = (item.directText ?: item.descText)?.length ?: 0
+                if (item.isScrollableContainer || item.childCount > 6 || outerLen <= maxChildTextLen + 12) {
+                    subtreeMaxAccepted[i] = maxChildTextLen
+                    continue
+                }
+            }
+            val acceptedLen = evaluateCandidateTextNode(
+                rawRect = item.rawRect,
+                expandedRect = item.expandedRect,
+                directText = item.directText,
+                descText = item.descText,
+                shortClass = item.shortClass,
+                inChatViewport = item.inChatViewport,
+                minY = minY,
+                maxY = maxY,
+                screenWidth = screenWidth,
+                density = density,
+                configuredSource = configuredSource,
+                configuredTarget = configuredTarget,
+                requireTranslatable = requireTranslatable,
+                profile = profile,
+                discoveredSenders = effectiveSenders,
+                outList = outList,
+                stats = stats
+            )
+            subtreeMaxAccepted[i] = maxOf(maxChildTextLen, acceptedLen)
+        }
+        return subtreeMaxAccepted.maxOrNull() ?: 0
+    }
+
+    private fun isScrollableOrToolbarClass(node: AccessibilityNodeInfo, className: String): Boolean {
+        return node.isScrollable ||
+            className.contains("RecyclerView", ignoreCase = true) ||
+            className.contains("ListView", ignoreCase = true) ||
+            className.contains("ScrollView", ignoreCase = true) ||
+            className.contains("ViewPager", ignoreCase = true) ||
+            className.contains("Toolbar", ignoreCase = true)
+    }
+
+    private fun collectRawMessengerNodes(
+        node: AccessibilityNodeInfo,
+        minY: Int,
+        maxY: Int,
+        screenWidth: Int,
+        screenHeight: Int,
+        density: Float,
+        profile: ChatAppProfile,
+        stats: ScanStats?,
+        headerTexts: MutableList<String>,
+        outRawNodes: MutableList<CollectedTextNode>
+    ): List<Int> {
+        stats?.let { it.visitedNodes++ }
+        val nodePkg = node.packageName?.toString() ?: ""
+        if (nodePkg.isNotBlank() && !isEnabledTargetPackage(nodePkg)) {
+            return emptyList()
+        }
+        if (node.isEditable) {
+            stats?.let { it.editableNodes++ }
+            return emptyList()
+        }
+
+        var mergedChildIndices: MutableList<Int>? = null
+        for (i in 0 until node.childCount) {
+            val child = safeChild(node, i) ?: continue
+            val childIds = collectRawMessengerNodes(
+                node = child,
+                minY = minY,
+                maxY = maxY,
+                screenWidth = screenWidth,
+                screenHeight = screenHeight,
+                density = density,
+                profile = profile,
+                stats = stats,
+                headerTexts = headerTexts,
+                outRawNodes = outRawNodes
+            )
+            if (childIds.isNotEmpty()) {
+                if (mergedChildIndices == null) {
+                    mergedChildIndices = ArrayList(childIds.size)
+                }
+                mergedChildIndices.addAll(childIds)
+            }
+        }
+        val collectedChildren = mergedChildIndices ?: emptyList()
+
+        val className = node.className?.toString() ?: ""
+        if (isIgnoredWidgetClass(className)) {
+            stats?.let { it.skippedWidget++ }
+            return collectedChildren
+        }
+
+        val isScrollableContainer = isScrollableOrToolbarClass(node, className)
+        val directText = node.text?.toString()?.takeIf { it.isNotBlank() }
+        val descText = if (!isScrollableContainer) {
+            node.contentDescription?.toString()?.takeIf { it.isNotBlank() }
+        } else {
+            null
+        }
+        if (directText != null) stats?.let { it.nodesWithText++ }
+        if (descText != null) stats?.let { it.nodesWithDesc++ }
+
+        if (directText.isNullOrBlank() && descText.isNullOrBlank()) {
+            return collectedChildren
+        }
+
+        val rect = Rect()
+        node.getBoundsInScreen(rect)
+        if (rect.right <= 0 || rect.left >= screenWidth) {
+            stats?.let { it.skippedBubbleBounds++ }
+            return collectedChildren
+        }
+
+        // Por qué: La barra superior del chat (sobre minY) contiene el nombre del interlocutor para filtrarlo en burbujas entrantes
+        val headerBottomTolerance = (28 * density).toInt()
+        if (rect.top >= 0 && rect.top < minY && rect.bottom <= minY + headerBottomTolerance && rect.left < screenWidth * 0.72f) {
+            directText?.let { headerTexts.add(it) }
+            descText?.let { if (it != directText) headerTexts.add(it) }
+        }
+
+        val viewportPad = (16 * density).toInt()
+        val inChatViewport = rect.bottom > minY + viewportPad && rect.top < maxY - viewportPad
+        val expandedRect = resolveExpandedBounds(node, rect, screenWidth, screenHeight, density, profile)
+        val newIndex = outRawNodes.size
+        outRawNodes.add(
+            CollectedTextNode(
+                rawRect = rect,
+                expandedRect = expandedRect,
+                directText = directText,
+                descText = descText,
+                shortClass = className.substringAfterLast('.'),
+                isScrollableContainer = isScrollableContainer,
+                childCount = node.childCount,
+                inChatViewport = inChatViewport,
+                childIndices = collectedChildren
+            )
+        )
+        return listOf(newIndex)
+    }
+
+    private fun collectStandardMessageCandidates(
+        node: AccessibilityNodeInfo,
+        outList: MutableList<MessageCandidate>,
+        minY: Int,
+        maxY: Int,
+        screenWidth: Int,
+        screenHeight: Int,
+        density: Float,
+        configuredSource: String,
+        configuredTarget: String,
+        requireTranslatable: Boolean,
+        profile: ChatAppProfile,
+        stats: ScanStats?
     ): Int {
         stats?.let { it.visitedNodes++ }
         // Por qué: Ignora inmediatamente nodos fuera de las apps habilitadas para no leer pantallas ajenas
@@ -1673,16 +1955,19 @@ class TranslationAccessibilityService : AccessibilityService() {
         var maxChildTextLen = 0
         for (i in 0 until node.childCount) {
             val child = safeChild(node, i) ?: continue
-            val childLen = collectMessageCandidates(
-                child,
-                outList,
-                minY,
-                maxY,
-                configuredSource,
-                configuredTarget,
-                requireTranslatable,
-                profile,
-                stats
+            val childLen = collectStandardMessageCandidates(
+                node = child,
+                outList = outList,
+                minY = minY,
+                maxY = maxY,
+                screenWidth = screenWidth,
+                screenHeight = screenHeight,
+                density = density,
+                configuredSource = configuredSource,
+                configuredTarget = configuredTarget,
+                requireTranslatable = requireTranslatable,
+                profile = profile,
+                stats = stats
             )
             if (childLen > maxChildTextLen) {
                 maxChildTextLen = childLen
@@ -1699,12 +1984,7 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         // Por qué: Frameworks como Litho (Messenger/Instagram) y celdas personalizadas suelen exponer el texto
         // del mensaje en contentDescription cuando no emplean TextView nativos.
-        val isScrollableContainer = node.isScrollable ||
-            className.contains("RecyclerView", ignoreCase = true) ||
-            className.contains("ListView", ignoreCase = true) ||
-            className.contains("ScrollView", ignoreCase = true) ||
-            className.contains("ViewPager", ignoreCase = true) ||
-            className.contains("Toolbar", ignoreCase = true)
+        val isScrollableContainer = isScrollableOrToolbarClass(node, className)
         val directText = node.text?.toString()?.takeIf { it.isNotBlank() }
         val descText = if (!isScrollableContainer) {
             node.contentDescription?.toString()?.takeIf { it.isNotBlank() }
@@ -1729,16 +2009,118 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         val rect = Rect()
         node.getBoundsInScreen(rect)
-        val screenWidth = getScreenWidthPx()
-        val screenHeight = getScreenHeightPx()
-        val density = resources.displayMetrics.density
-        val shortClass = className.substringAfterLast('.')
-        val inChatViewport = rect.bottom > minY && rect.top < maxY
+        // Por qué: Ignora nodos fuera del área horizontal visible (p. ej. pestañas ocultas en ViewPager).
+        if (rect.right <= 0 || rect.left >= screenWidth) {
+            stats?.let { it.skippedBubbleBounds++ }
+            return maxChildTextLen
+        }
+
+        val viewportPad = (16 * density).toInt()
+        val inChatViewport = rect.bottom > minY + viewportPad && rect.top < maxY - viewportPad
+        val expandedRect = resolveExpandedBounds(node, rect, screenWidth, screenHeight, density, profile)
+        val acceptedLen = evaluateCandidateTextNode(
+            rawRect = rect,
+            expandedRect = expandedRect,
+            directText = directText,
+            descText = descText,
+            shortClass = className.substringAfterLast('.'),
+            inChatViewport = inChatViewport,
+            minY = minY,
+            maxY = maxY,
+            screenWidth = screenWidth,
+            density = density,
+            configuredSource = configuredSource,
+            configuredTarget = configuredTarget,
+            requireTranslatable = requireTranslatable,
+            profile = profile,
+            discoveredSenders = null,
+            outList = outList,
+            stats = stats
+        )
+        return maxOf(maxChildTextLen, acceptedLen)
+    }
+
+    private fun resolveExpandedBounds(
+        node: AccessibilityNodeInfo,
+        rawRect: Rect,
+        screenWidth: Int,
+        screenHeight: Int,
+        density: Float,
+        profile: ChatAppProfile
+    ): Rect {
+        val result = Rect(rawRect)
+        // Por qué: Solo expande al contenedor padre en apps con burbujas aisladas; en filas anchas
+        // (como Discord o Messenger) limita la expansión para no cubrir avatares ni cabeceras de usuario.
+        var container = node.parent
+        val maxLevels = if (profile.expandContainerToParent) 1 else 0
+        val maxParentWidthRatio = if (profile.expandContainerToParent) 0.95f else 0.85f
+        for (level in 0..maxLevels) {
+            if (container != null) {
+                val pRect = Rect()
+                container.getBoundsInScreen(pRect)
+                val safeExpansion = profile.expandContainerToParent ||
+                    (pRect.width() <= (result.width() * 1.35f) && pRect.height() <= (result.height() * 1.50f))
+                if (safeExpansion &&
+                    pRect.width() <= screenWidth * maxParentWidthRatio &&
+                    pRect.height() <= screenHeight &&
+                    pRect.width() >= result.width() &&
+                    pRect.height() >= result.height() &&
+                    Rect.intersects(pRect, result)) {
+                    result.set(pRect)
+                    break
+                }
+                container = container.parent
+            }
+        }
+        normalizeFullWidthMessageBounds(result, screenWidth, screenHeight, density)
+        return result
+    }
+
+    private fun cleanCandidateText(
+        raw: String,
+        isOutgoing: Boolean,
+        discoveredSenders: SenderPrefixCleaner.DiscoveredSenders?
+    ): String {
+        if (discoveredSenders == null) {
+            return TranslationFilter.cleanMessageText(raw)
+        }
+        val envelope = TranslationFilter.stripTrailingEnvelopeMetadata(raw)
+        if (envelope.text.isEmpty()) return ""
+        val withoutSender = SenderPrefixCleaner.stripSenderPrefix(
+            textAfterSuffixStrip = envelope.text,
+            isOutgoing = isOutgoing,
+            hadEnvelopeMetadata = envelope.hadTrailingMetadata,
+            discoveredSenders = discoveredSenders
+        )
+        if (withoutSender.isEmpty()) return ""
+        return TranslationFilter.cleanMessageText(withoutSender)
+    }
+
+    private fun evaluateCandidateTextNode(
+        rawRect: Rect,
+        expandedRect: Rect,
+        directText: String?,
+        descText: String?,
+        shortClass: String,
+        inChatViewport: Boolean,
+        minY: Int,
+        maxY: Int,
+        screenWidth: Int,
+        density: Float,
+        configuredSource: String,
+        configuredTarget: String,
+        requireTranslatable: Boolean,
+        profile: ChatAppProfile,
+        discoveredSenders: SenderPrefixCleaner.DiscoveredSenders?,
+        outList: MutableList<MessageCandidate>,
+        stats: ScanStats?
+    ): Int {
+        val isOutgoing = screenWidth > 0 && expandedRect.right > screenWidth * 0.72f
 
         // Por qué: En Litho/Messenger, un nodo puede traer texto corto/metadato en text y el cuerpo
         // traducible en contentDescription; si la primera variante se filtra, evaluamos la alternativa.
-        var chosenRaw = directText ?: descText ?: return maxChildTextLen
-        var cleanText = TranslationFilter.cleanMessageText(chosenRaw)
+        var chosenRaw = directText ?: descText ?: return 0
+        var cleanText = cleanCandidateText(chosenRaw, isOutgoing, discoveredSenders)
         var rejectReason = if (requireTranslatable) {
             TranslationFilter.filterRejectionReason(
                 text = cleanText,
@@ -1752,7 +2134,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         var usedDirectText = directText != null
 
         if (rejectReason != null && directText != null && descText != null && descText != directText) {
-            val altClean = TranslationFilter.cleanMessageText(descText)
+            val altClean = cleanCandidateText(descText, isOutgoing, discoveredSenders)
             val altReject = if (requireTranslatable) {
                 TranslationFilter.filterRejectionReason(
                     text = altClean,
@@ -1776,68 +2158,36 @@ class TranslationAccessibilityService : AccessibilityService() {
             stats?.let {
                 it.skippedFilter++
                 it.addSample(
-                    "$shortClass(t=${directText?.length ?: 0},d=${descText?.length ?: 0},[${rect.left},${rect.top}-${rect.right},${rect.bottom}],flt:$tag)",
+                    "$shortClass(t=${directText?.length ?: 0},d=${descText?.length ?: 0},[${rawRect.left},${rawRect.top}-${rawRect.right},${rawRect.bottom}],flt:$tag)",
                     inChatViewport = inChatViewport
                 )
             }
-            return maxChildTextLen
+            return 0
         }
 
         // Por qué: Si el texto provino de contentDescription, descarta únicamente micro-iconos sin perder burbujas cortas
-        if (!usedDirectText && rect.width() < (22 * density).toInt() && rect.height() < (18 * density).toInt()) {
+        if (!usedDirectText && rawRect.width() < (22 * density).toInt() && rawRect.height() < (18 * density).toInt()) {
             stats?.let {
                 it.skippedTinyDesc++
                 it.addSample(
-                    "$shortClass(d=${descText?.length ?: 0},[${rect.left},${rect.top}-${rect.right},${rect.bottom}],tiny)",
+                    "$shortClass(d=${descText?.length ?: 0},[${rawRect.left},${rawRect.top}-${rawRect.right},${rawRect.bottom}],tiny)",
                     inChatViewport = inChatViewport
                 )
             }
-            return maxChildTextLen
+            return 0
         }
-
-        // Por qué: Ignora nodos fuera del área horizontal visible (p. ej. pestañas ocultas en ViewPager).
-        if (rect.right <= 0 || rect.left >= screenWidth) {
-            stats?.let { it.skippedBubbleBounds++ }
-            return maxChildTextLen
-        }
-
-        // Por qué: Solo expande al contenedor padre en apps con burbujas aisladas; en filas anchas
-        // (como Discord o Messenger) limita la expansión para no cubrir avatares ni cabeceras de usuario.
-        var container = node.parent
-        val maxLevels = if (profile.expandContainerToParent) 1 else 0
-        val maxParentWidthRatio = if (profile.expandContainerToParent) 0.95f else 0.85f
-        for (level in 0..maxLevels) {
-            if (container != null) {
-                val pRect = Rect()
-                container.getBoundsInScreen(pRect)
-                val safeExpansion = profile.expandContainerToParent ||
-                    (pRect.width() <= (rect.width() * 1.35f) && pRect.height() <= (rect.height() * 1.50f))
-                if (safeExpansion &&
-                    pRect.width() <= screenWidth * maxParentWidthRatio &&
-                    pRect.height() <= screenHeight &&
-                    pRect.width() >= rect.width() &&
-                    pRect.height() >= rect.height() &&
-                    Rect.intersects(pRect, rect)) {
-                    rect.set(pRect)
-                    break
-                }
-                container = container.parent
-            }
-        }
-
-        normalizeFullWidthMessageBounds(rect, screenWidth, screenHeight, density)
 
         // Validate chat message bubble based on active app alignment layout
-        val isBubble = TranslationSenseEngine.isMessageBubble(rect.left, rect.right, screenWidth, profile.alignmentMode)
+        val isBubble = TranslationSenseEngine.isMessageBubble(expandedRect.left, expandedRect.right, screenWidth, profile.alignmentMode)
         val visibleMargin = (20 * density).toInt()
 
-        if (isBubble && rect.width() > (22 * density).toInt() && rect.height() > (16 * density).toInt() &&
-            rect.bottom > minY + visibleMargin && rect.top < maxY - visibleMargin) {
+        if (isBubble && expandedRect.width() > (22 * density).toInt() && expandedRect.height() > (16 * density).toInt() &&
+            expandedRect.bottom > minY + visibleMargin && expandedRect.top < maxY - visibleMargin) {
             val clampedRect = Rect(
-                rect.left,
-                rect.top.coerceAtLeast(minY),
-                rect.right,
-                rect.bottom.coerceAtMost(maxY)
+                expandedRect.left,
+                expandedRect.top.coerceAtLeast(minY),
+                expandedRect.right,
+                expandedRect.bottom.coerceAtMost(maxY)
             )
             outList.add(MessageCandidate(cleanText, clampedRect))
             stats?.let {
@@ -1847,17 +2197,17 @@ class TranslationAccessibilityService : AccessibilityService() {
                     inChatViewport = inChatViewport
                 )
             }
-            return maxOf(maxChildTextLen, chosenRaw.length)
+            return chosenRaw.length
         }
 
         stats?.let {
             it.skippedBubbleBounds++
             it.addSample(
-                "$shortClass(b=$isBubble,[${rect.left},${rect.top}-${rect.right},${rect.bottom}],bnd)",
+                "$shortClass(b=$isBubble,[${expandedRect.left},${expandedRect.top}-${expandedRect.right},${expandedRect.bottom}],bnd)",
                 inChatViewport = inChatViewport
             )
         }
-        return maxChildTextLen
+        return 0
     }
 
     private fun filterOverlappingCandidates(candidates: List<MessageCandidate>): List<MessageCandidate> {
@@ -2460,10 +2810,6 @@ class TranslationAccessibilityService : AccessibilityService() {
                 ?: ""
 
             if (text.isBlank()) return
-            val cleanText = TranslationFilter.cleanMessageText(text).trim()
-            if (cleanText.isBlank() || !cleanText.any { it.isLetter() }) return
-            if (!TranslationFilter.shouldTranslate(cleanText, configuredTarget, configuredSource, deferUnknownLatinToMlKit = true)) return
-
             val rect = Rect()
             nodeWithText.getBoundsInScreen(rect)
             val screenWidth = getScreenWidthPx()
@@ -2471,6 +2817,15 @@ class TranslationAccessibilityService : AccessibilityService() {
             val density = resources.displayMetrics.density
             normalizeFullWidthMessageBounds(rect, screenWidth, screenHeight, density)
             if (!TranslationSenseEngine.isMessageBubble(rect, screenWidth, activeProfile.alignmentMode)) return
+
+            val sendersForTap = if (SenderPrefixCleaner.supportsAccessibilitySenderPrefix(activeProfile.id)) {
+                snapshotCachedMessengerSenders()
+            } else {
+                null
+            }
+            val cleanText = cleanCandidateText(text, isOutgoing = rect.right > screenWidth * 0.72f, discoveredSenders = sendersForTap).trim()
+            if (cleanText.isBlank() || !cleanText.any { it.isLetter() }) return
+            if (!TranslationFilter.shouldTranslate(cleanText, configuredTarget, configuredSource, deferUnknownLatinToMlKit = true)) return
 
             // Por qué: Usa estrictamente el par de idiomas configurado por el usuario en el menú
             val msgSource = if (configuredSource != "AUTO") configuredSource else AppDefaults.SOURCE_LANGUAGE
@@ -2527,6 +2882,10 @@ class TranslationAccessibilityService : AccessibilityService() {
         targetSrcNullCount = 0
         lastTargetEventPkg = null
         lastTargetEventTimeMs = 0L
+        synchronized(cachedMessengerSelfSenders) {
+            cachedMessengerSelfSenders.clear()
+            cachedMessengerPartnerSenders = emptySet()
+        }
         TranslationNotificationManager.cancelNotification(this)
         overlayManager.removeAllOverlays()
         if (resourcesReleased.compareAndSet(false, true)) {

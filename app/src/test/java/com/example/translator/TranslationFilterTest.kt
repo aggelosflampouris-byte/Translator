@@ -323,5 +323,41 @@ class TranslationFilterTest {
                 deferUnknownLatinToMlKit = true
             )
         )
+
+        // Messenger Greek-locale comma/newline sender prefixes before Latin body (e.g. "ΑΓΓΕΛΟΣ, ...")
+        assertEquals(
+            "bună ziua mâine am un curs dimineața.",
+            TranslationFilter.cleanMessageText(
+                "ΑΓΓΕΛΟΣ, bună ziua mâine am un curs dimineața., 1:25 μ.μ., Απεστάλη, Πατήστε δύο φορές για να απαντήσετε"
+            )
+        )
+        assertEquals(
+            "Bună ziua mâine am un curs",
+            TranslationFilter.cleanMessageText("ΑΓΓΕΛΟΣ\nBună ziua mâine am un curs")
+        )
+        assertEquals(
+            "Salut prietene",
+            TranslationFilter.cleanMessageText("Λευτέρης Φλαμπούρης, Salut prietene")
+        )
+        assertEquals(
+            "Ce faci?",
+            TranslationFilter.cleanMessageText("ΑΓΓΕΛΟΣ, Απαντήσατε στον χρήστη Λευτέρης, Ce faci?")
+        )
+        assertEquals(
+            "Bună ziua",
+            TranslationFilter.cleanMessageText("Λευτέρης Φλαμπούρης έστειλε, Bună ziua")
+        )
+
+        // Ensure vocatives, pronouns, short uppercase words, and real English sentences are preserved
+        assertEquals("Αγγελε, ce mai faci?", TranslationFilter.cleanMessageText("Αγγελε, ce mai faci?"))
+        assertEquals("Tu, ce mai faci?", TranslationFilter.cleanMessageText("Tu, ce mai faci?"))
+        assertEquals("ΝΑΙ, mergem", TranslationFilter.cleanMessageText("ΝΑΙ, mergem"))
+        assertTrue(
+            TranslationFilter.shouldTranslate(
+                "I replied to your message yesterday",
+                TranslateLanguage.GREEK,
+                TranslateLanguage.ENGLISH
+            )
+        )
     }
 }
