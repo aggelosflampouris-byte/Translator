@@ -215,19 +215,11 @@ fun SupportedAppsAndThemeCard(
             .filter { profile -> profile.packageNames.any { it in enabledPackages } }
             .map { it.displayName }
     }
-    val extraCustomCount = remember(enabledPackages) {
-        val knownPackages = TargetAppCatalog.CURATED_PROFILES.flatMapTo(HashSet()) { it.packageNames }
-        enabledPackages.count { it !in knownPackages }
-    }
-    val enabledAppsSummary = remember(enabledPackages, activeCuratedNames, extraCustomCount) {
-        if (enabledPackages.isEmpty()) {
+    val enabledAppsSummary = remember(enabledPackages, activeCuratedNames) {
+        if (enabledPackages.isEmpty() || activeCuratedNames.isEmpty()) {
             "No apps selected — tap Manage to enable chat apps."
         } else {
-            val preview = activeCuratedNames.take(3).joinToString(", ")
-            val remaining = (activeCuratedNames.size - 3).coerceAtLeast(0) + extraCustomCount
-            val suffix = if (remaining > 0) " +$remaining more" else ""
-            if (preview.isNotEmpty()) "$preview$suffix (${enabledPackages.size} pkgs)"
-            else "${enabledPackages.size} custom apps enabled"
+            "${activeCuratedNames.joinToString(", ")} (${enabledPackages.size} pkgs)"
         }
     }
 

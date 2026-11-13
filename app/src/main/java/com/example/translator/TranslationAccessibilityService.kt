@@ -320,9 +320,6 @@ class TranslationAccessibilityService : AccessibilityService() {
             coordinator.cancelDebouncedWorkOnly()
             inFlightKeys.clear()
             draftController.resetOnDepartureOrStop()
-            if (effect.switchedToPackage != null || effect.shouldClearOverlays) {
-                treeScanner.clearSenderCache()
-            }
         }
         if (effect.shouldClearOverlays) {
             coordinator.invalidateAndClearAllOverlays()
@@ -818,16 +815,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             AccessibilityNodeSafeOps.normalizeFullWidthMessageBounds(rect, bounds.widthPx, bounds.heightPx, bounds.density)
             if (!TranslationSenseEngine.isMessageBubble(rect, bounds.widthPx, activeProfile.alignmentMode)) return
 
-            val sendersForTap = if (SenderPrefixCleaner.supportsAccessibilitySenderPrefix(activeProfile.id)) {
-                treeScanner.snapshotCachedMessengerSenders()
-            } else {
-                null
-            }
-            val cleanText = NodeCandidateEvaluator.cleanCandidateText(
-                raw = text,
-                isOutgoing = rect.right > bounds.widthPx * 0.72f,
-                discoveredSenders = sendersForTap
-            ).trim()
+            val cleanText = TranslationFilter.cleanMessageText(text).trim()
             if (cleanText.isBlank() || !cleanText.any { it.isLetter() }) return
             if (!TranslationFilter.shouldTranslate(cleanText, configuredTarget, configuredSource, deferUnknownLatinToMlKit = true)) return
 
@@ -903,7 +891,6 @@ class TranslationAccessibilityService : AccessibilityService() {
         coordinator.stopAll()
         draftController.resetOnDepartureOrStop()
         sessionTracker.reset()
-        treeScanner.clearSenderCache()
         diagnostics.clearAll()
         TranslationNotificationManager.cancelNotification(this)
         mainHandler.post {

@@ -25,10 +25,10 @@ data class ChatAppProfile(
 )
 
 /**
- * Catálogo centralizado de aplicaciones compatibles, perfiles de diseño y lista de bloqueo de seguridad.
+ * Catálogo centralizado de aplicaciones compatibles probadas, perfiles de diseño y lista de bloqueo de seguridad.
  *
- * Por qué: Permite expandir OverChat más allá de WhatsApp manteniendo una lista blanca controlada
- * y evitando leer aplicaciones sensibles (bancos, gestores de contraseñas, ajustes y teclados).
+ * Por qué: Restringe el alcance de accesibilidad únicamente a las aplicaciones verificadas
+ * (WhatsApp, Instagram y Viber) y excluye cualquier app sensible del sistema o no probada.
  */
 object TargetAppCatalog {
 
@@ -41,26 +41,6 @@ object TargetAppCatalog {
             topInsetDp = 48,
             bottomInsetDp = 40,
             expandContainerToParent = true,
-            defaultEnabled = true
-        ),
-        ChatAppProfile(
-            id = "telegram",
-            displayName = "Telegram",
-            packageNames = setOf("org.telegram.messenger", "org.telegram.messenger.web", "org.thunderdog.challegram"),
-            alignmentMode = ChatAlignmentMode.LEFT_RIGHT_CHAT,
-            topInsetDp = 52,
-            bottomInsetDp = 40,
-            expandContainerToParent = true,
-            defaultEnabled = true
-        ),
-        ChatAppProfile(
-            id = "messenger",
-            displayName = "Messenger",
-            packageNames = setOf("com.facebook.orca", "com.facebook.mlite"),
-            alignmentMode = ChatAlignmentMode.LEFT_RIGHT_CHAT,
-            topInsetDp = 74,
-            bottomInsetDp = 48,
-            expandContainerToParent = false,
             defaultEnabled = true
         ),
         ChatAppProfile(
@@ -81,66 +61,6 @@ object TargetAppCatalog {
             topInsetDp = 48,
             bottomInsetDp = 40,
             expandContainerToParent = true,
-            defaultEnabled = true
-        ),
-        ChatAppProfile(
-            id = "signal",
-            displayName = "Signal",
-            packageNames = setOf("org.thoughtcrime.securesms"),
-            alignmentMode = ChatAlignmentMode.LEFT_RIGHT_CHAT,
-            topInsetDp = 48,
-            bottomInsetDp = 40,
-            expandContainerToParent = true,
-            defaultEnabled = true
-        ),
-        ChatAppProfile(
-            id = "discord",
-            displayName = "Discord",
-            packageNames = setOf("com.discord"),
-            alignmentMode = ChatAlignmentMode.LEFT_STREAM_CHAT,
-            topInsetDp = 56,
-            bottomInsetDp = 48,
-            expandContainerToParent = false,
-            defaultEnabled = true
-        ),
-        ChatAppProfile(
-            id = "messages",
-            displayName = "Messages (SMS/RCS)",
-            packageNames = setOf("com.google.android.apps.messaging", "com.samsung.android.messaging"),
-            alignmentMode = ChatAlignmentMode.LEFT_RIGHT_CHAT,
-            topInsetDp = 48,
-            bottomInsetDp = 40,
-            expandContainerToParent = true,
-            defaultEnabled = true
-        ),
-        ChatAppProfile(
-            id = "slack",
-            displayName = "Slack",
-            packageNames = setOf("com.Slack"),
-            alignmentMode = ChatAlignmentMode.LEFT_STREAM_CHAT,
-            topInsetDp = 56,
-            bottomInsetDp = 44,
-            expandContainerToParent = false,
-            defaultEnabled = true
-        ),
-        ChatAppProfile(
-            id = "line",
-            displayName = "LINE",
-            packageNames = setOf("jp.naver.line.android"),
-            alignmentMode = ChatAlignmentMode.LEFT_RIGHT_CHAT,
-            topInsetDp = 48,
-            bottomInsetDp = 40,
-            expandContainerToParent = true,
-            defaultEnabled = true
-        ),
-        ChatAppProfile(
-            id = "snapchat",
-            displayName = "Snapchat",
-            packageNames = setOf("com.snapchat.android"),
-            alignmentMode = ChatAlignmentMode.LEFT_STREAM_CHAT,
-            topInsetDp = 56,
-            bottomInsetDp = 48,
-            expandContainerToParent = false,
             defaultEnabled = true
         )
     )
@@ -240,19 +160,27 @@ object TargetAppCatalog {
     }
 
     /**
-     * Obtiene los paquetes habilitados por el usuario, garantizando siempre el filtrado de paquetes bloqueados.
+     * Indica si el paquete pertenece a la lista blanca de aplicaciones probadas y compatibles.
+     */
+    fun isSupportedPackage(pkg: String?): Boolean {
+        return !pkg.isNullOrBlank() && PROFILE_BY_PACKAGE.containsKey(pkg)
+    }
+
+    /**
+     * Obtiene los paquetes habilitados por el usuario, garantizando siempre el filtrado de paquetes
+     * sensibles y descartando cualquier paquete heredado que ya no forme parte de la lista soportada.
      */
     fun getEnabledPackages(prefs: SharedPreferences, selfPackage: String): Set<String> {
         val stored = prefs.getStringSet(AppDefaults.KEY_ENABLED_PACKAGES, null)
         val rawSet = stored ?: getDefaultEnabledPackages()
-        return rawSet.filter { !isBlockedSensitivePackage(it, selfPackage) }.toSet()
+        return rawSet.filter { isSupportedPackage(it) && !isBlockedSensitivePackage(it, selfPackage) }.toSet()
     }
 
     /**
-     * Guarda el conjunto de paquetes habilitados filtrando cualquier paquete sensible bloqueado.
+     * Guarda el conjunto de paquetes habilitados filtrando paquetes sensibles y no soportados.
      */
     fun saveEnabledPackages(prefs: SharedPreferences, packages: Set<String>, selfPackage: String) {
-        val sanitized = packages.filter { !isBlockedSensitivePackage(it, selfPackage) }.toSet()
+        val sanitized = packages.filter { isSupportedPackage(it) && !isBlockedSensitivePackage(it, selfPackage) }.toSet()
         prefs.edit().putStringSet(AppDefaults.KEY_ENABLED_PACKAGES, sanitized).apply()
     }
 

@@ -1,7 +1,6 @@
 package com.example.translator.ui.apps
 
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -21,11 +20,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import com.example.translator.AppDefaults
-import com.example.translator.ChatAlignmentMode
 import com.example.translator.ChatAppProfile
 import com.example.translator.TargetAppCatalog
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 private data class CuratedAppUiItem(
     val profile: ChatAppProfile,
@@ -33,17 +29,11 @@ private data class CuratedAppUiItem(
     val isEnabled: Boolean
 )
 
-private data class CustomAppUiItem(
-    val packageName: String,
-    val displayName: String,
-    val isEnabled: Boolean
-)
-
 /**
  * Pantalla de administración de aplicaciones compatibles con OverChat.
  *
- * Por qué: Permite al usuario elegir exactamente qué aplicaciones de mensajería o sociales
- * pueden recibir traducción superpuesta, manteniendo bloqueadas las apps sensibles del sistema.
+ * Por qué: Permite al usuario habilitar o deshabilitar únicamente las aplicaciones de mensajería
+ * verificadas (WhatsApp, Instagram y Viber), manteniendo bloqueadas apps sensibles del sistema.
  */
 @Composable
 fun TargetAppsScreen(
@@ -54,14 +44,6 @@ fun TargetAppsScreen(
     val prefs = remember { context.getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE) }
     var enabledPackages by remember {
         mutableStateOf(TargetAppCatalog.getEnabledPackages(prefs, context.packageName))
-    }
-    var customShareApps by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
-
-    LaunchedEffect(Unit) {
-        // Por qué: Consulta el gestor de paquetes fuera del hilo principal para evitar bloqueos visuales
-        customShareApps = withContext(Dispatchers.IO) {
-            discoverShareableCustomApps(context)
-        }
     }
 
     fun updateEnabledPackages(updated: Set<String>) {
@@ -80,16 +62,6 @@ fun TargetAppsScreen(
                 isEnabled = anyEnabled
             )
         }.sortedByDescending { it.installedPackage != null }
-    }
-
-    val customItems = remember(customShareApps, enabledPackages) {
-        customShareApps.map { (pkg, label) ->
-            CustomAppUiItem(
-                packageName = pkg,
-                displayName = label,
-                isEnabled = enabledPackages.contains(pkg)
-            )
-        }
     }
 
     Scaffold(
@@ -134,7 +106,7 @@ fun TargetAppsScreen(
         ) {
             item {
                 Text(
-                    text = "Translations appear only in the apps enabled below. System settings, launchers, keyboards, and financial apps are ignored.",
+                    text = "Translations appear only in the verified apps enabled below. System settings, launchers, keyboards, and financial apps are ignored.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 4.dp)
@@ -143,7 +115,7 @@ fun TargetAppsScreen(
 
             item {
                 Text(
-                    text = "Messaging Presets (${curatedItems.count { it.isEnabled }}/${curatedItems.size})",
+                    text = "Verified Apps (${curatedItems.count { it.isEnabled }}/${curatedItems.size})",
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onBackground,
                     modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
@@ -151,15 +123,10 @@ fun TargetAppsScreen(
             }
 
             items(curatedItems, key = { it.profile.id }) { item ->
-                val alignmentLabel = if (item.profile.alignmentMode == ChatAlignmentMode.LEFT_STREAM_CHAT) {
-                    "Stream layout"
-                } else {
-                    "Chat bubbles"
-                }
                 val subtitle = if (item.installedPackage != null) {
-                    "Installed · $alignmentLabel"
+                    "Installed · Chat bubbles"
                 } else {
-                    "Not installed · $alignmentLabel"
+                    "Not installed · Chat bubbles"
                 }
 
                 TargetAppToggleRow(
@@ -178,36 +145,6 @@ fun TargetAppsScreen(
                         updateEnabledPackages(next)
                     }
                 )
-            }
-
-            if (customItems.isNotEmpty()) {
-                item {
-                    Text(
-                        text = "Other Installed Apps",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        modifier = Modifier.padding(top = 12.dp, bottom = 2.dp)
-                    )
-                }
-
-                items(customItems, key = { it.packageName }) { item ->
-                    TargetAppToggleRow(
-                        title = item.displayName,
-                        subtitle = item.packageName,
-                        iconPackage = item.packageName,
-                        checked = item.isEnabled,
-                        isInstalled = true,
-                        onCheckedChange = { checked ->
-                            val next = enabledPackages.toMutableSet()
-                            if (checked) {
-                                next.add(item.packageName)
-                            } else {
-                                next.remove(item.packageName)
-                            }
-                            updateEnabledPackages(next)
-                        }
-                    )
-                }
             }
         }
     }
@@ -314,29 +251,5 @@ private fun loadAppIconBitmap(pm: PackageManager, pkg: String): ImageBitmap? {
     } catch (_: Exception) {
         null
     }
-}
-
-@Suppress("DEPRECATION")
-private fun discoverShareableCustomApps(context: Context): List<Pair<String, String>> {
-    val pm = context.packageManager
-    val curatedSet = TargetAppCatalog.allCuratedPackages()
-    val sendIntent = Intent(Intent.ACTION_SEND).apply { type = "text/plain" }
-    val resolved = try {
-        pm.queryIntentActivities(sendIntent, 0)
-    } catch (_: Exception) {
-        emptyList()
-    }
-
-    val seen = mutableSetOf<String>()
-    val result = mutableListOf<Pair<String, String>>()
-    for (info in resolved) {
-        val pkg = info.activityInfo?.packageName ?: continue
-        if (!seen.add(pkg)) continue
-        if (curatedSet.contains(pkg)) continue
-        if (TargetAppCatalog.isBlockedSensitivePackage(pkg, context.packageName)) continue
-        val label = info.loadLabel(pm)?.toString()?.trim().takeUnless { it.isNullOrBlank() } ?: pkg
-        result.add(pkg to label)
-    }
-    return result.sortedBy { it.second.lowercase() }
 }
 

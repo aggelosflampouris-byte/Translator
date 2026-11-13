@@ -236,7 +236,7 @@ class TranslationFilterTest {
     }
 
     @Test
-    fun cleanMessageText_andShouldTranslate_handlesTelegramDiscordAndMessengerMetadata() {
+    fun cleanMessageText_andShouldTranslate_handlesChatAndTalkBackMetadata() {
         assertEquals("Ne vedem diseară", TranslationFilter.cleanMessageText("Ne vedem diseară, 14:32, edited"))
         assertEquals("Salutare tuturor", TranslationFilter.cleanMessageText("Salutare tuturor (edited)"))
         assertEquals("Ajung imediat", TranslationFilter.cleanMessageText("Ajung imediat, Seen"))
@@ -279,7 +279,7 @@ class TranslationFilterTest {
     }
 
     @Test
-    fun cleanMessageText_andShouldTranslate_handlesGreekLocaleMessengerWrappersAndUnaccentedRomanian() {
+    fun cleanMessageText_andShouldTranslate_handlesGreekLocaleWrappersAndUnaccentedRomanian() {
         assertEquals(
             "Ce faci?",
             TranslationFilter.cleanMessageText("Απαντήσατε στο χρήστη Λευτέρης: Ce faci?")
@@ -369,7 +369,7 @@ class TranslationFilterTest {
     }
 
     @Test
-    fun cleanMessageText_andShouldTranslate_stripMessengerGreekRepliesAndReactionMetadata() {
+    fun cleanMessageText_andShouldTranslate_stripGreekRepliesAndReactionMetadata() {
         val selfReplied = "Εσείς απαντήσατε στο χρήστη Λευτέρης: Ce faci?, 1:25 μ.μ., Απεστάλη, Πατήστε δύο φορές για να απαντήσετε"
         assertEquals("Ce faci?", TranslationFilter.cleanMessageText(selfReplied))
         assertTrue(TranslationFilter.shouldTranslate(selfReplied, TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN))

@@ -7,13 +7,13 @@ import org.junit.Test
 class ForegroundTargetResolverTest {
 
     private val selfPkg = "com.example.translator"
-    private val enabledPkgs = setOf("com.whatsapp", "com.facebook.orca", "org.telegram.messenger")
+    private val enabledPkgs = setOf("com.whatsapp", "com.instagram.android", "com.viber.voip")
     private val fullScreen = WindowRect(0, 0, 1080, 2340)
 
     @Test
-    fun resolve_returnsMessenger_whenRootInActiveWindowMatches() {
+    fun resolve_returnsInstagram_whenRootInActiveWindowMatches() {
         val result = ForegroundTargetResolver.resolve(
-            activeWindowPkg = "com.facebook.orca",
+            activeWindowPkg = "com.instagram.android",
             activeWindowBounds = fullScreen,
             appWindows = emptyList(),
             screenWidthPx = 1080,
@@ -23,11 +23,11 @@ class ForegroundTargetResolverTest {
             enabledTargetPackages = enabledPkgs,
             selfPackage = selfPkg
         )
-        assertEquals("com.facebook.orca", result.targetPackage)
+        assertEquals("com.instagram.android", result.targetPackage)
     }
 
     @Test
-    fun resolve_ignoresThinOemEdgeHandleAboveMessenger() {
+    fun resolve_ignoresThinOemEdgeHandleAboveViber() {
         val edgeHandle = AppWindowSnapshot(
             packageName = "com.samsung.android.app.cocktailbarservice",
             isActive = false,
@@ -35,8 +35,8 @@ class ForegroundTargetResolverTest {
             layer = 99,
             bounds = WindowRect(1050, 400, 1080, 950)
         )
-        val messengerWin = AppWindowSnapshot(
-            packageName = "com.facebook.orca",
+        val viberWin = AppWindowSnapshot(
+            packageName = "com.viber.voip",
             isActive = false,
             isFocused = true,
             layer = 10,
@@ -45,7 +45,7 @@ class ForegroundTargetResolverTest {
         val result = ForegroundTargetResolver.resolve(
             activeWindowPkg = "com.samsung.android.honeyboard",
             activeWindowBounds = WindowRect(0, 1500, 1080, 2340),
-            appWindows = listOf(messengerWin, edgeHandle),
+            appWindows = listOf(viberWin, edgeHandle),
             screenWidthPx = 1080,
             screenHeightPx = 2340,
             recentEventPkg = null,
@@ -53,14 +53,14 @@ class ForegroundTargetResolverTest {
             enabledTargetPackages = enabledPkgs,
             selfPackage = selfPkg
         )
-        assertEquals("com.facebook.orca", result.targetPackage)
+        assertEquals("com.viber.voip", result.targetPackage)
     }
 
     @Test
-    fun resolve_ignoresThinLauncherTaskbarOverMessenger_butBlocksFullscreenLauncher() {
+    fun resolve_ignoresThinLauncherTaskbarOverWhatsApp_butBlocksFullscreenLauncher() {
         val taskbarStrip = WindowRect(0, 2220, 1080, 2340)
-        val messengerWin = AppWindowSnapshot(
-            packageName = "com.facebook.orca",
+        val whatsappWin = AppWindowSnapshot(
+            packageName = "com.whatsapp",
             isActive = false,
             isFocused = false,
             layer = 10,
@@ -69,7 +69,7 @@ class ForegroundTargetResolverTest {
         val stripResult = ForegroundTargetResolver.resolve(
             activeWindowPkg = "com.sec.android.app.launcher",
             activeWindowBounds = taskbarStrip,
-            appWindows = listOf(messengerWin),
+            appWindows = listOf(whatsappWin),
             screenWidthPx = 1080,
             screenHeightPx = 2340,
             recentEventPkg = null,
@@ -77,18 +77,18 @@ class ForegroundTargetResolverTest {
             enabledTargetPackages = enabledPkgs,
             selfPackage = selfPkg
         )
-        assertEquals("com.facebook.orca", stripResult.targetPackage)
+        assertEquals("com.whatsapp", stripResult.targetPackage)
 
         val homeResult = ForegroundTargetResolver.resolve(
             activeWindowPkg = "com.sec.android.app.launcher",
             activeWindowBounds = fullScreen,
             appWindows = listOf(
                 AppWindowSnapshot("com.sec.android.app.launcher", isActive = true, isFocused = true, layer = 20, bounds = fullScreen),
-                messengerWin
+                whatsappWin
             ),
             screenWidthPx = 1080,
             screenHeightPx = 2340,
-            recentEventPkg = "com.facebook.orca",
+            recentEventPkg = "com.whatsapp",
             recentEventAgeMs = 500L,
             enabledTargetPackages = enabledPkgs,
             selfPackage = selfPkg
@@ -97,17 +97,17 @@ class ForegroundTargetResolverTest {
     }
 
     @Test
-    fun resolve_blocksSelfMainActivity_butAllowsSmallSelfBubbleOverMessenger() {
+    fun resolve_blocksSelfMainActivity_butAllowsSmallSelfBubbleOverInstagram() {
         val mainActivityResult = ForegroundTargetResolver.resolve(
             activeWindowPkg = selfPkg,
             activeWindowBounds = fullScreen,
             appWindows = listOf(
                 AppWindowSnapshot(selfPkg, isActive = true, isFocused = true, layer = 30, bounds = fullScreen),
-                AppWindowSnapshot("com.facebook.orca", isActive = false, isFocused = false, layer = 10, bounds = fullScreen)
+                AppWindowSnapshot("com.instagram.android", isActive = false, isFocused = false, layer = 10, bounds = fullScreen)
             ),
             screenWidthPx = 1080,
             screenHeightPx = 2340,
-            recentEventPkg = "com.facebook.orca",
+            recentEventPkg = "com.instagram.android",
             recentEventAgeMs = 300L,
             enabledTargetPackages = enabledPkgs,
             selfPackage = selfPkg
@@ -119,7 +119,7 @@ class ForegroundTargetResolverTest {
             activeWindowBounds = WindowRect(900, 800, 1060, 960),
             appWindows = listOf(
                 AppWindowSnapshot(selfPkg, isActive = true, isFocused = false, layer = 30, bounds = WindowRect(900, 800, 1060, 960)),
-                AppWindowSnapshot("com.facebook.orca", isActive = false, isFocused = true, layer = 10, bounds = fullScreen)
+                AppWindowSnapshot("com.instagram.android", isActive = false, isFocused = true, layer = 10, bounds = fullScreen)
             ),
             screenWidthPx = 1080,
             screenHeightPx = 2340,
@@ -128,7 +128,7 @@ class ForegroundTargetResolverTest {
             enabledTargetPackages = enabledPkgs,
             selfPackage = selfPkg
         )
-        assertEquals("com.facebook.orca", bubbleResult.targetPackage)
+        assertEquals("com.instagram.android", bubbleResult.targetPackage)
     }
 
     @Test
@@ -139,12 +139,12 @@ class ForegroundTargetResolverTest {
             appWindows = emptyList(),
             screenWidthPx = 1080,
             screenHeightPx = 2340,
-            recentEventPkg = "com.facebook.orca",
+            recentEventPkg = "com.viber.voip",
             recentEventAgeMs = 1_500L,
             enabledTargetPackages = enabledPkgs,
             selfPackage = selfPkg
         )
-        assertEquals("com.facebook.orca", freshResult.targetPackage)
+        assertEquals("com.viber.voip", freshResult.targetPackage)
 
         val staleResult = ForegroundTargetResolver.resolve(
             activeWindowPkg = null,
@@ -152,7 +152,7 @@ class ForegroundTargetResolverTest {
             appWindows = emptyList(),
             screenWidthPx = 1080,
             screenHeightPx = 2340,
-            recentEventPkg = "com.facebook.orca",
+            recentEventPkg = "com.viber.voip",
             recentEventAgeMs = 8_000L,
             enabledTargetPackages = enabledPkgs,
             selfPackage = selfPkg
@@ -167,11 +167,11 @@ class ForegroundTargetResolverTest {
             activeWindowBounds = fullScreen,
             appWindows = listOf(
                 AppWindowSnapshot("com.android.chrome", isActive = true, isFocused = true, layer = 20, bounds = fullScreen),
-                AppWindowSnapshot("com.facebook.orca", isActive = false, isFocused = false, layer = 10, bounds = fullScreen)
+                AppWindowSnapshot("com.viber.voip", isActive = false, isFocused = false, layer = 10, bounds = fullScreen)
             ),
             screenWidthPx = 1080,
             screenHeightPx = 2340,
-            recentEventPkg = "com.facebook.orca",
+            recentEventPkg = "com.viber.voip",
             recentEventAgeMs = 400L,
             enabledTargetPackages = enabledPkgs,
             selfPackage = selfPkg
@@ -180,7 +180,7 @@ class ForegroundTargetResolverTest {
     }
 
     @Test
-    fun resolve_detectsMessengerWhenOneUiLeavesLauncherFocusedBelowNullRootWindow() {
+    fun resolve_detectsTargetWhenOneUiLeavesLauncherFocusedBelowNullRootWindow() {
         val launcherWin = AppWindowSnapshot(
             packageName = "com.sec.android.app.launcher",
             isActive = true,
@@ -188,25 +188,25 @@ class ForegroundTargetResolverTest {
             layer = 0,
             bounds = WindowRect(0, 0, 1080, 2316)
         )
-        val messengerUnattributedWin = AppWindowSnapshot(
+        val unattributedWin = AppWindowSnapshot(
             packageName = null,
             isActive = false,
             isFocused = false,
             layer = 1,
             bounds = WindowRect(0, 0, 1080, 2316)
         )
-        val inMessenger = ForegroundTargetResolver.resolve(
+        val inTarget = ForegroundTargetResolver.resolve(
             activeWindowPkg = "com.sec.android.app.launcher",
             activeWindowBounds = WindowRect(0, 0, 1080, 2316),
-            appWindows = listOf(messengerUnattributedWin, launcherWin),
+            appWindows = listOf(unattributedWin, launcherWin),
             screenWidthPx = 1080,
             screenHeightPx = 2340,
-            recentEventPkg = "com.facebook.orca",
+            recentEventPkg = "com.viber.voip",
             recentEventAgeMs = 20L,
             enabledTargetPackages = enabledPkgs,
             selfPackage = selfPkg
         )
-        assertEquals("com.facebook.orca", inMessenger.targetPackage)
+        assertEquals("com.viber.voip", inTarget.targetPackage)
 
         // Cuando el usuario regresa al lanzador real, la ventana superior desaparece y debe bloquearse
         val backHome = ForegroundTargetResolver.resolve(
@@ -215,7 +215,7 @@ class ForegroundTargetResolverTest {
             appWindows = listOf(launcherWin),
             screenWidthPx = 1080,
             screenHeightPx = 2340,
-            recentEventPkg = "com.facebook.orca",
+            recentEventPkg = "com.viber.voip",
             recentEventAgeMs = 200L,
             enabledTargetPackages = enabledPkgs,
             selfPackage = selfPkg
@@ -224,7 +224,7 @@ class ForegroundTargetResolverTest {
     }
 
     @Test
-    fun resolve_preservesMessengerDuringIdleReadingWhileUnattributedWindowRemainsVisible() {
+    fun resolve_preservesTargetDuringIdleReadingWhileUnattributedWindowRemainsVisible() {
         val unattributedTopWin = AppWindowSnapshot(
             packageName = null,
             isActive = true,
@@ -238,12 +238,12 @@ class ForegroundTargetResolverTest {
             appWindows = listOf(unattributedTopWin),
             screenWidthPx = 1080,
             screenHeightPx = 2340,
-            recentEventPkg = "com.facebook.orca",
+            recentEventPkg = "com.instagram.android",
             recentEventAgeMs = 15_000L,
             enabledTargetPackages = enabledPkgs,
             selfPackage = selfPkg
         )
-        assertEquals("com.facebook.orca", idleReading.targetPackage)
+        assertEquals("com.instagram.android", idleReading.targetPackage)
     }
 
     @Test
@@ -261,13 +261,13 @@ class ForegroundTargetResolverTest {
             appWindows = listOf(launcherWin),
             screenWidthPx = 1080,
             screenHeightPx = 2340,
-            recentEventPkg = "com.facebook.orca",
+            recentEventPkg = "com.viber.voip",
             recentEventAgeMs = 300L,
             hasActiveVisibleTargetSignal = true,
             enabledTargetPackages = enabledPkgs,
             selfPackage = selfPkg
         )
-        assertEquals("com.facebook.orca", result.targetPackage)
+        assertEquals("com.viber.voip", result.targetPackage)
 
         val idleReadingResult = ForegroundTargetResolver.resolve(
             activeWindowPkg = "com.sec.android.app.launcher",
@@ -275,13 +275,13 @@ class ForegroundTargetResolverTest {
             appWindows = listOf(launcherWin),
             screenWidthPx = 1080,
             screenHeightPx = 2340,
-            recentEventPkg = "com.facebook.orca",
+            recentEventPkg = "com.viber.voip",
             recentEventAgeMs = 30_000L,
             hasActiveVisibleTargetSignal = true,
             enabledTargetPackages = enabledPkgs,
             selfPackage = selfPkg
         )
-        assertEquals("com.facebook.orca", idleReadingResult.targetPackage)
+        assertEquals("com.viber.voip", idleReadingResult.targetPackage)
 
         val staleResult = ForegroundTargetResolver.resolve(
             activeWindowPkg = "com.sec.android.app.launcher",
@@ -289,7 +289,7 @@ class ForegroundTargetResolverTest {
             appWindows = listOf(launcherWin),
             screenWidthPx = 1080,
             screenHeightPx = 2340,
-            recentEventPkg = "com.facebook.orca",
+            recentEventPkg = "com.viber.voip",
             recentEventAgeMs = ForegroundTargetResolver.UNATTRIBUTED_WINDOW_GRACE_MS + 500L,
             hasActiveVisibleTargetSignal = true,
             enabledTargetPackages = enabledPkgs,

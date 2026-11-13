@@ -171,10 +171,9 @@ class DiagnosticRecorder {
         sessionState: ForegroundSessionState
     ) {
         lastTraceUpdateMs = SystemClock.uptimeMillis()
-        val msgEnabled = enabledTargetPackages.contains("com.facebook.orca")
         ServiceBridge.lastRuntimeTrace =
             "$tag | c=$connectCount s=$stateChangeCount l=$scanLoopTicks(alive=$loopAlive) e=$eventCount " +
-            "svcPkgs=${enabledTargetPackages.size}(msg=$msgEnabled) scr=$isScreenScrolling($acceptedScrollCount/$ignoredScrollCount:$lastScrollDiag) " +
+            "svcPkgs=${enabledTargetPackages.size} scr=$isScreenScrolling($acceptedScrollCount/$ignoredScrollCount:$lastScrollDiag) " +
             "fg=${sessionState.lastForegroundTargetPackage ?: "null"} root=$lastRootOrigin($lastRootExtractDiag,src=${sessionState.meaningfulTargetSrcCount}/${sessionState.targetSrcNullCount}) " +
             "res=$lastResolveReason tgtEvt=${sessionState.lastTargetEventPkg ?: "none"} lastEvt=${lastEventPkg ?: "none"}(${lastEventType}) " +
             "seen=[${formatSeenPackages()}] ext=[$lastExternalWindowsSummary]"

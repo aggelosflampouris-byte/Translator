@@ -14,22 +14,17 @@ object TranslationFilter {
         """^([a-zA-Zα-ωΑ-ΩάέήίόύώϊϋΐΰăâîșțĂÂÎȘȚ.]+\s+)?(today|yesterday|σήμερα|σημερα|χθες|astăzi|astazi|ieri|mon|tue|wed|thu|fri|sat|sun|δευ|τρι|τετ|πεμ|παρ|σαβ|κυρ|lun|mar|mie|joi|vin|sâm|sam|dum)?\s*(at|στις|στὶς|la)\s+\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?$""",
         RegexOption.IGNORE_CASE
     )
-    data class EnvelopeStripResult(
-        val text: String,
-        val hadTrailingMetadata: Boolean
-    )
-
     private val LEADING_SENDER_PREFIX_REGEX = Regex(
         """^(?:(?:you sent|you replied|reply(?:\s+to)?|εσείς στείλατε|εσεις στειλατε|εσείς απαντήσατε|εσεις απαντησατε|στείλατε|στειλατε|απαντήσατε|απαντησατε|απάντηση|απαντηση|ai trimis|ai răspuns|ai raspuns|răspuns|raspuns)(?:\s+(?:(?:στον?\s+χρήστη|στον?\s+χρηστη|στον?\s+εαυτό\s+(?:σας|του|της|τους)|σε\s+(?:τον?\s+)?(?:χρήστη|χρηστη|μήνυμ[άα]|μηνυμα)|σε|προς(?:\s+τον?)?|to|la)\s+[^\n:,?!;()]{1,100}|(?:στο\s+μήνυμ[άα]|στο\s+μηνυμα)(?:\s+(?:σας|του|της|τους))?(?:\s+[^\n:,?!;()]{1,100})?|σε\s+εσάς|σ'\s*εσάς))?(?:\s*«[^»\n]{1,120}»)?(?:[ \t]*[:,][ \t]+|[ \t]*\n+[ \t]*)|(?:εσείς στείλατε|εσεις στειλατε)\s+|(?:(?:ο|η|ο/η)\s+χρήστης\s+|(?:ο|η|ο/η)\s+χρηστης\s+|(?:ο|η|ο/η)\s+)?[^\n:,?!;()]{1,36}\s+(?:έστειλε|εστειλε|απάντησε|απαντησε|sent|replied|a trimis|a răspuns|a raspuns)(?:\s+(?:(?:στον?\s+χρήστη|στον?\s+χρηστη|στον?\s+εαυτό\s+(?:του|της|τους)|σε\s+(?:τον?\s+)?(?:χρήστη|χρηστη|μήνυμ[άα]|μηνυμα)|σε|προς(?:\s+τον?)?|to|la)\s+[^\n:,?!;()]{1,100}|(?:στο\s+μήνυμ[άα]|στο\s+μηνυμα)(?:\s+(?:σας|του|της|τους))?(?:\s+[^\n:,?!;()]{1,100})?|σε\s+εσάς|σ'\s*εσάς))?(?:\s*«[^»\n]{1,120}»)?(?:[ \t]*[:,][ \t]+|[ \t]*\n+[ \t]*)|(?:εσείς|εσεις|you)(?:[ \t]*[:,][ \t]+|[ \t]*\n+[ \t]*)|tu[ \t]*:[ \t]+)""",
         RegexOption.IGNORE_CASE
     )
-    // Por qué: En interfaces griegas de Messenger ("Λευτέρης Φλαμπούρης: Salut"), retira el remitente
-    // en griego cuando va seguido de ':' antes de un mensaje en alfabeto latino.
+    // Por qué: En etiquetas TalkBack en griego ("Λευτέρης Φλαμπούρης: Salut"), retira el prefijo
+    // con dos puntos antes de un cuerpo en alfabeto latino.
     private val GREEK_SENDER_COLON_BEFORE_LATIN_REGEX = Regex(
         """^[α-ωΑ-Ωάέήίόύώϊϋΐΰς][α-ωΑ-Ωάέήίόύώϊϋΐΰς \t./'-]{0,42}:[ \t]+(?=[\s\S]*[a-zA-ZăâîșțĂÂÎȘȚ]{2})"""
     )
-    // Por qué: En burbujas de Messenger con formato "<NOMBRE>, <mensaje>", retira nombres en mayúsculas
-    // (ej. "ΑΓΓΕΛΟΣ, ") o nombres completos en griego antes de un cuerpo latino sin mutilar vocativos simples.
+    // Por qué: En etiquetas con formato "<NOMBRE>, <mensaje>", retira nombres en mayúsculas o nombres
+    // completos en griego antes de un cuerpo latino sin mutilar vocativos simples.
     private val GREEK_DISPLAY_NAME_PREFIX_BEFORE_LATIN_REGEX = Regex(
         """^(?!(?:ΝΑΙ|ΟΧΙ|ΣΟΣ)(?:[ \t]*[,:]|[ \t]*\n))(?:[Α-ΩΆΈΉΊΌΎΏΪΫ]{3,20}(?:[ \t]+[Α-ΩΆΈΉΊΌΎΏΪΫ]{2,20}){0,3}|[Α-ΩΆΈΉΊΌΎΏΪΫ][α-ωάέήίόύώϊϋΐΰς'-]{1,20}(?:[ \t]+[Α-ΩΆΈΉΊΌΎΏΪΫ][α-ωάέήίόύώϊϋΐΰς'-]{1,20}){1,3})(?:[ \t]*[,:][ \t]+|[ \t]*\n+[ \t]*)(?=[\s\S]*[a-zA-ZăâîșțĂÂÎȘȚ]{2})"""
     )
@@ -37,7 +32,7 @@ object TranslationFilter {
         """(?:[,.]\s*|\n+\s*)(?:πατήστε\s+(?:δύο|δυο|2)\s+φορές|πατηστε\s+(?:δυο|2)\s+φορες|κάντε\s+διπλό\s+πάτημα|καντε\s+διπλο\s+πατημα|πατήστε\s+παρατεταμένα|πατηστε\s+παρατεταμενα|άγγιγμα\s+και\s+παρατεταμένο|αγγιγμα\s+και\s+παρατεταμενο|double[- ]?tap|tap\s+and\s+hold)[^\n]*$""",
         RegexOption.IGNORE_CASE
     )
-    // Por qué: TalkBack en Messenger anexa conteos de reacción o lectores entre la hora y la sugerencia final;
+    // Por qué: TalkBack puede anexar conteos de reacción o lectores entre la hora y la sugerencia final;
     // retirarlos antes permite limpiar después el estado de entrega y la marca de tiempo restante.
     private val TRAILING_REACTION_OR_SEEN_REGEX = Regex(
         """(?:,\s*|\n+\s*)(?:(?:\d+\s+)?(?:αντίδραση|αντιδράσεις|αντιδραση|αντιδρασεις|reaction|reactions|reacție|reacții|reactie|reactii)(?:\s*[:：]?\s*[^\n,]*)?|(?:(?:ο|η|ο/η)\s+χρήστης\s+|(?:ο|η|ο/η)\s+χρηστης\s+|εσείς\s+)?[^\n,]{1,40}\s+(?:αντέδρασε|αντεδρασε|αντιδράσατε|αντιδρασατε|reacted)(?:\s+(?:με|with|cu)\s+[^\n,]*)?|(?:διαβάστηκε|διαβαστηκε|εθεάθη|εθεαθη|το\s+είδε|το\s+ειδε|seen|read)\s+(?:από(?:\s+τον?\s+χρήστη)?|απο(?:\s+τον?\s+χρηστη)?|by|de)\s+[^\n,]+)$""",
@@ -218,24 +213,12 @@ object TranslationFilter {
         return null
     }
 
-    internal fun isUiOrStatusToken(lower: String): Boolean {
-        return COMMON_UI_TOKENS.contains(lower) || MESSAGE_STATUS_TOKENS.contains(lower)
-    }
-
-    internal fun stripExplicitActionPrefix(text: String): String {
-        return text.trimStart().replace(LEADING_SENDER_PREFIX_REGEX, "").trim()
-    }
-
-    /**
-     * Retira únicamente los metadatos finales de accesibilidad (sugerencias TalkBack, hora y estado),
-     * permitiendo evaluar el remitente inicial antes de la limpieza completa.
-     */
-    fun stripTrailingEnvelopeMetadata(text: String): EnvelopeStripResult {
+    private fun stripTrailingEnvelopeMetadata(text: String): String {
         val sanitized = TextSanitizer.sanitizeSpecialCharacters(text).trim()
         // Por qué: Si el nodo completo es únicamente un separador de fecha/hora (ej. "ΤΕΤ ΣΤΙΣ 6:02 Μ.Μ."),
         // se descarta por completo antes de recortar la hora final para no dejar fragmentos sueltos ("ΤΕΤ ΣΤΙΣ").
         if (sanitized.matches(TIMESTAMP_REGEX) || sanitized.matches(CHAT_RELATIVE_TIMESTAMP_REGEX)) {
-            return EnvelopeStripResult("", hadTrailingMetadata = false)
+            return ""
         }
         var cleaned = sanitized
         for (pass in 0 until 3) {
@@ -248,19 +231,13 @@ object TranslationFilter {
             cleaned = cleaned.replace(CHAT_STATUS_REGEX, "").trim()
             if (cleaned == before) break
         }
-        val hadTrailing = cleaned != sanitized
-        cleaned = cleaned.replace(Regex("""[,:\s]+$"""), "").trim()
-        return EnvelopeStripResult(cleaned, hadTrailingMetadata = hadTrailing)
+        return cleaned.replace(Regex("""[,:\s]+$"""), "").trim()
     }
 
-    /**
-     * Elimina prefijos de remitente conocidos (nombre o etiqueta de respuesta) sin re-ejecutar
-     * el recorte de marcas de tiempo finales.
-     */
-    fun stripLeadingSenderPrefixes(cleanedText: String): String {
+    private fun stripLeadingSenderPrefixes(cleanedText: String): String {
         var cleaned = cleanedText.trim()
         if (cleaned.isEmpty()) return ""
-        // Por qué: Elimina prefijos de accesibilidad de Messenger/Instagram ("ΑΓΓΕΛΟΣ, ", "Εσείς στείλατε: ",
+        // Por qué: Elimina prefijos de accesibilidad ("ΑΓΓΕΛΟΣ, ", "Εσείς στείλατε: ",
         // "Απαντήσατε στο χρήστη ...: "), aplicando hasta 2 pasadas por si hay nombre + etiqueta de respuesta.
         for (pass in 0 until 2) {
             val before = cleaned
@@ -274,10 +251,10 @@ object TranslationFilter {
 
     /**
      * Cleans OCR- or Accessibility-detected text by stripping trailing timestamps,
-     * edited tags, and delivery status markers across supported messaging apps.
+     * edited tags, and delivery status markers across supported chat apps.
      */
     fun cleanMessageText(text: String): String {
-        val stripped = stripTrailingEnvelopeMetadata(text).text
+        val stripped = stripTrailingEnvelopeMetadata(text)
         if (stripped.isEmpty()) return ""
         return stripLeadingSenderPrefixes(stripped)
     }

@@ -109,26 +109,6 @@ class ScanStats {
  */
 object NodeCandidateEvaluator {
 
-    fun cleanCandidateText(
-        raw: String,
-        isOutgoing: Boolean,
-        discoveredSenders: SenderPrefixCleaner.DiscoveredSenders?
-    ): String {
-        if (discoveredSenders == null) {
-            return TranslationFilter.cleanMessageText(raw)
-        }
-        val envelope = TranslationFilter.stripTrailingEnvelopeMetadata(raw)
-        if (envelope.text.isEmpty()) return ""
-        val withoutSender = SenderPrefixCleaner.stripSenderPrefix(
-            textAfterSuffixStrip = envelope.text,
-            isOutgoing = isOutgoing,
-            hadEnvelopeMetadata = envelope.hadTrailingMetadata,
-            discoveredSenders = discoveredSenders
-        )
-        if (withoutSender.isEmpty()) return ""
-        return TranslationFilter.stripLeadingSenderPrefixes(withoutSender)
-    }
-
     fun evaluateBottomUp(
         rawNodes: List<CollectedNodeSnapshot>,
         minY: Int,
@@ -138,7 +118,6 @@ object NodeCandidateEvaluator {
         configuredSource: String,
         configuredTarget: String,
         profile: ChatAppProfile,
-        discoveredSenders: SenderPrefixCleaner.DiscoveredSenders?,
         stats: ScanStats? = null
     ): List<EvaluatedCandidate> {
         if (rawNodes.isEmpty()) return emptyList()
@@ -169,7 +148,6 @@ object NodeCandidateEvaluator {
                 configuredSource = configuredSource,
                 configuredTarget = configuredTarget,
                 profile = profile,
-                discoveredSenders = discoveredSenders,
                 outList = outList,
                 stats = stats
             )
@@ -187,7 +165,6 @@ object NodeCandidateEvaluator {
         configuredSource: String,
         configuredTarget: String,
         profile: ChatAppProfile,
-        discoveredSenders: SenderPrefixCleaner.DiscoveredSenders?,
         outList: MutableList<EvaluatedCandidate>,
         stats: ScanStats?
     ): Int {
@@ -195,12 +172,11 @@ object NodeCandidateEvaluator {
         val expandedRect = item.expandedRect
         val directText = item.directText
         val descText = item.descText
-        val isOutgoing = screenWidth > 0 && expandedRect.right > screenWidth * 0.72f
 
-        // Por qué: En Litho/Messenger, un nodo puede traer texto corto en text y el cuerpo
-        // traducible en contentDescription; si el primero se descarta, evaluamos la alternativa.
+        // Por qué: Un nodo contenedor puede traer texto corto en text y el cuerpo traducible en
+        // contentDescription; si el primero se descarta, evaluamos la alternativa.
         var chosenRaw = directText ?: descText ?: return 0
-        var cleanText = cleanCandidateText(chosenRaw, isOutgoing, discoveredSenders)
+        var cleanText = TranslationFilter.cleanMessageText(chosenRaw)
         var rejectReason = TranslationFilter.filterRejectionReason(
             text = cleanText,
             configuredTarget = configuredTarget,
@@ -210,7 +186,7 @@ object NodeCandidateEvaluator {
         var usedDirectText = directText != null
 
         if (rejectReason != null && directText != null && descText != null && descText != directText) {
-            val altClean = cleanCandidateText(descText, isOutgoing, discoveredSenders)
+            val altClean = TranslationFilter.cleanMessageText(descText)
             val altReject = TranslationFilter.filterRejectionReason(
                 text = altClean,
                 configuredTarget = configuredTarget,
@@ -331,31 +307,10 @@ object NodeCandidateEvaluator {
 
 /**
  * Recolector unificado de una sola pasada sobre el árbol de accesibilidad de la app activa.
- *
- * Por qué: Consolida los antiguos caminantes duplicados (`collectRawMessengerNodes` y
- * `collectStandardMessageCandidates`) y elimina el segundo recorrido obsoleto del contexto LLM.
  */
 class NodeTreeScanner(
     private val isEnabledPackage: (String) -> Boolean
 ) {
-    private val cachedMessengerSelfSenders = LinkedHashSet<String>(4)
-    @Volatile private var cachedMessengerPartnerSenders: Set<String> = emptySet()
-
-    fun snapshotCachedMessengerSenders(): SenderPrefixCleaner.DiscoveredSenders {
-        synchronized(cachedMessengerSelfSenders) {
-            return SenderPrefixCleaner.DiscoveredSenders(
-                partnerNames = cachedMessengerPartnerSenders,
-                selfNames = cachedMessengerSelfSenders.toSet()
-            )
-        }
-    }
-
-    fun clearSenderCache() {
-        synchronized(cachedMessengerSelfSenders) {
-            cachedMessengerSelfSenders.clear()
-            cachedMessengerPartnerSenders = emptySet()
-        }
-    }
 
     fun scanVisibleMessages(
         rootNode: AccessibilityNodeInfo,
@@ -367,8 +322,6 @@ class NodeTreeScanner(
         profile: ChatAppProfile,
         stats: ScanStats
     ): List<MessageCandidate> {
-        val collectSenders = SenderPrefixCleaner.supportsAccessibilitySenderPrefix(profile.id)
-        val headerTexts = if (collectSenders) mutableListOf<String>() else null
         val rawNodes = mutableListOf<CollectedNodeSnapshot>()
 
         collectRawNodes(
@@ -380,43 +333,9 @@ class NodeTreeScanner(
             density = displayBounds.density,
             profile = profile,
             stats = stats,
-            headerTexts = headerTexts,
             outRawNodes = rawNodes
         )
         if (rawNodes.isEmpty()) return emptyList()
-
-        val effectiveSenders = if (collectSenders) {
-            val headerPartnerNames = SenderPrefixCleaner.extractPartnerNamesFromHeaderTexts(headerTexts ?: emptyList())
-            val viewportSamples = ArrayList<SenderPrefixCleaner.BubbleTextSample>(rawNodes.size)
-            for (item in rawNodes) {
-                if (!item.inChatViewport) continue
-                if (!TranslationSenseEngine.isMessageBubble(item.expandedRect.left, item.expandedRect.right, displayBounds.widthPx, profile.alignmentMode)) {
-                    continue
-                }
-                item.directText?.let { raw ->
-                    val stripped = TranslationFilter.stripTrailingEnvelopeMetadata(raw).text
-                    if (stripped.isNotBlank()) {
-                        viewportSamples.add(SenderPrefixCleaner.BubbleTextSample(stripped, item.expandedRect.left, item.expandedRect.right))
-                    }
-                }
-                item.descText?.let { raw ->
-                    if (raw != item.directText) {
-                        val stripped = TranslationFilter.stripTrailingEnvelopeMetadata(raw).text
-                        if (stripped.isNotBlank()) {
-                            viewportSamples.add(SenderPrefixCleaner.BubbleTextSample(stripped, item.expandedRect.left, item.expandedRect.right))
-                        }
-                    }
-                }
-            }
-            val discovered = SenderPrefixCleaner.discoverSideSenders(
-                samples = viewportSamples,
-                headerPartnerNames = headerPartnerNames,
-                screenWidth = displayBounds.widthPx
-            )
-            updateAndSnapshotMessengerSenders(discovered)
-        } else {
-            null
-        }
 
         val evaluated = NodeCandidateEvaluator.evaluateBottomUp(
             rawNodes = rawNodes,
@@ -427,32 +346,12 @@ class NodeTreeScanner(
             configuredSource = configuredSource,
             configuredTarget = configuredTarget,
             profile = profile,
-            discoveredSenders = effectiveSenders,
             stats = stats
         )
 
         return NodeCandidateEvaluator
             .filterOverlapping(evaluated, displayBounds.density)
             .map { MessageCandidate(it.text, Rect(it.bounds.left, it.bounds.top, it.bounds.right, it.bounds.bottom)) }
-    }
-
-    private fun updateAndSnapshotMessengerSenders(
-        discovered: SenderPrefixCleaner.DiscoveredSenders
-    ): SenderPrefixCleaner.DiscoveredSenders {
-        synchronized(cachedMessengerSelfSenders) {
-            for (name in discovered.selfNames) {
-                if (!cachedMessengerSelfSenders.contains(name) && cachedMessengerSelfSenders.size >= 4) {
-                    val oldest = cachedMessengerSelfSenders.firstOrNull()
-                    if (oldest != null) cachedMessengerSelfSenders.remove(oldest)
-                }
-                cachedMessengerSelfSenders.add(name)
-            }
-            cachedMessengerPartnerSenders = discovered.partnerNames
-            return SenderPrefixCleaner.DiscoveredSenders(
-                partnerNames = discovered.partnerNames,
-                selfNames = cachedMessengerSelfSenders.toSet()
-            )
-        }
     }
 
     private fun collectRawNodes(
@@ -464,7 +363,6 @@ class NodeTreeScanner(
         density: Float,
         profile: ChatAppProfile,
         stats: ScanStats,
-        headerTexts: MutableList<String>?,
         outRawNodes: MutableList<CollectedNodeSnapshot>,
         depth: Int = 0
     ): List<Int> {
@@ -493,7 +391,6 @@ class NodeTreeScanner(
                 density = density,
                 profile = profile,
                 stats = stats,
-                headerTexts = headerTexts,
                 outRawNodes = outRawNodes,
                 depth = depth + 1
             )
@@ -535,15 +432,6 @@ class NodeTreeScanner(
         if (rect.right <= 0 || rect.left >= screenWidth) {
             stats.skippedBubbleBounds++
             return collectedChildren
-        }
-
-        if (headerTexts != null) {
-            // Por qué: La cabecera del chat sobre `minY` contiene el nombre del interlocutor para excluirlo en burbujas entrantes.
-            val headerBottomTolerance = (28 * density).toInt()
-            if (rect.top >= 0 && rect.top < minY && rect.bottom <= minY + headerBottomTolerance && rect.left < screenWidth * 0.72f) {
-                directText?.let { headerTexts.add(it) }
-                descText?.let { if (it != directText) headerTexts.add(it) }
-            }
         }
 
         val viewportPad = (16 * density).toInt()

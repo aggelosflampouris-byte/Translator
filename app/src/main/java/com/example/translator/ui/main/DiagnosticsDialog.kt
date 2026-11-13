@@ -88,7 +88,6 @@ private fun buildDiagnosticsReport(
     translationMode: String,
     enabledPackages: Set<String>
 ): String {
-    val messengerOn = enabledPackages.contains("com.facebook.orca")
     val trace = crashPrefs.getString(TranslatorApplication.KEY_LAST_CRASH, null)
     val lastCrashSummary = if (trace.isNullOrBlank()) {
         null
@@ -109,7 +108,7 @@ private fun buildDiagnosticsReport(
         appendLine("Version: v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
         appendLine("AccService: ${ServiceBridge.isAccessibilityActive} | Translating: ${ServiceBridge.isTranslatingActive}")
         appendLine("Pair: $sourceLanguage -> $targetLanguage | Mode: $translationMode")
-        appendLine("EnabledPkgs: ${enabledPackages.size} (Messenger=$messengerOn)")
+        appendLine("EnabledPkgs: ${enabledPackages.size}")
         appendLine("Runtime: ${ServiceBridge.lastRuntimeTrace}")
         appendLine("LastScan: ${ServiceBridge.lastScanDebug}")
         appendLine("LastTree: ${ServiceBridge.lastTreeScanDebug}")

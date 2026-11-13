@@ -13,33 +13,11 @@ import org.junit.Test
  */
 class NodeCandidateEvaluatorTest {
 
-    private val messengerProfile = TargetAppCatalog.profileForPackage("com.facebook.orca")
+    private val instagramProfile = TargetAppCatalog.profileForPackage("com.instagram.android")
     private val density = 3.0f
     private val screenWidth = 1080
     private val minY = 200
     private val maxY = 2000
-
-    @Test
-    fun cleanCandidateText_stripsPartnerSenderAndTrailingMetadata() {
-        val discovered = SenderPrefixCleaner.DiscoveredSenders(
-            partnerNames = setOf("lefteris"),
-            selfNames = setOf("angelos")
-        )
-
-        val cleanedIncoming = NodeCandidateEvaluator.cleanCandidateText(
-            raw = "Lefteris: Ce faci prietene?, 12:30, Seen",
-            isOutgoing = false,
-            discoveredSenders = discovered
-        )
-        assertEquals("Ce faci prietene?", cleanedIncoming)
-
-        val cleanedOutgoing = NodeCandidateEvaluator.cleanCandidateText(
-            raw = "Angelos, Sunt pe drum, 12:31, Delivered",
-            isOutgoing = true,
-            discoveredSenders = discovered
-        )
-        assertEquals("Sunt pe drum", cleanedOutgoing)
-    }
 
     @Test
     fun evaluateBottomUp_suppressesWrapperContainerWhenChildAccepted() {
@@ -75,8 +53,7 @@ class NodeCandidateEvaluatorTest {
             density = density,
             configuredSource = TranslateLanguage.ROMANIAN,
             configuredTarget = TranslateLanguage.GREEK,
-            profile = messengerProfile,
-            discoveredSenders = null
+            profile = instagramProfile
         )
 
         assertEquals(1, results.size)
@@ -105,8 +82,7 @@ class NodeCandidateEvaluatorTest {
             density = density,
             configuredSource = TranslateLanguage.ROMANIAN,
             configuredTarget = TranslateLanguage.GREEK,
-            profile = messengerProfile,
-            discoveredSenders = null
+            profile = instagramProfile
         )
 
         assertEquals(1, results.size)
@@ -148,8 +124,7 @@ class NodeCandidateEvaluatorTest {
             density = density,
             configuredSource = TranslateLanguage.ROMANIAN,
             configuredTarget = TranslateLanguage.GREEK,
-            profile = messengerProfile,
-            discoveredSenders = null,
+            profile = instagramProfile,
             stats = stats
         )
 
@@ -189,9 +164,9 @@ class NodeCandidateEvaluatorTest {
         val rawNodes = (0 until 8).map { idx ->
             val top = 250 + idx * 180
             val text = if (idx == 7) {
-                "ΑΓΓΕΛΟΣ, Bună ziua, 1:25 μ.μ., Απεστάλη, Πατήστε δύο φορές για να απαντήσετε"
+                "Εσείς στείλατε: Bună ziua, 1:25 μ.μ., Απεστάλη"
             } else {
-                "ΑΓΓΕΛΟΣ, Ελληνικό μήνυμα $idx, 1:25 μ.μ., Απεστάλη, Πατήστε δύο φορές για να απαντήσετε"
+                "Ελληνικό μήνυμα $idx, 1:25 μ.μ., Απεστάλη"
             }
             CollectedNodeSnapshot(
                 rawRect = WindowRect(147, top, 1000, top + 100),
@@ -214,8 +189,7 @@ class NodeCandidateEvaluatorTest {
             density = density,
             configuredSource = TranslateLanguage.ROMANIAN,
             configuredTarget = TranslateLanguage.GREEK,
-            profile = messengerProfile,
-            discoveredSenders = SenderPrefixCleaner.DiscoveredSenders(selfNames = setOf("αγγελος")),
+            profile = instagramProfile,
             stats = stats
         )
 

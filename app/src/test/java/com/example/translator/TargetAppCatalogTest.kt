@@ -67,43 +67,81 @@ class TargetAppCatalogTest {
     }
 
     @Test
-    fun blockedSensitivePackages_allowsLegitimateMessagingApps() {
+    fun curatedProfiles_andDefaults_keepOnlyTestedSupportedApps() {
+        assertEquals(
+            listOf("whatsapp", "instagram", "viber"),
+            TargetAppCatalog.CURATED_PROFILES.map { it.id }
+        )
+        assertEquals(
+            setOf(
+                "com.whatsapp",
+                "com.whatsapp.w4b",
+                "com.instagram.android",
+                "com.viber.voip"
+            ),
+            TargetAppCatalog.getDefaultEnabledPackages()
+        )
+        assertTrue(TargetAppCatalog.isSupportedPackage("com.whatsapp"))
+        assertTrue(TargetAppCatalog.isSupportedPackage("com.instagram.android"))
+        assertTrue(TargetAppCatalog.isSupportedPackage("com.viber.voip"))
+        assertFalse(TargetAppCatalog.isSupportedPackage("com.facebook.orca"))
+        assertFalse(TargetAppCatalog.isSupportedPackage("org.telegram.messenger"))
+        assertFalse(TargetAppCatalog.isSupportedPackage("com.discord"))
+    }
+
+    @Test
+    fun blockedSensitivePackages_allowsVerifiedMessagingApps() {
         val selfPkg = "com.example.translator"
 
         assertFalse(TargetAppCatalog.isBlockedSensitivePackage("com.whatsapp", selfPkg))
-        assertFalse(TargetAppCatalog.isBlockedSensitivePackage("org.telegram.messenger", selfPkg))
-        assertFalse(TargetAppCatalog.isBlockedSensitivePackage("com.facebook.orca", selfPkg))
         assertFalse(TargetAppCatalog.isBlockedSensitivePackage("com.instagram.android", selfPkg))
-        assertFalse(TargetAppCatalog.isBlockedSensitivePackage("com.discord", selfPkg))
-        assertFalse(TargetAppCatalog.isBlockedSensitivePackage("org.thoughtcrime.securesms", selfPkg))
         assertFalse(TargetAppCatalog.isBlockedSensitivePackage("com.viber.voip", selfPkg))
-        assertFalse(TargetAppCatalog.isBlockedSensitivePackage("com.google.android.apps.messaging", selfPkg))
         // Legitimate package containing "time" or "anime" should not false-positive on IME keyword
         assertFalse(TargetAppCatalog.isBlockedSensitivePackage("com.example.animechat", selfPkg))
     }
 
     @Test
-    fun profileForPackage_resolvesCuratedAndFallbackProfiles() {
+    fun profileForPackage_resolvesTestedAndFallbackProfiles() {
         assertEquals("whatsapp", TargetAppCatalog.profileForPackage("com.whatsapp").id)
-        assertEquals(ChatAlignmentMode.LEFT_RIGHT_CHAT, TargetAppCatalog.profileForPackage("org.telegram.messenger").alignmentMode)
-        assertEquals(ChatAlignmentMode.LEFT_STREAM_CHAT, TargetAppCatalog.profileForPackage("com.discord").alignmentMode)
-        assertFalse(TargetAppCatalog.profileForPackage("com.discord").expandContainerToParent)
+        assertTrue(TargetAppCatalog.profileForPackage("com.whatsapp").expandContainerToParent)
+        assertEquals("instagram", TargetAppCatalog.profileForPackage("com.instagram.android").id)
+        assertFalse(TargetAppCatalog.profileForPackage("com.instagram.android").expandContainerToParent)
+        assertEquals("viber", TargetAppCatalog.profileForPackage("com.viber.voip").id)
+        assertTrue(TargetAppCatalog.profileForPackage("com.viber.voip").expandContainerToParent)
+        assertEquals("generic", TargetAppCatalog.profileForPackage("com.facebook.orca").id)
         assertEquals("generic", TargetAppCatalog.profileForPackage("com.reddit.frontpage").id)
     }
 
     @Test
-    fun saveAndGetEnabledPackages_stripsBlockedPackages() {
+    fun saveAndGetEnabledPackages_stripsBlockedAndUnsupportedPackages() {
         val prefs = InMemorySharedPreferences()
         val selfPkg = "com.example.translator"
 
         TargetAppCatalog.saveEnabledPackages(
             prefs,
-            setOf("com.whatsapp", "org.telegram.messenger", "com.revolut.revolut", "com.android.settings"),
+            setOf(
+                "com.whatsapp",
+                "com.instagram.android",
+                "com.facebook.orca",
+                "org.telegram.messenger",
+                "com.revolut.revolut",
+                "com.android.settings"
+            ),
             selfPkg
         )
 
         val loaded = TargetAppCatalog.getEnabledPackages(prefs, selfPkg)
-        assertEquals(setOf("com.whatsapp", "org.telegram.messenger"), loaded)
+        assertEquals(setOf("com.whatsapp", "com.instagram.android"), loaded)
+
+        // Simula preferencias heredadas de una versión anterior que todavía conservaban Messenger o apps no probadas.
+        prefs.edit().putStringSet(
+            AppDefaults.KEY_ENABLED_PACKAGES,
+            setOf("com.whatsapp", "com.viber.voip", "com.facebook.orca", "com.facebook.mlite", "com.discord")
+        ).apply()
+        assertEquals(
+            setOf("com.whatsapp", "com.viber.voip"),
+            TargetAppCatalog.getEnabledPackages(prefs, selfPkg)
+        )
     }
 }
 

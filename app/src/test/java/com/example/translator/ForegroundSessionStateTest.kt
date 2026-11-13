@@ -10,7 +10,7 @@ import org.junit.Test
  * Pruebas unitarias de la máquina de estados de sesión en primer plano [ForegroundSessionState].
  *
  * Por qué: Verifican que las transiciones `source=null` y superposiciones pequeñas de One UI
- * no borren la sesión activa de Viber/Messenger mientras las salidas reales sí limpian la caché.
+ * no borren la sesión activa de las apps compatibles mientras las salidas reales sí limpian la caché.
  */
 class ForegroundSessionStateTest {
 
@@ -19,7 +19,7 @@ class ForegroundSessionStateTest {
         val state = ForegroundSessionState()
 
         state.recordNonTransientEvent(
-            packageName = "com.facebook.orca",
+            packageName = "com.instagram.android",
             eventType = ForegroundSessionState.EVT_WINDOW_STATE_CHANGED,
             nowMs = 1_000L,
             isEnabledTarget = true,
@@ -37,7 +37,7 @@ class ForegroundSessionStateTest {
         )
 
         assertFalse(cleared)
-        assertEquals("com.facebook.orca", state.lastTargetEventPkg)
+        assertEquals("com.instagram.android", state.lastTargetEventPkg)
         assertTrue(state.hasActiveVisibleTargetSignal(1_600L))
     }
 
@@ -73,7 +73,7 @@ class ForegroundSessionStateTest {
         val state = ForegroundSessionState()
 
         state.recordNonTransientEvent(
-            packageName = "com.facebook.orca",
+            packageName = "com.whatsapp",
             eventType = ForegroundSessionState.EVT_WINDOW_STATE_CHANGED,
             nowMs = 1_000L,
             isEnabledTarget = true,
@@ -158,7 +158,7 @@ class ForegroundSessionStateTest {
         val state = ForegroundSessionState()
 
         state.recordNonTransientEvent(
-            packageName = "com.facebook.orca",
+            packageName = "com.instagram.android",
             eventType = ForegroundSessionState.EVT_WINDOW_CONTENT_CHANGED,
             nowMs = 5_000L,
             isEnabledTarget = true,
@@ -167,7 +167,7 @@ class ForegroundSessionStateTest {
         )
 
         state.recordTargetSourceObservation(
-            packageName = "com.facebook.orca",
+            packageName = "com.instagram.android",
             eventType = ForegroundSessionState.EVT_WINDOW_CONTENT_CHANGED,
             nowMs = 5_010L,
             hasNonNullSource = false,
@@ -177,7 +177,7 @@ class ForegroundSessionStateTest {
         assertEquals(1, state.targetNullBurstAfterNonTargetCount)
 
         state.recordTargetSourceObservation(
-            packageName = "com.facebook.orca",
+            packageName = "com.instagram.android",
             eventType = ForegroundSessionState.EVT_WINDOW_CONTENT_CHANGED,
             nowMs = 5_050L,
             hasNonNullSource = true,
@@ -195,7 +195,7 @@ class ForegroundSessionStateTest {
         val state = ForegroundSessionState()
 
         val enter = state.onForegroundResolved(
-            activeTargetPkg = "com.facebook.orca",
+            activeTargetPkg = "com.instagram.android",
             resolveReason = "active_window",
             hasActiveOverlays = false,
             isScrollQuieted = true
@@ -218,7 +218,7 @@ class ForegroundSessionStateTest {
 
         // Recuperación tras volver al mismo chat sin burbujas activas -> solicita escaneo inmediato.
         val recover = state.onForegroundResolved(
-            activeTargetPkg = "com.facebook.orca",
+            activeTargetPkg = "com.instagram.android",
             resolveReason = "active_window",
             hasActiveOverlays = false,
             isScrollQuieted = true
@@ -244,7 +244,7 @@ class ForegroundSessionStateTest {
         val state = ForegroundSessionState()
 
         state.onForegroundResolved(
-            activeTargetPkg = "com.facebook.orca",
+            activeTargetPkg = "com.whatsapp",
             resolveReason = "active_window",
             hasActiveOverlays = false,
             isScrollQuieted = true
