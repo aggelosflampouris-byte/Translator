@@ -30,12 +30,21 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      - name: Configure Release Keystore (when provided via Secrets)
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            mkdir -p signing
+            echo "$KEYSTORE_BASE64" | base64 --decode > signing/release.keystore
+          fi
+
       - name: Build Release APK
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: |
-          export GEMINI_API_KEY="$(echo -n "$GEMINI_API_KEY" | tr -d '\r\n[:space:]')"
-          ./gradlew assembleRelease --no-daemon || (sleep 5 && ./gradlew assembleRelease --no-daemon)
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEYSTORE_ALIAS: ${{ secrets.KEYSTORE_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --no-daemon || (sleep 5 && ./gradlew assembleRelease --no-daemon)
 
       - name: Prepare Release Artifact
         run: |

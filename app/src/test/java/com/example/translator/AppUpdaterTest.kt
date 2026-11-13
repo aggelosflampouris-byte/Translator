@@ -1,7 +1,9 @@
 package com.example.translator
 
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -55,8 +57,43 @@ class AppUpdaterTest {
         assertFalse(AppUpdater.isTrustedDownloadUrl("https://github.com/aggelosflampouris-byte/TranslatorEvil/releases/download/v1/app.apk"))
         assertFalse(AppUpdater.isTrustedDownloadUrl("https://github.com.evil.com/aggelosflampouris-byte/Translator/app.apk"))
         assertFalse(AppUpdater.isTrustedDownloadUrl("https://user@github.com/aggelosflampouris-byte/Translator/app.apk"))
+        assertFalse(AppUpdater.isTrustedDownloadUrl("https://github.com/aggelosflampouris-byte/Translator/../../attacker/Repo/app.apk"))
+        assertFalse(AppUpdater.isTrustedDownloadUrl("https://github.com/aggelosflampouris-byte/Translator/%2e%2e/%2e%2e/attacker/Repo/app.apk"))
         assertFalse(AppUpdater.isTrustedDownloadUrl("not a url"))
         assertFalse(AppUpdater.isTrustedDownloadUrl("file:///sdcard/app.apk"))
+    }
+
+    @Test
+    fun parseSha256Digest_acceptsRawAndSha256SumFormats() {
+        val hex = "a".repeat(64)
+        assertEquals(hex, AppUpdater.parseSha256Digest(hex))
+        assertEquals(hex, AppUpdater.parseSha256Digest("${hex.uppercase()}  app-release-signed.apk\n"))
+        assertNull(AppUpdater.parseSha256Digest("<html>not found</html>"))
+        assertNull(AppUpdater.parseSha256Digest("deadbeef"))
+    }
+
+    @Test
+    fun computeFileSha256_computesExpectedDigest() {
+        val tmp = File.createTempFile("appupdater-sha", ".bin")
+        try {
+            tmp.writeText("abc")
+            assertEquals(
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+                AppUpdater.computeFileSha256(tmp)
+            )
+        } finally {
+            tmp.delete()
+        }
+    }
+
+    @Test
+    fun buildReleaseUrl_rejectsPathTraversalTags() {
+        assertNull(AppUpdater.buildReleaseUrl("download", "../attacker", "app.apk"))
+        assertNull(AppUpdater.buildReleaseUrl("download", "v1.0/../../evil", "app.apk"))
+        assertEquals(
+            "https://github.com/aggelosflampouris-byte/Translator/releases/download/v1.0.109/app-release-signed.apk",
+            AppUpdater.buildReleaseUrl("download", "v1.0.109", "app-release-signed.apk")
+        )
     }
 }
 

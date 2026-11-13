@@ -45,8 +45,8 @@ object TranslationNotificationManager {
         val src = prefs.getString(AppDefaults.KEY_SOURCE_LANGUAGE, AppDefaults.SOURCE_LANGUAGE) ?: AppDefaults.SOURCE_LANGUAGE
         val tgt = prefs.getString(AppDefaults.KEY_TARGET_LANGUAGE, AppDefaults.TARGET_LANGUAGE) ?: AppDefaults.TARGET_LANGUAGE
 
-        val srcCode = formatLanguageDisplayName(src)
-        val tgtCode = formatLanguageDisplayName(tgt)
+        val srcCode = AppDefaults.formatLanguageDisplayName(src)
+        val tgtCode = AppDefaults.formatLanguageDisplayName(tgt)
 
         // Intent al tocar la notificación (abre MainActivity)
         val openAppIntent = Intent(context, MainActivity::class.java).apply {
@@ -116,12 +116,6 @@ object TranslationNotificationManager {
         notificationManager.notify(NOTIFICATION_ID, builder.build())
         ServiceBridge.isNotificationActive = true
         ServiceBridge.notifyUiStateChanged()
-    }
-
-    private fun formatLanguageDisplayName(code: String): String {
-        return java.util.Locale.forLanguageTag(code).displayLanguage.replaceFirstChar {
-            if (it.isLowerCase()) it.titlecase(java.util.Locale.getDefault()) else it.toString()
-        }
     }
 
     fun cancelNotification(context: Context) {

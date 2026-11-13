@@ -22,8 +22,8 @@ data class DraftSession(
  * On-device, private memory of what the user has taught the translator.
  *
  * - Translation memory: sentences the user actually sent, reused verbatim next time (both directions).
- * - Learned corrections: words the user replaced in a draft, injected into the neural prompt
- *   and, once confirmed twice, applied deterministically to every engine's output.
+ * - Learned corrections: words the user replaced in a draft, injected into preferred hints
+ *   and applied deterministically once learned (since [MIN_HITS_FOR_AUTO_CORRECTION] = 1).
  *
  * Por qué: SQLite persiste el aprendizaje entre reinicios del servicio; los mapas en memoria
  * permiten consultas O(1) en el hilo de traducción sin tocar el disco.
@@ -40,6 +40,8 @@ class LearningStore private constructor(context: Context) {
 
         // Por qué: Un borrador abandonado durante minutos ya no representa la intención del envío.
         const val DRAFT_SESSION_TTL_MS = 5 * 60 * 1000L
+
+        private val WHITESPACE_REGEX = Regex("""\s+""")
 
         @Volatile private var instance: LearningStore? = null
 
@@ -324,7 +326,7 @@ class LearningStore private constructor(context: Context) {
     }
 
     private fun normalizeForKey(text: String): String {
-        return text.trim().lowercase().replace(Regex("\\s+"), " ")
+        return text.trim().lowercase().replace(WHITESPACE_REGEX, " ")
     }
 }
 

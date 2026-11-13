@@ -100,12 +100,15 @@ object TargetAppCatalog {
         "launcher", "quickstep", "trebuchet", "nexuslauncher"
     )
 
-    private val BLOCKED_PACKAGE_KEYWORDS = LAUNCHER_PACKAGE_KEYWORDS + listOf(
-        "keyboard", "honeyboard", "inputmethod", "latinime", "gboard", "swiftkey",
+    private val PRIVACY_SENSITIVE_KEYWORDS = listOf(
         "bank", "banking", "wallet", "paypal", "revolut", "venmo", "cashapp",
         "authenticator", "1password", "agilebits", "bitwarden", "keepass", "dashlane", "lastpass",
         "keychain", "credential"
     )
+
+    private val BLOCKED_PACKAGE_KEYWORDS = LAUNCHER_PACKAGE_KEYWORDS + listOf(
+        "keyboard", "honeyboard", "inputmethod", "latinime", "gboard", "swiftkey"
+    ) + PRIVACY_SENSITIVE_KEYWORDS
 
     /**
      * Devuelve el conjunto predeterminado de paquetes habilitados para la primera ejecución.
@@ -143,6 +146,16 @@ object TargetAppCatalog {
     }
 
     /**
+     * Indica si un paquete pertenece a apps financieras, de pagos o gestores de contraseñas.
+     * Por qué: Evita incluso registrar sus nombres en trazas diagnósticas externas.
+     */
+    fun isPrivacySensitivePackage(pkg: String?): Boolean {
+        if (pkg.isNullOrBlank()) return false
+        val lower = pkg.lowercase()
+        return PRIVACY_SENSITIVE_KEYWORDS.any { lower.contains(it) }
+    }
+
+    /**
      * Bloquea de forma inmutable paquetes del sistema, lanzadores, teclados y apps financieras/contraseñas.
      */
     fun isBlockedSensitivePackage(pkg: String?, selfPackage: String): Boolean {
@@ -153,10 +166,7 @@ object TargetAppCatalog {
 
         val lower = pkg.lowercase()
         if (lower.endsWith(".home") || lower.contains(".home.")) return true
-        return BLOCKED_PACKAGE_KEYWORDS.any { keyword ->
-            // Por qué: "ime" solo se comprueba como segmento para no bloquear paquetes legítimos como "anime" o "time"
-            lower.contains(keyword)
-        }
+        return BLOCKED_PACKAGE_KEYWORDS.any { lower.contains(it) }
     }
 
     /**
@@ -191,10 +201,5 @@ object TargetAppCatalog {
         if (pkg.isNullOrBlank()) return GENERIC_DEFAULT_PROFILE
         return PROFILE_BY_PACKAGE[pkg] ?: GENERIC_DEFAULT_PROFILE
     }
-
-    /**
-     * Lista de todos los paquetes conocidos para consultas del sistema (<queries>).
-     */
-    fun allCuratedPackages(): Set<String> = PROFILE_BY_PACKAGE.keys
 }
 

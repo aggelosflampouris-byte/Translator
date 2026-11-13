@@ -14,6 +14,7 @@ import android.widget.Toast
 import com.google.mlkit.nl.translate.TranslateLanguage
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -38,13 +39,48 @@ class DraftTranslationController(
     private val postToMain: (epochCheck: Long?, () -> Unit) -> Unit,
     private val currentOverlayEpoch: () -> Long,
     private val recordOverlayDrawn: (epoch: Long) -> Unit,
-    private val onCacheEvictRequired: () -> Unit
+    private val onCacheEvictRequired: () -> Unit,
+    private val identifyLanguage: suspend (String) -> String? = { null }
 ) {
     companion object {
         private val PLACEHOLDER_TOKENS = setOf(
             "μήνυμα", "μηνυμα", "message", "message...", "type a message", "type a message...",
-            "aa", "signal message", "add a comment", "add a comment...", "write a message", "reply..."
+            "aa", "add a comment", "add a comment...", "write a message", "reply..."
         )
+
+        /**
+         * Resuelve la dirección de traducción del borrador sin exigir par con griego cuando hay autodetección.
+         */
+        internal fun resolveDraftDirection(
+            text: String,
+            manualTarget: String?,
+            configuredSource: String,
+            configuredTarget: String,
+            detectedLang: String? = null
+        ): Pair<String, String> {
+            if (manualTarget != null) {
+                val source = if (manualTarget == configuredTarget) configuredSource else configuredTarget
+                return source to manualTarget
+            }
+            val greekLang = TranslateLanguage.GREEK
+            val hasGreekAndLatinPair = (configuredSource == greekLang) xor (configuredTarget == greekLang)
+            if (hasGreekAndLatinPair) {
+                val otherLang = if (configuredSource == greekLang) configuredTarget else configuredSource
+                return when (TextNormalizer.detectScriptType(text)) {
+                    TextNormalizer.ScriptType.GREEK -> greekLang to otherLang
+                    TextNormalizer.ScriptType.LATIN -> otherLang to greekLang
+                    TextNormalizer.ScriptType.NEUTRAL -> configuredTarget to configuredSource
+                }
+            }
+            if (!detectedLang.isNullOrBlank() &&
+                detectedLang != "und" &&
+                detectedLang == configuredSource &&
+                detectedLang != configuredTarget
+            ) {
+                return configuredSource to configuredTarget
+            }
+            return configuredTarget to configuredSource
+        }
     }
 
     @Volatile var cachedEditableNode: AccessibilityNodeInfo? = null
@@ -54,17 +90,19 @@ class DraftTranslationController(
     @Volatile var pendingDraftSession: DraftSession? = null
         private set
 
-    private var typingJob: Job? = null
+    @Volatile private var typingJob: Job? = null
     @Volatile private var pendingTypingSource: String? = null
     @Volatile private var pendingTypingTargetLang: String? = null
     @Volatile private var pendingTypingWindowStartMs: Long = 0L
 
-    private var lastInsertedText: String? = null
-    private var dismissedDraftText: String? = null
-    private var lastRenderedDraftSource: String? = null
-    private var lastRenderedDraftTop: Int = 0
-    private var lastRenderedDraftManualLang: String? = null
-    private var manualDraftTargetLang: String? = null
+    @Volatile private var lastInsertedText: String? = null
+    @Volatile private var lastInsertedAtMs: Long = 0L
+    @Volatile private var lastInsertedObserved: Boolean = false
+    @Volatile private var dismissedDraftText: String? = null
+    @Volatile private var lastRenderedDraftSource: String? = null
+    @Volatile private var lastRenderedDraftTop: Int = 0
+    @Volatile private var lastRenderedDraftManualLang: String? = null
+    @Volatile private var manualDraftTargetLang: String? = null
 
     private val sentMessageDetector = SentMessageDetector()
 
@@ -229,15 +267,25 @@ class DraftTranslationController(
         val rawText = try { node.text?.toString()?.trim() ?: "" } catch (_: Exception) { "" }
         val hintText = try { node.hintText?.toString()?.trim() ?: "" } catch (_: Exception) { "" }
 
-        if (rawText == lastInsertedText) {
-            pendingTypingSource = null
-            pendingTypingTargetLang = null
-            pendingTypingWindowStartMs = 0L
-            diagnostics.setDraftDiag("skip=inserted")
-            postToMain(null) { overlayManager.removeDraftOverlay() }
-            return
+        val activeInserted = lastInsertedText
+        if (activeInserted != null) {
+            if (rawText == activeInserted) {
+                lastInsertedObserved = true
+                pendingTypingSource = null
+                pendingTypingTargetLang = null
+                pendingTypingWindowStartMs = 0L
+                diagnostics.setDraftDiag("skip=inserted")
+                postToMain(null) { overlayManager.removeDraftOverlay() }
+                return
+            }
+            val elapsedSinceInsert = SystemClock.uptimeMillis() - lastInsertedAtMs
+            // Por qué: Evita limpiar el escudo ante eventos rezagados con el borrador original justo tras pulsar Replace.
+            if (!lastInsertedObserved && elapsedSinceInsert < 1200L) {
+                return
+            }
+            lastInsertedText = null
+            lastInsertedObserved = false
         }
-        lastInsertedText = null
 
         if (isPlaceholderText(rawText, hintText, node)) {
             typingJob?.cancel()
@@ -264,7 +312,7 @@ class DraftTranslationController(
         } catch (_: Exception) {
             return
         }
-        val density = service.resources.displayMetrics.density
+        val density = ScreenMetricsHelper.currentBounds(service).density
         if (overlayManager.currentDraftOverlayBounds != null &&
             rawText == lastRenderedDraftSource &&
             manualDraftTargetLang == lastRenderedDraftManualLang &&
@@ -327,13 +375,21 @@ class DraftTranslationController(
                 freshRect.set(currentRect)
             }
 
+            val greekLang = TranslateLanguage.GREEK
+            val hasGreekAndLatinPair = (configuredSource == greekLang) xor (configuredTarget == greekLang)
+            val detectedNonGreek = if (manualDraftTargetLang == null && !hasGreekAndLatinPair) {
+                identifyLanguage(liveText)
+            } else {
+                null
+            }
             val (effectiveSourceLang, effectiveTargetLang) = resolveDraftDirection(
                 text = liveText,
                 manualTarget = manualDraftTargetLang ?: draftTargetLang.takeIf {
-                    TextNormalizer.detectScriptType(liveText) == TextNormalizer.ScriptType.NEUTRAL
+                    hasGreekAndLatinPair && TextNormalizer.detectScriptType(liveText) == TextNormalizer.ScriptType.NEUTRAL
                 },
                 configuredSource = configuredSource,
-                configuredTarget = configuredTarget
+                configuredTarget = configuredTarget,
+                detectedLang = detectedNonGreek
             )
             val effectiveBadge = effectiveTargetLang.uppercase()
             val preferredTerms = if (isLearningEnabled) {
@@ -370,7 +426,9 @@ class DraftTranslationController(
                                     targetLang = effectiveTargetLang,
                                     createdAtMillis = SystemClock.uptimeMillis()
                                 )
-                                insertTranslatedTextIntoInput(finalTranslatedDraft, liveNode)
+                                scope.launch(workerDispatcher) {
+                                    insertTranslatedTextIntoInput(finalTranslatedDraft, liveNode)
+                                }
                             },
                             onDismissClicked = {
                                 dismissedDraftText = liveText
@@ -384,14 +442,18 @@ class DraftTranslationController(
                                     configuredTarget
                                 }
                                 lastRenderedDraftSource = null
-                                handleOutgoingTyping(
-                                    eventSource = eventSource,
-                                    eventType = eventType,
-                                    configuredSource = configuredSource,
-                                    configuredTarget = configuredTarget,
-                                    isKeyboardTranslatorEnabled = isKeyboardTranslatorEnabled,
-                                    isLearningEnabled = isLearningEnabled
-                                )
+                                dismissedDraftText = null
+                                typingJob?.cancel()
+                                scope.launch(workerDispatcher) {
+                                    handleOutgoingTyping(
+                                        eventSource = eventSource,
+                                        eventType = eventType,
+                                        configuredSource = configuredSource,
+                                        configuredTarget = configuredTarget,
+                                        isKeyboardTranslatorEnabled = isKeyboardTranslatorEnabled,
+                                        isLearningEnabled = isLearningEnabled
+                                    )
+                                }
                             }
                         )
                     } else {
@@ -423,6 +485,9 @@ class DraftTranslationController(
         lastRenderedDraftSource = null
         manualDraftTargetLang = null
         dismissedDraftText = null
+        lastInsertedText = null
+        lastInsertedAtMs = 0L
+        lastInsertedObserved = false
     }
 
     fun cancelTypingAndHideDraft(diagReason: String? = null) {
@@ -432,29 +497,6 @@ class DraftTranslationController(
         pendingTypingWindowStartMs = 0L
         if (diagReason != null) diagnostics.setDraftDiag(diagReason)
         postToMain(null) { overlayManager.removeDraftOverlay() }
-    }
-
-    private fun resolveDraftDirection(
-        text: String,
-        manualTarget: String?,
-        configuredSource: String,
-        configuredTarget: String
-    ): Pair<String, String> {
-        if (manualTarget != null) {
-            val source = if (manualTarget == configuredTarget) configuredSource else configuredTarget
-            return source to manualTarget
-        }
-        val greekLang = TranslateLanguage.GREEK
-        val hasGreekAndLatinPair = (configuredSource == greekLang) xor (configuredTarget == greekLang)
-        if (hasGreekAndLatinPair) {
-            val otherLang = if (configuredSource == greekLang) configuredTarget else configuredSource
-            return when (TextNormalizer.detectScriptType(text)) {
-                TextNormalizer.ScriptType.GREEK -> greekLang to otherLang
-                TextNormalizer.ScriptType.LATIN -> otherLang to greekLang
-                TextNormalizer.ScriptType.NEUTRAL -> configuredTarget to configuredSource
-            }
-        }
-        return configuredTarget to configuredSource
     }
 
     private fun isPlaceholderText(
@@ -544,9 +586,7 @@ class DraftTranslationController(
             }
             val learned = learningStore.learnFromSentDraft(session, sentText)
             if (learned) {
-                withContext(workerDispatcher) {
-                    onCacheEvictRequired()
-                }
+                onCacheEvictRequired()
             }
         }
     }
@@ -561,17 +601,22 @@ class DraftTranslationController(
         }
     }
 
-    private fun insertTranslatedTextIntoInput(text: String, fallbackNode: AccessibilityNodeInfo? = null) {
+    private suspend fun insertTranslatedTextIntoInput(text: String, fallbackNode: AccessibilityNodeInfo? = null) {
         try {
             val node = findCurrentEditableNode() ?: fallbackNode
             if (node != null) {
+                typingJob?.cancel()
+                lastInsertedObserved = false
+                lastInsertedAtMs = SystemClock.uptimeMillis()
                 lastInsertedText = text
                 val arguments = Bundle().apply {
                     putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
                 }
                 val directSuccess = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
                 val pastedSuccess = if (!directSuccess) {
-                    ClipboardHelper.copySensitiveText(service, "Translated Text", text)
+                    withContext(Dispatchers.Main) {
+                        ClipboardHelper.copySensitiveText(service, "Translated Text", text)
+                    }
                     val allRange = Bundle().apply {
                         val existingLen = node.text?.length ?: 0
                         putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, 0)
@@ -595,20 +640,23 @@ class DraftTranslationController(
                         Toast.makeText(service, "Replaced in chat", Toast.LENGTH_SHORT).show()
                     }
                 } else {
-                    postToMain(null) {
+                    lastInsertedText = null
+                    withContext(Dispatchers.Main) {
+                        ClipboardHelper.copySensitiveText(service, "Translated Text", text)
                         overlayManager.removeDraftOverlay()
                         Toast.makeText(service, "Copied to clipboard (Tap Paste in chat)", Toast.LENGTH_SHORT).show()
                     }
                 }
             } else {
-                ClipboardHelper.copySensitiveText(service, "Translated Text", text)
-                postToMain(null) {
+                withContext(Dispatchers.Main) {
+                    ClipboardHelper.copySensitiveText(service, "Translated Text", text)
                     overlayManager.removeDraftOverlay()
                     Toast.makeText(service, "Copied to clipboard (Tap Paste in chat)", Toast.LENGTH_SHORT).show()
                 }
             }
         } catch (e: Exception) {
             Log.e("Translator", "Failed to set text in input", e)
+            lastInsertedText = null
             postToMain(null) {
                 overlayManager.removeDraftOverlay()
             }

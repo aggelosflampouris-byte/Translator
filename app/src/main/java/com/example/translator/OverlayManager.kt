@@ -71,9 +71,28 @@ class OverlayManager(private val context: Context) {
     // Map of bubble ID to ActiveBubble
     private val activeBubbles = mutableMapOf<String, ActiveBubble>()
 
-    @Synchronized
-    fun getActiveOverlayRects(): List<Rect> {
-        return activeBubbles.values.map { Rect(it.overlayBounds) }
+    private fun maxVerticalDriftPx(density: Float): Int = (30 * density).toInt()
+
+    private fun addWindowViewWithFallback(
+        view: View,
+        params: WindowManager.LayoutParams,
+        label: String
+    ): Boolean {
+        return try {
+            params.type = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+            windowManager.addView(view, params)
+            true
+        } catch (e: Exception) {
+            android.util.Log.w("Translator", "$label with TYPE_ACCESSIBILITY_OVERLAY failed, trying TYPE_APPLICATION_OVERLAY", e)
+            try {
+                params.type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                windowManager.addView(view, params)
+                true
+            } catch (e2: Exception) {
+                android.util.Log.e("Translator", "OverlayManager failed to addView for $label", e2)
+                false
+            }
+        }
     }
 
     // Called on Main Thread
@@ -209,7 +228,7 @@ class OverlayManager(private val context: Context) {
         // de otro mensaje distinto (por ejemplo, múltiples saludos repetidos "Bună dimineața!" en días diferentes)
         // y debe recibir su propia pastilla independiente. Además, cualquier ID ya reclamado en la pasada actual
         // se excluye para impedir que un mensaje le robe el globo a otro mensaje idéntico.
-        val maxVerticalDrift = (30 * density).toInt()
+        val maxVerticalDrift = maxVerticalDriftPx(density)
         val maxHorizontalDrift = (20 * density).toInt()
 
         // 1. Coincidencia por texto idéntico y proximidad espacial estricta
@@ -262,22 +281,11 @@ class OverlayManager(private val context: Context) {
         }
 
         view.alpha = 0f
-        try {
-            params.type = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
-            windowManager.addView(view, params)
+        if (addWindowViewWithFallback(view, params, "bubble $id")) {
             view.animate().alpha(1f).setDuration(150).start()
             activeBubbles[id] = ActiveBubble(view, text, targetRect, overlayBounds)
-        } catch (e: Exception) {
-            android.util.Log.w("Translator", "addBubble with TYPE_ACCESSIBILITY_OVERLAY failed, trying TYPE_APPLICATION_OVERLAY", e)
-            try {
-                params.type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                windowManager.addView(view, params)
-                view.animate().alpha(1f).setDuration(150).start()
-                activeBubbles[id] = ActiveBubble(view, text, targetRect, overlayBounds)
-            } catch (e2: Exception) {
-                android.util.Log.e("Translator", "OverlayManager failed to addView for bubble $id", e2)
-                ServiceBridge.lastScanDebug = "${ServiceBridge.lastScanDebug} | wmErr=${e2.javaClass.simpleName}:${e2.message}"
-            }
+        } else {
+            ServiceBridge.lastScanDebug = "${ServiceBridge.lastScanDebug} | wmErr=addBubbleFailed"
         }
     }
 
@@ -363,6 +371,7 @@ class OverlayManager(private val context: Context) {
     }
 
     private var draftOverlayView: View? = null
+    @Volatile
     var currentDraftOverlayBounds: Rect? = null
         private set
 
@@ -489,77 +498,71 @@ class OverlayManager(private val context: Context) {
             return
         }
 
-        val view = draftOverlayView ?: inflater.inflate(R.layout.draft_preview_overlay, null)
-        bindDraftView(view, text, targetLangCode, showReplace, onInsertClicked, onDismissClicked, onBadgeClicked)
+        synchronized(this) {
+            val view = draftOverlayView ?: inflater.inflate(R.layout.draft_preview_overlay, null)
+            bindDraftView(view, text, targetLangCode, showReplace, onInsertClicked, onDismissClicked, onBadgeClicked)
 
-        val layout = computeDraftLayout(view, inputRect, screenWidth, density)
-        currentDraftOverlayBounds = layout.overlayBounds
+            val layout = computeDraftLayout(view, inputRect, screenWidth, density)
+            currentDraftOverlayBounds = layout.overlayBounds
 
-        purgeCollidingBubbles(layout.overlayBounds, inputRect)
+            purgeCollidingBubbles(layout.overlayBounds, inputRect)
 
-        if (draftOverlayView == null) {
-            val params = WindowManager.LayoutParams(
-                layout.bubbleWidth,
-                layout.bubbleHeight,
-                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                PixelFormat.TRANSLUCENT
-            ).apply {
-                gravity = Gravity.TOP or Gravity.START
-                x = layout.posX
-                y = layout.posY
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                    layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            if (draftOverlayView == null) {
+                val params = WindowManager.LayoutParams(
+                    layout.bubbleWidth,
+                    layout.bubbleHeight,
+                    WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                    PixelFormat.TRANSLUCENT
+                ).apply {
+                    gravity = Gravity.TOP or Gravity.START
+                    x = layout.posX
+                    y = layout.posY
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                        layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                    }
                 }
-            }
 
-            try {
-                windowManager.addView(view, params)
-                draftOverlayView = view
-            } catch (e: Exception) {
-                try {
-                    params.type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                    windowManager.addView(view, params)
+                if (addWindowViewWithFallback(view, params, "draft overlay")) {
                     draftOverlayView = view
-                } catch (e2: Exception) {
-                    android.util.Log.e("Translator", "Failed to add draft overlay", e2)
                 }
-            }
-        } else {
-            val params = view.layoutParams as WindowManager.LayoutParams
-            params.width = layout.bubbleWidth
-            params.height = layout.bubbleHeight
-            params.x = layout.posX
-            params.y = layout.posY
+            } else {
+                val params = view.layoutParams as WindowManager.LayoutParams
+                params.width = layout.bubbleWidth
+                params.height = layout.bubbleHeight
+                params.x = layout.posX
+                params.y = layout.posY
 
-            try {
-                windowManager.updateViewLayout(view, params)
-            } catch (e: Exception) {
-                // Ignore WindowManager errors
+                try {
+                    windowManager.updateViewLayout(view, params)
+                } catch (e: Exception) {
+                    // Ignore WindowManager errors
+                }
             }
         }
     }
 
     fun removeDraftOverlay() {
+        currentDraftOverlayBounds = null
         if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
             mainHandler.post { removeDraftOverlay() }
             return
         }
-        currentDraftOverlayBounds = null
-        draftOverlayView?.let {
-            try {
-                windowManager.removeView(it)
-            } catch (e: Exception) {
-                // Ignore
+        synchronized(this) {
+            currentDraftOverlayBounds = null
+            draftOverlayView?.let {
+                try {
+                    windowManager.removeView(it)
+                } catch (e: Exception) {
+                    // Ignore
+                }
+                draftOverlayView = null
             }
-            draftOverlayView = null
         }
     }
 
     private var singlePillView: View? = null
-    var currentSinglePillBounds: Rect? = null
-        private set
 
     /**
      * Muestra una pastilla flotante compacta para un mensaje específico seleccionado al tocarlo.
@@ -586,84 +589,74 @@ class OverlayManager(private val context: Context) {
         val screenWidth = metrics.widthPx
         val density = metrics.density
 
-        val view = singlePillView ?: inflater.inflate(R.layout.single_message_pill_overlay, null)
+        synchronized(this) {
+            val view = singlePillView ?: inflater.inflate(R.layout.single_message_pill_overlay, null)
 
-        val badgeView = view.findViewById<TextView>(R.id.pill_badge)
-        val textView = view.findViewById<TextView>(R.id.pill_translated_text)
-        val copyBtn = view.findViewById<View>(R.id.pill_btn_copy)
-        val closeBtn = view.findViewById<View>(R.id.pill_btn_close)
+            val badgeView = view.findViewById<TextView>(R.id.pill_badge)
+            val textView = view.findViewById<TextView>(R.id.pill_translated_text)
+            val copyBtn = view.findViewById<View>(R.id.pill_btn_copy)
+            val closeBtn = view.findViewById<View>(R.id.pill_btn_close)
 
-        badgeView.text = "⇄ $targetLangCode"
-        textView.text = translatedText
+            badgeView.text = "⇄ $targetLangCode"
+            textView.text = translatedText
 
-        copyBtn.setOnClickListener {
-            ClipboardHelper.copySensitiveText(context, "Translation", translatedText)
-            android.widget.Toast.makeText(context, "Copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
-        }
-
-        closeBtn.setOnClickListener {
-            removeSingleMessagePill()
-            onDismiss()
-        }
-
-        val maxWidth = (screenWidth * 0.88f).toInt()
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec(maxWidth, View.MeasureSpec.AT_MOST),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
-        )
-        val pillWidth = view.measuredWidth.coerceAtLeast((180 * density).toInt())
-        val pillHeight = view.measuredHeight
-
-        val posX = targetRect.left.coerceIn((12 * density).toInt(), (screenWidth - pillWidth - (12 * density).toInt()).coerceAtLeast((12 * density).toInt()))
-        val posY = if (targetRect.top - pillHeight - (8 * density).toInt() > (48 * density).toInt()) {
-            targetRect.top - pillHeight - (8 * density).toInt()
-        } else {
-            targetRect.bottom + (8 * density).toInt()
-        }
-
-        val pillBounds = Rect(posX, posY, posX + pillWidth, posY + pillHeight)
-        currentSinglePillBounds = pillBounds
-
-        val params = WindowManager.LayoutParams(
-            pillWidth,
-            pillHeight,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = posX
-            y = posY
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            copyBtn.setOnClickListener {
+                ClipboardHelper.copySensitiveText(context, "Translation", translatedText)
+                android.widget.Toast.makeText(context, "Copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
             }
-        }
 
-        if (singlePillView == null) {
-            try {
-                windowManager.addView(view, params)
-                singlePillView = view
-            } catch (e: Exception) {
-                try {
-                    params.type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                    windowManager.addView(view, params)
-                    singlePillView = view
-                } catch (e2: Exception) {
-                    android.util.Log.e("Translator", "Failed to add single pill overlay", e2)
+            closeBtn.setOnClickListener {
+                removeSingleMessagePill()
+                onDismiss()
+            }
+
+            val maxWidth = (screenWidth * 0.88f).toInt()
+            view.measure(
+                View.MeasureSpec.makeMeasureSpec(maxWidth, View.MeasureSpec.AT_MOST),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+            )
+            val pillWidth = view.measuredWidth.coerceAtLeast((180 * density).toInt())
+            val pillHeight = view.measuredHeight
+
+            val posX = targetRect.left.coerceIn((12 * density).toInt(), (screenWidth - pillWidth - (12 * density).toInt()).coerceAtLeast((12 * density).toInt()))
+            val posY = if (targetRect.top - pillHeight - (8 * density).toInt() > (48 * density).toInt()) {
+                targetRect.top - pillHeight - (8 * density).toInt()
+            } else {
+                targetRect.bottom + (8 * density).toInt()
+            }
+
+            val params = WindowManager.LayoutParams(
+                pillWidth,
+                pillHeight,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                x = posX
+                y = posY
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                    layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
                 }
             }
-        } else {
-            try {
-                windowManager.updateViewLayout(view, params)
-            } catch (e: Exception) {
-                // Ignore
+
+            if (singlePillView == null) {
+                if (addWindowViewWithFallback(view, params, "single pill overlay")) {
+                    singlePillView = view
+                }
+            } else {
+                try {
+                    windowManager.updateViewLayout(view, params)
+                } catch (e: Exception) {
+                    // Ignore
+                }
             }
         }
     }
 
+    @Synchronized
     fun removeSingleMessagePill() {
-        currentSinglePillBounds = null
         singlePillView?.let {
             try {
                 windowManager.removeView(it)
@@ -689,20 +682,20 @@ class OverlayManager(private val context: Context) {
 
     // Por qué: Elimina de inmediato cualquier burbuja activa cuyas coordenadas ya no coincidan
     // con ninguno de los mensajes visibles actuales (por ejemplo, tras desplazarse o eliminarse),
-    // impidiendo que burbujas huérfanas queden congeladas cubriendo nuevos mensajes en pantalla.
+    // usando exactamente el mismo umbral de tolerancia vertical que findMatchingBubble.
     @Synchronized
     fun purgeOrphans(currentValidRects: List<Rect>) {
         if (activeBubbles.isEmpty()) return
         val density = ScreenMetricsHelper.currentBounds(context).density
-        val tolerance = (25 * density).toInt()
+        val tolerance = maxVerticalDriftPx(density)
 
         val iterator = activeBubbles.iterator()
         while (iterator.hasNext()) {
             val entry = iterator.next()
             val bubbleRect = entry.value.targetRect
             val matchesAny = currentValidRects.any { valid ->
-                abs(valid.top - bubbleRect.top) < tolerance &&
-                abs(valid.bottom - bubbleRect.bottom) < tolerance
+                abs(valid.top - bubbleRect.top) <= tolerance &&
+                abs(valid.bottom - bubbleRect.bottom) <= tolerance
             }
             if (!matchesAny) {
                 try {

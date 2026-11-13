@@ -151,17 +151,41 @@ class TranslationPipeline(
             return true
         }
 
+        fun ensureModelsDownloaded(
+            source: String,
+            target: String,
+            onSuccess: () -> Unit = {},
+            onError: (Exception?) -> Unit = {}
+        ) {
+            val src = source.takeIf { it in AppDefaults.AVAILABLE_LANGUAGES } ?: AppDefaults.SOURCE_LANGUAGE
+            val tgt = target.takeIf { it in AppDefaults.AVAILABLE_LANGUAGES } ?: AppDefaults.TARGET_LANGUAGE
+            val conditions = com.google.mlkit.common.model.DownloadConditions.Builder().build()
+            TranslatorPool.get(src, tgt).downloadModelIfNeeded(conditions)
+                .addOnSuccessListener {
+                    TranslatorPool.markPairReady(src, tgt)
+                    TranslatorPool.get(tgt, src).downloadModelIfNeeded(conditions)
+                        .addOnSuccessListener {
+                            TranslatorPool.markPairReady(tgt, src)
+                            onSuccess()
+                        }
+                        .addOnFailureListener { err ->
+                            Log.w("Translator", "Reverse model download failed ($tgt->$src): ${err.message}")
+                            onError(err)
+                        }
+                }
+                .addOnFailureListener { err ->
+                    Log.w("Translator", "Forward model download failed ($src->$tgt): ${err.message}")
+                    onError(err)
+                }
+        }
+
         fun preloadModels(context: Context) {
             val prefs = context.getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
             val src = prefs.getString(AppDefaults.KEY_SOURCE_LANGUAGE, AppDefaults.SOURCE_LANGUAGE)
-                ?.takeIf { it in AppDefaults.AVAILABLE_LANGUAGES } ?: AppDefaults.SOURCE_LANGUAGE
+                ?: AppDefaults.SOURCE_LANGUAGE
             val tgt = prefs.getString(AppDefaults.KEY_TARGET_LANGUAGE, AppDefaults.TARGET_LANGUAGE)
                 ?: AppDefaults.TARGET_LANGUAGE
-            val conditions = com.google.mlkit.common.model.DownloadConditions.Builder().build()
-            TranslatorPool.get(src, tgt).downloadModelIfNeeded(conditions)
-                .addOnSuccessListener { TranslatorPool.markPairReady(src, tgt) }
-            TranslatorPool.get(tgt, src).downloadModelIfNeeded(conditions)
-                .addOnSuccessListener { TranslatorPool.markPairReady(tgt, src) }
+            ensureModelsDownloaded(src, tgt)
         }
     }
 
@@ -171,6 +195,10 @@ class TranslationPipeline(
      */
     fun resolveFast(text: String, sourceLang: String, targetLang: String): String? {
         val clean = TextSanitizer.sanitizeSpecialCharacters(text)
+        return resolveFastClean(clean, sourceLang, targetLang)
+    }
+
+    private fun resolveFastClean(clean: String, sourceLang: String, targetLang: String): String? {
         if (clean.isBlank()) return null
 
         memoryLookup(sourceLang, targetLang, clean)?.let { return it }
@@ -206,7 +234,7 @@ class TranslationPipeline(
         val cleanInput = TextSanitizer.sanitizeSpecialCharacters(text)
         if (cleanInput.isBlank() || !cleanInput.any { it.isLetter() }) return null
 
-        resolveFast(cleanInput, sourceLang, targetLang)?.let { return it }
+        resolveFastClean(cleanInput, sourceLang, targetLang)?.let { return it }
 
         val normalized = if (sourceLang == TranslateLanguage.ROMANIAN) {
             TextNormalizer.restoreRomanianDiacritics(cleanInput)

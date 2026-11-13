@@ -27,15 +27,23 @@ class TranslationNotificationReceiver : BroadcastReceiver() {
                 if (!wasActive) {
                     ServiceBridge.onTranslationStateChanged?.invoke(true)
                 }
+                ServiceBridge.onBubbleAppearanceSync?.invoke(true)
                 ServiceBridge.onScanRequested?.invoke()
                 TranslationNotificationManager.showNotification(context, isTranslating = true)
+                TranslationTileService.requestSync(context)
             }
 
             TranslationNotificationManager.ACTION_TOGGLE -> {
                 val newState = !ServiceBridge.isTranslatingActive
+                if (newState && !ServiceBridge.isAccessibilityActive) {
+                    Toast.makeText(context, "Accessibility Service is OFF. Toggle it ON in Settings.", Toast.LENGTH_LONG).show()
+                    return
+                }
                 ServiceBridge.isTranslatingActive = newState
                 ServiceBridge.onTranslationStateChanged?.invoke(newState)
+                ServiceBridge.onBubbleAppearanceSync?.invoke(newState)
                 TranslationNotificationManager.showNotification(context, isTranslating = newState)
+                TranslationTileService.requestSync(context)
                 val msg = if (newState) "Translation Active" else "Translation Paused"
                 Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
             }
@@ -43,9 +51,11 @@ class TranslationNotificationReceiver : BroadcastReceiver() {
             TranslationNotificationManager.ACTION_STOP -> {
                 ServiceBridge.isTranslatingActive = false
                 ServiceBridge.isBubbleRunning = false
+                ServiceBridge.onBubbleAppearanceSync?.invoke(false)
                 ServiceBridge.onTranslationStateChanged?.invoke(false)
                 TranslationNotificationManager.cancelNotification(context)
                 context.stopService(Intent(context, FloatingBubbleService::class.java))
+                TranslationTileService.requestSync(context)
                 ServiceBridge.notifyUiStateChanged()
                 Toast.makeText(context, "OverChat Stopped", Toast.LENGTH_SHORT).show()
             }

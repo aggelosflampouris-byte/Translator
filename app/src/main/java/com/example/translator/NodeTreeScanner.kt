@@ -156,6 +156,56 @@ object NodeCandidateEvaluator {
         return outList
     }
 
+    internal data class SelectedCandidateText(
+        val cleanText: String,
+        val rawLength: Int,
+        val usedDirectText: Boolean,
+        val rejectReason: String?
+    )
+
+    internal fun selectCandidateText(
+        directText: String?,
+        descText: String?,
+        configuredSource: String,
+        configuredTarget: String,
+        deferUnknownLatinToMlKit: Boolean
+    ): SelectedCandidateText? {
+        var chosenRaw = directText ?: descText ?: return null
+        var cleanText = TranslationFilter.cleanMessageText(chosenRaw).trim()
+        var rejectReason = TranslationFilter.filterRejectionReason(
+            text = cleanText,
+            configuredTarget = configuredTarget,
+            configuredSource = configuredSource,
+            deferUnknownLatinToMlKit = deferUnknownLatinToMlKit,
+            alreadyCleaned = true
+        )
+        var usedDirectText = directText != null
+
+        if (rejectReason != null && directText != null && descText != null && descText != directText) {
+            val altClean = TranslationFilter.cleanMessageText(descText).trim()
+            val altReject = TranslationFilter.filterRejectionReason(
+                text = altClean,
+                configuredTarget = configuredTarget,
+                configuredSource = configuredSource,
+                deferUnknownLatinToMlKit = deferUnknownLatinToMlKit,
+                alreadyCleaned = true
+            )
+            if (altReject == null) {
+                chosenRaw = descText
+                cleanText = altClean
+                rejectReason = null
+                usedDirectText = false
+            }
+        }
+
+        return SelectedCandidateText(
+            cleanText = cleanText,
+            rawLength = chosenRaw.length,
+            usedDirectText = usedDirectText,
+            rejectReason = rejectReason
+        )
+    }
+
     private fun evaluateCandidateNode(
         item: CollectedNodeSnapshot,
         minY: Int,
@@ -175,31 +225,16 @@ object NodeCandidateEvaluator {
 
         // Por qué: Un nodo contenedor puede traer texto corto en text y el cuerpo traducible en
         // contentDescription; si el primero se descarta, evaluamos la alternativa.
-        var chosenRaw = directText ?: descText ?: return 0
-        var cleanText = TranslationFilter.cleanMessageText(chosenRaw)
-        var rejectReason = TranslationFilter.filterRejectionReason(
-            text = cleanText,
-            configuredTarget = configuredTarget,
+        val selected = selectCandidateText(
+            directText = directText,
+            descText = descText,
             configuredSource = configuredSource,
+            configuredTarget = configuredTarget,
             deferUnknownLatinToMlKit = true
-        )
-        var usedDirectText = directText != null
-
-        if (rejectReason != null && directText != null && descText != null && descText != directText) {
-            val altClean = TranslationFilter.cleanMessageText(descText)
-            val altReject = TranslationFilter.filterRejectionReason(
-                text = altClean,
-                configuredTarget = configuredTarget,
-                configuredSource = configuredSource,
-                deferUnknownLatinToMlKit = true
-            )
-            if (altReject == null) {
-                chosenRaw = descText
-                cleanText = altClean
-                rejectReason = null
-                usedDirectText = false
-            }
-        }
+        ) ?: return 0
+        val cleanText = selected.cleanText
+        val rejectReason = selected.rejectReason
+        val usedDirectText = selected.usedDirectText
 
         if (cleanText.isBlank() || rejectReason != null) {
             val tag = rejectReason ?: "emp"
@@ -251,7 +286,7 @@ object NodeCandidateEvaluator {
                     highPriority = true
                 )
             }
-            return chosenRaw.length
+            return selected.rawLength
         }
 
         stats?.let {
@@ -331,6 +366,7 @@ class NodeTreeScanner(
             screenWidth = displayBounds.widthPx,
             screenHeight = displayBounds.heightPx,
             density = displayBounds.density,
+            configuredTarget = configuredTarget,
             profile = profile,
             stats = stats,
             outRawNodes = rawNodes
@@ -354,6 +390,50 @@ class NodeTreeScanner(
             .map { MessageCandidate(it.text, Rect(it.bounds.left, it.bounds.top, it.bounds.right, it.bounds.bottom)) }
     }
 
+    /**
+     * Extracts and validates a clicked message node through the same sanitization, filtering,
+     * and bubble-geometry rules used by tree scans.
+     */
+    fun extractClickedCandidate(
+        sourceNode: AccessibilityNodeInfo,
+        displayBounds: DisplayBounds,
+        configuredSource: String,
+        configuredTarget: String,
+        profile: ChatAppProfile
+    ): MessageCandidate? {
+        val nodePkg = try { sourceNode.packageName?.toString() ?: "" } catch (_: Exception) { "" }
+        if (nodePkg.isNotBlank() && !isEnabledPackage(nodePkg)) return null
+
+        val nodeWithText = AccessibilityNodeSafeOps.findFirstTextChild(sourceNode) ?: sourceNode
+        val directText = try { nodeWithText.text?.toString()?.takeIf { it.isNotBlank() } } catch (_: Exception) { null }
+        val descText = try { nodeWithText.contentDescription?.toString()?.takeIf { it.isNotBlank() } } catch (_: Exception) { null }
+
+        val selected = NodeCandidateEvaluator.selectCandidateText(
+            directText = directText,
+            descText = descText,
+            configuredSource = configuredSource,
+            configuredTarget = configuredTarget,
+            deferUnknownLatinToMlKit = true
+        ) ?: return null
+        if (selected.cleanText.isBlank() || selected.rejectReason != null) return null
+
+        val rect = Rect()
+        try {
+            nodeWithText.getBoundsInScreen(rect)
+        } catch (_: Exception) {
+            return null
+        }
+        AccessibilityNodeSafeOps.normalizeFullWidthMessageBounds(
+            rect,
+            displayBounds.widthPx,
+            displayBounds.heightPx,
+            displayBounds.density
+        )
+        if (!TranslationSenseEngine.isMessageBubble(rect, displayBounds.widthPx, profile.alignmentMode)) return null
+
+        return MessageCandidate(selected.cleanText, rect)
+    }
+
     private fun collectRawNodes(
         node: AccessibilityNodeInfo,
         minY: Int,
@@ -361,6 +441,7 @@ class NodeTreeScanner(
         screenWidth: Int,
         screenHeight: Int,
         density: Float,
+        configuredTarget: String,
         profile: ChatAppProfile,
         stats: ScanStats,
         outRawNodes: MutableList<CollectedNodeSnapshot>,
@@ -389,6 +470,7 @@ class NodeTreeScanner(
                 screenWidth = screenWidth,
                 screenHeight = screenHeight,
                 density = density,
+                configuredTarget = configuredTarget,
                 profile = profile,
                 stats = stats,
                 outRawNodes = outRawNodes,
@@ -436,7 +518,12 @@ class NodeTreeScanner(
 
         val viewportPad = (16 * density).toInt()
         val inChatViewport = rect.bottom > minY + viewportPad && rect.top < maxY - viewportPad
-        val expandedRect = resolveExpandedBounds(node, rect, screenWidth, screenHeight, density, profile)
+        // Por qué: Solo consulta node.parent vía Binder cuando hay texto plausible tras descartar relojes/UI griega.
+        val expandedRect = if (TranslationFilter.hasPlausibleLetterCandidate(directText, descText, configuredTarget)) {
+            resolveExpandedBounds(node, rect, screenWidth, screenHeight, density, profile)
+        } else {
+            rect
+        }
         val newIndex = outRawNodes.size
         outRawNodes.add(
             CollectedNodeSnapshot(
@@ -464,27 +551,28 @@ class NodeTreeScanner(
     ): Rect {
         val result = Rect(rawRect)
         // Por qué: Solo expande al contenedor padre en apps con burbujas aisladas; en filas anchas
-        // (Discord o Messenger) limita la expansión para no invadir cabeceras ni avatares.
+        // limita la expansión para no invadir cabeceras ni avatares.
         try {
             var container = node.parent
             val maxLevels = if (profile.expandContainerToParent) 1 else 0
             val maxParentWidthRatio = if (profile.expandContainerToParent) 0.95f else 0.85f
             for (level in 0..maxLevels) {
-                if (container != null) {
-                    val pRect = Rect()
-                    container.getBoundsInScreen(pRect)
-                    val safeExpansion = profile.expandContainerToParent ||
-                        (pRect.width() <= (result.width() * 1.35f) && pRect.height() <= (result.height() * 1.50f))
-                    if (safeExpansion &&
-                        pRect.width() <= screenWidth * maxParentWidthRatio &&
-                        pRect.height() <= screenHeight &&
-                        pRect.width() >= result.width() &&
-                        pRect.height() >= result.height() &&
-                        Rect.intersects(pRect, result)
-                    ) {
-                        result.set(pRect)
-                        break
-                    }
+                if (container == null) break
+                val pRect = Rect()
+                container.getBoundsInScreen(pRect)
+                val safeExpansion = profile.expandContainerToParent ||
+                    (pRect.width() <= (result.width() * 1.35f) && pRect.height() <= (result.height() * 1.50f))
+                if (safeExpansion &&
+                    pRect.width() <= screenWidth * maxParentWidthRatio &&
+                    pRect.height() <= screenHeight &&
+                    pRect.width() >= result.width() &&
+                    pRect.height() >= result.height() &&
+                    Rect.intersects(pRect, result)
+                ) {
+                    result.set(pRect)
+                    break
+                }
+                if (level < maxLevels) {
                     container = container.parent
                 }
             }

@@ -43,5 +43,11 @@ object AppDefaults {
     const val OVERLAY_THEME_AUTO = "AUTO"
     const val OVERLAY_THEME_WHATSAPP = "WHATSAPP"
     const val OVERLAY_THEME_LIGHT = "LIGHT"
+
+    fun formatLanguageDisplayName(code: String): String {
+        return java.util.Locale.forLanguageTag(code).displayLanguage.replaceFirstChar {
+            if (it.isLowerCase()) it.titlecase(java.util.Locale.getDefault()) else it.toString()
+        }
+    }
 }
 

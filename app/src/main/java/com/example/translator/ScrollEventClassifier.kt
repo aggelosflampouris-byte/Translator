@@ -22,8 +22,8 @@ data class ScrollDecision(
 
 /**
  * Filtra eventos `TYPE_VIEW_SCROLLED` horizontales, de subcomponentes pequeños o sin desplazamiento real
- * (como carruseles Litho, marquesinas de texto o relayouts en reposo) que bloquearían el escaneo.
- * Por qué: Apps como Messenger emiten eventos de scroll internos aun con la conversación quieta.
+ * (como carruseles, marquesinas de texto o relayouts en reposo) que bloquearían el escaneo.
+ * Por qué: Algunas apps de chat emiten eventos de scroll internos aun con la conversación quieta.
  */
 object ScrollEventClassifier {
 
@@ -50,7 +50,7 @@ object ScrollEventClassifier {
 
         if (hasDeltaApi) {
             if (scrollDeltaY != 0) {
-                // Por qué: Microajustes menores a 12px (p. ej. dy=-1 en relayouts de Messenger)
+                // Por qué: Microajustes menores a 12px (p. ej. dy=-1 en relayouts internos)
                 // deben reprogramar un escaneo suave sin borrar burbujas ni abortar traducciones en curso.
                 val isRealScrollMovement = kotlin.math.abs(scrollDeltaY) >= 12
                 return ScrollDecision(

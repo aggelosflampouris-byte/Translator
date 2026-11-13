@@ -29,8 +29,8 @@ object TranslationSenseEngine {
         "first", "even", "new", "want", "because", "any", "these", "give", "day", "days",
         "week", "weeks", "month", "months", "year", "years", "time", "no", "yes", "please",
         "thanks", "thank", "hello", "good", "morning", "evening", "night", "sorry",
-        "know", "think", "going", "need", "make", "take", "want", "friends", "friend",
-        "people", "happy", "love", "tomorrow", "tonight", "later", "soon", "here", "there"
+        "know", "think", "going", "need", "make", "take", "friends", "friend",
+        "people", "happy", "love", "tomorrow", "tonight", "later", "soon", "here"
     )
 
     val COMMON_ROMANIAN_WORDS = setOf(
@@ -78,6 +78,25 @@ object TranslationSenseEngine {
         "Κώστας" to "Κώστα",
         "Δημήτρης" to "Δημήτρη"
     )
+
+    private val WORD_SPLIT_REGEX = Regex("""[^a-zăâîșț]+""")
+    private val IDIOM_PUNCT_REGEX = Regex("""[;?!,.¡¿]+""")
+    private val WHITESPACE_REGEX = Regex("""\s+""")
+    private val BIRTHDAY_GREEK_REGEX = Regex("""(Ευτυχισμένα|Χαρούμενα)\s+γενέθλια""", RegexOption.IGNORE_CASE)
+    private val NEW_YEAR_GREEK_REGEX = Regex("""και ένα ευτυχισμένο νέο έτος""", RegexOption.IGNORE_CASE)
+    private val GREEK_NOM_ARTICLE_COMMA_REGEX = Regex(""",\s*ο\s+([ΆΈΉΊΌΎΏΑ-Ωα-ωάέήίόύώ]+)""")
+    private val GREEK_NOM_ARTICLE_START_REGEX = Regex("""^ο\s+([ΆΈΉΊΌΎΏΑ-Ωα-ωάέήίόύώ]+),""")
+    private val GREEK_ARTICLE_MY_FRIEND_REGEX = Regex("""(?iu)(?<!\p{L})ο\s+φίλος\s+μου(?!\p{L})""")
+    private val GREEK_MY_FRIEND_REGEX = Regex("""(?iu)(?<!\p{L})φίλος\s+μου(?!\p{L})""")
+    private val GREEK_VOCATIVE_NAME_RULES = GREEK_NOMINATIVE_TO_VOCATIVE_NAMES.map { (nominative, vocative) ->
+        Regex("""(?<!\p{L})$nominative(?=[,!;?:]|\s*$)""") to vocative
+    }
+    private val RO_ANTE_START_REGEX = Regex("""^Ante\s+""", RegexOption.IGNORE_CASE)
+    private val RO_ANTE_WORD_REGEX = Regex("""\bAnte\b""", RegexOption.IGNORE_CASE)
+    private val RO_ESTI_PRIETENUL_MEU_REGEX = Regex("""\b(esti|ești)\s+prietenul\s+meu\b""", RegexOption.IGNORE_CASE)
+    private val RO_PRIETENUL_MEU_NAME_REGEX = Regex("""\bprietenul\s+meu\s+([A-Z][a-zA-Z]+)""", RegexOption.IGNORE_CASE)
+    private val RO_PRIETENUL_MEU_REGEX = Regex("""\bprietenul\s+meu\b""", RegexOption.IGNORE_CASE)
+    private val TRAILING_DOT_OR_SEMI_REGEX = Regex("""[;.]+$""")
 
     // Por qué: Tabla declarativa de expresiones breves exactas (≤ 4 palabras) para evitar cadenas de if frágiles
     private data class IdiomRule(
@@ -151,7 +170,7 @@ object TranslationSenseEngine {
                 isIncoming || isOutgoing
             }
             ChatAlignmentMode.LEFT_STREAM_CHAT -> {
-                // Por qué: Apps como Discord y Slack alinean todos los mensajes en columna izquierda tras el avatar
+                // Por qué: Flujos estilo canal alinean todos los mensajes en columna izquierda tras el avatar
                 rectLeft < (screenWidth * 0.35f)
             }
         }
@@ -173,9 +192,10 @@ object TranslationSenseEngine {
         sourceLang: String,
         targetLang: String,
         identifiedLang: String? = null,
-        allowDeferredLatinForMlKit: Boolean = false
+        allowDeferredLatinForMlKit: Boolean = false,
+        alreadyCleaned: Boolean = false
     ): Boolean {
-        val clean = TranslationFilter.cleanMessageText(text).trim()
+        val clean = (if (alreadyCleaned) text else TranslationFilter.cleanMessageText(text)).trim()
         if (clean.length < 2) return false
 
         if (ScriptDetector.containsUrlOrDomain(clean)) {
@@ -191,7 +211,7 @@ object TranslationSenseEngine {
             }
         }
 
-        val words = clean.lowercase().split(Regex("""[^a-zăâîșț]+""")).filter { it.isNotBlank() }
+        val words = clean.lowercase().split(WORD_SPLIT_REGEX).filter { it.isNotBlank() }
         val englishTokenCount = words.count { COMMON_ENGLISH_TOKENS.contains(it) }
         val romanianTokenCount = words.count { COMMON_ROMANIAN_WORDS.contains(it) }
         val hasRoDiacritics = ScriptDetector.hasRomanianDiacritics(clean)
@@ -289,8 +309,8 @@ object TranslationSenseEngine {
         if (trimmed.contains("\n")) return null
 
         val clean = TranslationFilter.cleanMessageText(trimmed).trim()
-        val words = clean.replace(Regex("""[;?!,.¡¿]+"""), " ")
-            .split(Regex("""\s+"""))
+        val words = clean.replace(IDIOM_PUNCT_REGEX, " ")
+            .split(WHITESPACE_REGEX)
             .filter { it.isNotBlank() }
 
         if (words.isEmpty() || words.size > MAX_SHORT_IDIOM_WORDS + 4) return null
@@ -330,21 +350,21 @@ object TranslationSenseEngine {
 
             // Por qué: "La mulți ani" fuera de cumpleaños significa "Χρόνια πολλά", no "Ευτυχισμένα γενέθλια"
             if (origNorm.contains("an nou") || !origNorm.contains("zi de nastere")) {
-                result = result.replace(Regex("""(Ευτυχισμένα|Χαρούμενα)\s+γενέθλια""", RegexOption.IGNORE_CASE), "Χρόνια πολλά")
-                result = result.replace(Regex("""και ένα ευτυχισμένο νέο έτος""", RegexOption.IGNORE_CASE), "και ευτυχισμένο το νέο έτος")
+                result = result.replace(BIRTHDAY_GREEK_REGEX, "Χρόνια πολλά")
+                result = result.replace(NEW_YEAR_GREEK_REGEX, "και ευτυχισμένο το νέο έτος")
             }
 
             // Por qué: Elimina el artículo nominativo "ο" delante de nombres propios en vocativo tras coma
-            result = result.replace(Regex(""",\s*ο\s+([ΆΈΉΊΌΎΏΑ-Ωα-ωάέήίόύώ]+)"""), ", $1")
-            result = result.replace(Regex("""^ο\s+([ΆΈΉΊΌΎΏΑ-Ωα-ωάέήίόύώ]+),"""), "$1,")
+            result = result.replace(GREEK_NOM_ARTICLE_COMMA_REGEX, ", $1")
+            result = result.replace(GREEK_NOM_ARTICLE_START_REGEX, "$1,")
 
             // Por qué: En trato directo "ο φίλος μου" debe ir en vocativo "φίλε μου"
-            result = result.replace(Regex("""(?iu)(?<!\p{L})ο\s+φίλος\s+μου(?!\p{L})"""), "φίλε μου")
-            result = result.replace(Regex("""(?iu)(?<!\p{L})φίλος\s+μου(?!\p{L})"""), "φίλε μου")
+            result = result.replace(GREEK_ARTICLE_MY_FRIEND_REGEX, "φίλε μου")
+            result = result.replace(GREEK_MY_FRIEND_REGEX, "φίλε μου")
 
             // Por qué: Convierte la terminación nominativa a vocativa solo si el nombre ya está en la traducción.
-            GREEK_NOMINATIVE_TO_VOCATIVE_NAMES.forEach { (nominative, vocative) ->
-                result = result.replace(Regex("""(?<!\p{L})$nominative(?=[,!;?:]|\s*$)"""), vocative)
+            GREEK_VOCATIVE_NAME_RULES.forEach { (pattern, vocative) ->
+                result = result.replace(pattern, vocative)
             }
 
             // Por qué: En griego las preguntas se cierran con ';'
@@ -359,13 +379,13 @@ object TranslationSenseEngine {
             var result = translatedText.trim()
 
             // Por qué: ML Kit vierte la interjección griega "Άντε" como el préstamos italiano "Ante"; se corrige el token sin borrar la frase
-            result = result.replaceFirst(Regex("""^Ante\s+""", RegexOption.IGNORE_CASE), "Hai ")
-            result = result.replace(Regex("""\bAnte\b""", RegexOption.IGNORE_CASE), "Hai")
+            result = result.replaceFirst(RO_ANTE_START_REGEX, "Hai ")
+            result = result.replace(RO_ANTE_WORD_REGEX, "Hai")
 
             // Por qué: En trato directo "prietenul meu" se convierte al vocativo "prietene"
-            result = result.replace(Regex("""\b(esti|ești)\s+prietenul\s+meu\b""", RegexOption.IGNORE_CASE), "ești, prietene")
-            result = result.replace(Regex("""\bprietenul\s+meu\s+([A-Z][a-zA-Z]+)""", RegexOption.IGNORE_CASE), "prietene $1")
-            result = result.replace(Regex("""\bprietenul\s+meu\b""", RegexOption.IGNORE_CASE), "prietene")
+            result = result.replace(RO_ESTI_PRIETENUL_MEU_REGEX, "ești, prietene")
+            result = result.replace(RO_PRIETENUL_MEU_NAME_REGEX, "prietene $1")
+            result = result.replace(RO_PRIETENUL_MEU_REGEX, "prietene")
 
             // Por qué: Normaliza el signo de interrogación griego ';' a '?' en rumano
             if (originalText.trim().endsWith(";") || originalText.trim().endsWith("?") ||
@@ -373,7 +393,7 @@ object TranslationSenseEngine {
                 result.startsWith("Ce ", ignoreCase = true) ||
                 result.startsWith("Unde ", ignoreCase = true)) {
                 if (!result.endsWith("?")) {
-                    result = result.replace(Regex("""[;.]+$"""), "") + "?"
+                    result = result.replace(TRAILING_DOT_OR_SEMI_REGEX, "") + "?"
                 }
             }
             return result

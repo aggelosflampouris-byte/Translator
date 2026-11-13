@@ -1,7 +1,5 @@
 package com.example.translator.ui.main
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.heightIn
@@ -17,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.example.translator.BuildConfig
+import com.example.translator.ClipboardHelper
 import com.example.translator.ServiceBridge
 import com.example.translator.TranslatorApplication
 
@@ -66,8 +65,7 @@ fun ScanDiagnosticsDialog(
         },
         confirmButton = {
             TextButton(onClick = {
-                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                clipboard.setPrimaryClip(ClipData.newPlainText("OverChat Diagnostics", diagReport))
+                ClipboardHelper.copySensitiveText(context, "OverChat Diagnostics", diagReport)
                 onCopied()
             }) {
                 Text("Copy")

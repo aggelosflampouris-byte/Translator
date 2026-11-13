@@ -45,6 +45,18 @@ object ServiceBridge {
     @Volatile var onScanRequested: (() -> Unit)? = null
 
     /**
+     * Callback para sincronizar inmediatamente la apariencia del globo flotante si está visible.
+     * Se limpia en `FloatingBubbleService.onDestroy`.
+     */
+    @Volatile var onBubbleAppearanceSync: ((Boolean) -> Unit)? = null
+
+    /**
+     * Callback para vaciar cachés en memoria cuando el usuario restablece los datos aprendidos.
+     * Se limpia al desconectar `TranslationAccessibilityService`.
+     */
+    @Volatile var onLearningDataCleared: (() -> Unit)? = null
+
+    /**
      * Callback para actualizar inmediatamente el estado reactivo de la interfaz principal (Start / Stop).
      */
     @Volatile var onUiStateChanged: (() -> Unit)? = null
@@ -59,7 +71,7 @@ object ServiceBridge {
     /**
      * Última traza de escaneo que sí obtuvo una raíz de nodos no nula de la app objetivo.
      * Por qué: Evita que abortos transitorios al salir hacia SystemUI/Recents sobrescriban
-     * el diagnóstico real del árbol de mensajes de Messenger.
+     * el diagnóstico real del árbol de mensajes.
      */
     @Volatile var lastTreeScanDebug: String = "No non-null root scan yet."
 
@@ -81,7 +93,7 @@ object ServiceBridge {
     @Volatile var lastDraftDebug: String = "none"
 
     /**
-     * Resumen reciente por aplicación visitada para conservar trazas de Messenger y Viber al cambiar de app.
+     * Resumen reciente por aplicación visitada para conservar trazas por app al cambiar de ventana.
      */
     @Volatile var lastPerAppScanDebug: String = ""
 

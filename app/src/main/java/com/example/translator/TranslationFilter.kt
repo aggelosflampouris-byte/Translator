@@ -4,7 +4,7 @@ import com.google.mlkit.nl.translate.TranslateLanguage
 
 /**
  * Pure functions for text sanitization, UI element filtering,
- * and language validation before OCR text blocks are submitted for translation.
+ * and language validation before detected text blocks are submitted for translation.
  */
 object TranslationFilter {
 
@@ -51,6 +51,7 @@ object TranslationFilter {
         RegexOption.IGNORE_CASE
     )
     private val PERCENTAGE_REGEX = Regex("""^\d{1,3}%$""")
+    private val TRAILING_PUNCT_SPACE_REGEX = Regex("""[,:\s]+$""")
 
     private val COMMON_UI_TOKENS = setOf(
         "μήνυμα", "type a message", "type a message...", "message", "aa", "signal message",
@@ -117,6 +118,38 @@ object TranslationFilter {
     )
 
     /**
+     * Comprobación rápida sin asignación de `Regex` para evitar consultas `node.parent` por IPC
+     * en nodos que no contienen letras o que ya están escritos en el idioma de destino.
+     */
+    fun hasPlausibleLetterCandidate(
+        directText: String?,
+        descText: String?,
+        configuredTarget: String
+    ): Boolean {
+        return isFieldPlausibleForParentExpansion(directText, configuredTarget) ||
+            isFieldPlausibleForParentExpansion(descText, configuredTarget)
+    }
+
+    private fun isFieldPlausibleForParentExpansion(raw: String?, configuredTarget: String): Boolean {
+        if (raw.isNullOrBlank()) return false
+        var hasLetter = false
+        for (i in 0 until raw.length) {
+            if (raw[i].isLetter()) {
+                hasLetter = true
+                break
+            }
+        }
+        if (!hasLetter) return false
+        if (configuredTarget == TranslateLanguage.GREEK) {
+            val greekCount = ScriptDetector.countGreek(raw)
+            val latinCount = ScriptDetector.countLatin(raw)
+            // Por qué: En TalkBack puede venir "ΛΕΥΤΕΡΗΣ, Bună"; solo omitimos si no hay cuerpo latino significativo.
+            if (greekCount > 0 && latinCount < 2) return false
+        }
+        return true
+    }
+
+    /**
      * Determines whether a recognized text snippet is a candidate for translation
      * or should be discarded (e.g. URLs, timestamps, UI chrome, battery, target-language script).
      */
@@ -141,9 +174,10 @@ object TranslationFilter {
         text: String,
         configuredTarget: String,
         configuredSource: String = TranslateLanguage.ROMANIAN,
-        deferUnknownLatinToMlKit: Boolean = false
+        deferUnknownLatinToMlKit: Boolean = false,
+        alreadyCleaned: Boolean = false
     ): String? {
-        val cleaned = cleanMessageText(text)
+        val cleaned = if (alreadyCleaned) text else cleanMessageText(text)
         val trimmed = cleaned.trim()
         if (trimmed.length < 2) return "emp"
 
@@ -204,7 +238,8 @@ object TranslationFilter {
                 sourceLang = configuredSource,
                 targetLang = configuredTarget,
                 identifiedLang = null,
-                allowDeferredLatinForMlKit = deferUnknownLatinToMlKit
+                allowDeferredLatinForMlKit = deferUnknownLatinToMlKit,
+                alreadyCleaned = true
             )
         ) {
             return "elig"
@@ -221,17 +256,15 @@ object TranslationFilter {
             return ""
         }
         var cleaned = sanitized
-        for (pass in 0 until 3) {
+        for (pass in 0 until 4) {
             val before = cleaned
             cleaned = cleaned.replace(TRAILING_ACTION_HINT_REGEX, "").trim()
             cleaned = cleaned.replace(TRAILING_REACTION_OR_SEEN_REGEX, "").trim()
             cleaned = cleaned.replace(CHAT_STATUS_REGEX, "").trim()
             cleaned = cleaned.replace(TRAILING_TIMESTAMP_REGEX, "").trim()
-            cleaned = cleaned.replace(TRAILING_REACTION_OR_SEEN_REGEX, "").trim()
-            cleaned = cleaned.replace(CHAT_STATUS_REGEX, "").trim()
             if (cleaned == before) break
         }
-        return cleaned.replace(Regex("""[,:\s]+$"""), "").trim()
+        return cleaned.replace(TRAILING_PUNCT_SPACE_REGEX, "").trim()
     }
 
     private fun stripLeadingSenderPrefixes(cleanedText: String): String {
@@ -246,11 +279,11 @@ object TranslationFilter {
             cleaned = cleaned.replace(GREEK_DISPLAY_NAME_PREFIX_BEFORE_LATIN_REGEX, "").trim()
             if (cleaned == before) break
         }
-        return cleaned.replace(Regex("""[,:\s]+$"""), "").trim()
+        return cleaned.replace(TRAILING_PUNCT_SPACE_REGEX, "").trim()
     }
 
     /**
-     * Cleans OCR- or Accessibility-detected text by stripping trailing timestamps,
+     * Cleans Accessibility-detected text by stripping trailing timestamps,
      * edited tags, and delivery status markers across supported chat apps.
      */
     fun cleanMessageText(text: String): String {

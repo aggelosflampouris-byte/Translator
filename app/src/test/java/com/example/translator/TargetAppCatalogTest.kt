@@ -1,6 +1,7 @@
 package com.example.translator
 
 import android.content.SharedPreferences
+import com.example.translator.ui.main.isAccessibilityComponentEnabled
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -142,6 +143,27 @@ class TargetAppCatalogTest {
             setOf("com.whatsapp", "com.viber.voip"),
             TargetAppCatalog.getEnabledPackages(prefs, selfPkg)
         )
+    }
+
+    @Test
+    fun privacySensitivePackage_filtersFinancialAndCredentialAppsOnly() {
+        assertTrue(TargetAppCatalog.isPrivacySensitivePackage("com.revolut.revolut"))
+        assertTrue(TargetAppCatalog.isPrivacySensitivePackage("com.x8bit.bitwarden"))
+        assertTrue(TargetAppCatalog.isPrivacySensitivePackage("com.paypal.android.p2pmobile"))
+        assertFalse(TargetAppCatalog.isPrivacySensitivePackage("com.sec.android.app.launcher"))
+        assertFalse(TargetAppCatalog.isPrivacySensitivePackage("com.whatsapp"))
+    }
+
+    @Test
+    fun accessibilityComponentEnabled_requiresExactPackageAndServiceMatch() {
+        val pkg = "com.example.translator"
+        val svc = "com.example.translator.TranslationAccessibilityService"
+
+        assertTrue(isAccessibilityComponentEnabled("$pkg/$svc", pkg, svc))
+        assertTrue(isAccessibilityComponentEnabled("other/pkg.Svc:$pkg/.TranslationAccessibilityService", pkg, svc))
+        assertFalse(isAccessibilityComponentEnabled("$pkg.evil/$svc", pkg, svc))
+        assertFalse(isAccessibilityComponentEnabled("$pkg/.OtherService", pkg, svc))
+        assertFalse(isAccessibilityComponentEnabled("", pkg, svc))
     }
 }
 

@@ -145,17 +145,29 @@ object CorrectionExtractor {
  */
 object CorrectionApplier {
 
+    private const val MAX_PATTERN_CACHE_SIZE = 256
+    private val patternCache = object : LinkedHashMap<String, Regex>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Regex>?): Boolean {
+            return size > MAX_PATTERN_CACHE_SIZE
+        }
+    }
+
+    private fun regexForTerm(rejected: String): Regex {
+        synchronized(patternCache) {
+            return patternCache[rejected] ?: Regex(
+                "(?<![\\p{L}\\p{N}])" + Regex.escape(rejected) + "(?![\\p{L}\\p{N}])",
+                RegexOption.IGNORE_CASE
+            ).also { patternCache[rejected] = it }
+        }
+    }
+
     fun apply(text: String, corrections: List<TermCorrection>): String {
         if (text.isBlank() || corrections.isEmpty()) return text
 
         var result = text
         // Por qué: Se aplican primero las frases más largas para que no las rompa una corrección de una sola palabra.
         for (correction in corrections.sortedByDescending { it.rejected.length }) {
-            val pattern = Regex(
-                "(?<![\\p{L}\\p{N}])" + Regex.escape(correction.rejected) + "(?![\\p{L}\\p{N}])",
-                RegexOption.IGNORE_CASE
-            )
-            result = pattern.replace(result) { match ->
+            result = regexForTerm(correction.rejected).replace(result) { match ->
                 matchCapitalization(match.value, correction.preferred)
             }
         }

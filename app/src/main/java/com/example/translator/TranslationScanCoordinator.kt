@@ -193,7 +193,7 @@ class TranslationScanCoordinator(
         }
         val elapsedSinceWindowStart = now - pendingScanWindowStartMs
         // Por qué: Limita la inanición del debounce a 750ms para que actualizaciones continuas
-        // de Messenger no pospongan indefinidamente el escaneo de burbujas visibles.
+        // de la UI no pospongan indefinidamente el escaneo de burbujas visibles.
         if (scanDebounceJob?.isActive == true && elapsedSinceWindowStart >= 750L) {
             return
         }

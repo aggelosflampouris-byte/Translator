@@ -88,7 +88,7 @@ class ForegroundSessionState {
 
         // Por qué: Solo borramos el estado activo si la ventana no objetivo ocupa un tamaño real de pantalla.
         // Servicios en segundo plano o transiciones sin bounds (source=null) como AOD, biometría o paneles OEM
-        // no deben invalidar un chat de Messenger/Viber que sigue debajo.
+        // no deben invalidar un chat compatible que sigue debajo.
         if (eventType == EVT_WINDOW_STATE_CHANGED && !isSmallTransientOverlay && hasSubstantialNonTargetBounds) {
             lastTargetEventPkg = null
             lastTargetEventTimeMs = 0L
@@ -124,7 +124,7 @@ class ForegroundSessionState {
 
         if (hasNonNullSource && isMeaningfulVisibleSource) {
             // Por qué: Nodos invisibles/minúsculos (chrome oculto) no deben contar como nodos válidos de contenido
-            // ni anular el respaldo por ráfagas null necesario en Viber/Messenger antes de enfocar el teclado.
+            // ni anular el respaldo por ráfagas null necesario antes de enfocar el teclado.
             meaningfulTargetSrcCount++
             targetNullBurstAfterNonTargetCount = 0
             if ((eventType == EVT_WINDOW_CONTENT_CHANGED || eventType == EVT_VIEW_SCROLLED) &&

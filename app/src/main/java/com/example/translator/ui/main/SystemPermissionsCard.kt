@@ -4,7 +4,6 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Context
 import android.os.Build
 import android.provider.Settings
-import android.text.TextUtils
 import android.view.accessibility.AccessibilityManager
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -173,6 +172,30 @@ private fun PermissionStatusRow(
 }
 
 /**
+ * Verifica coincidencia exacta de componente (`pkg/class` o forma abreviada `pkg/.SimpleClass`)
+ * dentro de la cadena `ENABLED_ACCESSIBILITY_SERVICES` para evitar falsos positivos por prefijo.
+ */
+internal fun isAccessibilityComponentEnabled(
+    enabledServicesSetting: String?,
+    packageName: String,
+    serviceClassName: String
+): Boolean {
+    if (enabledServicesSetting.isNullOrBlank()) return false
+    for (rawComponent in enabledServicesSetting.split(':')) {
+        val component = rawComponent.trim()
+        val slashIdx = component.indexOf('/')
+        if (slashIdx <= 0 || slashIdx >= component.lastIndex) continue
+        val componentPkg = component.substring(0, slashIdx)
+        val rawCls = component.substring(slashIdx + 1)
+        val resolvedCls = if (rawCls.startsWith(".")) componentPkg + rawCls else rawCls
+        if (componentPkg == packageName && resolvedCls == serviceClassName) {
+            return true
+        }
+    }
+    return false
+}
+
+/**
  * Comprueba de forma resiliente si el servicio de accesibilidad de OverChat está habilitado en el sistema.
  */
 fun checkAccessibilityEnabled(context: Context): Boolean {
@@ -187,14 +210,8 @@ fun checkAccessibilityEnabled(context: Context): Boolean {
         context.applicationContext.contentResolver,
         Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
     )
-    if (settingValue != null) {
-        val splitter = TextUtils.SimpleStringSplitter(':')
-        splitter.setString(settingValue)
-        while (splitter.hasNext()) {
-            if (splitter.next().contains(context.packageName, ignoreCase = true)) {
-                return true
-            }
-        }
+    if (isAccessibilityComponentEnabled(settingValue, context.packageName, serviceClassName)) {
+        return true
     }
 
     val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager

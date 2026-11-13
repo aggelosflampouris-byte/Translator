@@ -1,21 +1,7 @@
-import java.io.FileInputStream
-import java.util.Properties
-
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.compose.compiler)
   alias(libs.plugins.kotlin.serialization)
-}
-
-fun sanitizeSecret(raw: String?): String {
-    if (raw == null) return ""
-    // Por qué: Elimina saltos de línea (\r, \n), comillas residuales y espacios en blanco
-    // para evitar literales de cadena sin cerrar en la generación de BuildConfig.java.
-    return raw.trim()
-        .replace("\r", "")
-        .replace("\n", "")
-        .trim('"', '\'')
-        .trim()
 }
 
 android {
@@ -25,8 +11,8 @@ android {
         applicationId = "com.example.translator"
         minSdk = 24
         targetSdk = 33
-        versionCode = 108
-        versionName = "1.0.108"
+        versionCode = 109
+        versionName = "1.0.109"
     }
 
     signingConfigs {
@@ -34,9 +20,9 @@ android {
             val ksFile = rootProject.file("signing/release.keystore")
             if (ksFile.exists()) {
                 storeFile = ksFile
-                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "android"
-                keyAlias = System.getenv("KEYSTORE_ALIAS") ?: "androiddebugkey"
-                keyPassword = System.getenv("KEY_PASSWORD") ?: "android"
+                storePassword = System.getenv("KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() } ?: "android"
+                keyAlias = System.getenv("KEYSTORE_ALIAS")?.takeIf { it.isNotBlank() } ?: "androiddebugkey"
+                keyPassword = System.getenv("KEY_PASSWORD")?.takeIf { it.isNotBlank() } ?: "android"
             }
         }
     }
@@ -44,7 +30,7 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
             signingConfig = signingConfigs.getByName("release")
         }
     }

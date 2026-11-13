@@ -1,8 +1,6 @@
 package com.example.translator.ui.main
 
 import android.Manifest
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -60,6 +58,7 @@ import androidx.navigation3.runtime.NavKey
 import com.example.translator.AppDefaults
 import com.example.translator.AppUpdater
 import com.example.translator.BuildConfig
+import com.example.translator.ClipboardHelper
 import com.example.translator.FloatingBubbleService
 import com.example.translator.LearningStore
 import com.example.translator.R
@@ -67,9 +66,9 @@ import com.example.translator.ServiceBridge
 import com.example.translator.TargetAppCatalog
 import com.example.translator.TargetApps
 import com.example.translator.TranslationNotificationManager
+import com.example.translator.TranslationPipeline
+import com.example.translator.TranslationTileService
 import com.example.translator.TranslatorApplication
-import com.example.translator.TranslatorPool
-import com.google.mlkit.common.model.DownloadConditions
 import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.Job
@@ -107,10 +106,7 @@ fun MainScreen(
         val info = appUpdater.checkForUpdates()
         if (info != null) {
             pendingUpdate = info
-            val dest = appUpdater.getUpdateFile(info.version)
-            if (dest.exists() && dest.length() > 0L && (info.apkSize == 0L || dest.length() == info.apkSize)) {
-                downloadedApkFile = dest
-            }
+            downloadedApkFile = appUpdater.findReadyUpdateFile(info)
         }
     }
 
@@ -138,7 +134,13 @@ fun MainScreen(
         downloadStatusText = "Connecting..."
         val destination = appUpdater.getUpdateFile(info.version)
         downloadJob = coroutineScope.launch {
-            val success = appUpdater.downloadApk(info.apkUrl, destination, info.apkSize) { bytesDownloaded, totalBytes ->
+            val success = appUpdater.downloadApk(
+                apkUrl = info.apkUrl,
+                destinationFile = destination,
+                expectedSize = info.apkSize,
+                sha256Url = info.sha256Url,
+                expectedSha256 = info.expectedSha256
+            ) { bytesDownloaded, totalBytes ->
                 downloadProgress = if (totalBytes > 0) bytesDownloaded.toFloat() / totalBytes.toFloat() else 0f
                 val mbDownloaded = bytesDownloaded / (1024f * 1024f)
                 val mbTotal = totalBytes / (1024f * 1024f)
@@ -257,26 +259,17 @@ fun MainScreen(
 
     // Por qué: Descarga los modelos en ambos sentidos (pantalla y borrador de teclado) para operar 100% offline.
     fun ensureModelsDownloaded(source: String, target: String) {
-        val conditions = DownloadConditions.Builder().build()
-        val sourceCode = source.takeIf { it in availableLanguages } ?: AppDefaults.SOURCE_LANGUAGE
-        val clientForward = TranslatorPool.get(sourceCode, target)
-        val clientReverse = TranslatorPool.get(target, sourceCode)
         modelStatus = "Downloading language models..."
-        clientForward.downloadModelIfNeeded(conditions)
-            .addOnSuccessListener {
-                TranslatorPool.markPairReady(sourceCode, target)
-                clientReverse.downloadModelIfNeeded(conditions)
-                    .addOnSuccessListener {
-                        TranslatorPool.markPairReady(target, sourceCode)
-                        modelStatus = "Language models ready (offline)"
-                    }
-                    .addOnFailureListener {
-                        modelStatus = "Model download error. Check connection."
-                    }
-            }
-            .addOnFailureListener {
+        TranslationPipeline.ensureModelsDownloaded(
+            source = source,
+            target = target,
+            onSuccess = {
+                modelStatus = "Language models ready (offline)"
+            },
+            onError = {
                 modelStatus = "Model download error. Check connection."
             }
+        )
     }
 
     LaunchedEffect(sourceLanguage, targetLanguage) {
@@ -303,8 +296,7 @@ fun MainScreen(
         CrashReportDialog(
             crashLog = currentCrashLog,
             onCopyLog = {
-                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                clipboard.setPrimaryClip(ClipData.newPlainText("Crash Log", currentCrashLog))
+                ClipboardHelper.copySensitiveText(context, "Crash Log", currentCrashLog)
                 Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
             },
             onDismiss = {
@@ -320,6 +312,7 @@ fun MainScreen(
                 canDrawOverlays = Settings.canDrawOverlays(context)
                 isAccessibilityEnabled = checkAccessibilityEnabled(context)
                 enabledPackages = TargetAppCatalog.getEnabledPackages(prefs, context.packageName)
+                learningStats = learningStore.stats()
                 ServiceBridge.notifyUiStateChanged()
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     isNotificationPermissionGranted = ContextCompat.checkSelfPermission(
@@ -369,6 +362,7 @@ fun MainScreen(
                 onStart = {
                     ensureModelsDownloaded(sourceLanguage, targetLanguage)
                     if (controlInterface == AppDefaults.INTERFACE_NOTIFICATION) {
+                        ServiceBridge.isNotificationActive = true
                         if (ServiceBridge.isBubbleRunning) {
                             context.stopService(Intent(context, FloatingBubbleService::class.java))
                             ServiceBridge.isBubbleRunning = false
@@ -376,24 +370,28 @@ fun MainScreen(
                         ServiceBridge.isTranslatingActive = true
                         ServiceBridge.onTranslationStateChanged?.invoke(true)
                         TranslationNotificationManager.showNotification(context, isTranslating = true)
+                        TranslationTileService.requestSync(context)
                         isServiceActive = true
                         Toast.makeText(context, "OverChat active in notification drawer", Toast.LENGTH_SHORT).show()
                     } else {
                         TranslationNotificationManager.cancelNotification(context)
+                        ServiceBridge.isTranslatingActive = false
                         ServiceBridge.isBubbleRunning = true
                         context.startService(Intent(context, FloatingBubbleService::class.java))
+                        TranslationTileService.requestSync(context)
                         ServiceBridge.notifyUiStateChanged()
                         isServiceActive = true
                         Toast.makeText(context, "Floating bubble opened", Toast.LENGTH_SHORT).show()
                     }
                 },
                 onStop = {
+                    ServiceBridge.isNotificationActive = false
                     context.stopService(Intent(context, FloatingBubbleService::class.java))
                     TranslationNotificationManager.cancelNotification(context)
                     ServiceBridge.isBubbleRunning = false
-                    ServiceBridge.isNotificationActive = false
                     ServiceBridge.isTranslatingActive = false
                     ServiceBridge.onTranslationStateChanged?.invoke(false)
+                    TranslationTileService.requestSync(context)
                     ServiceBridge.notifyUiStateChanged()
                     isServiceActive = false
                     Toast.makeText(context, "OverChat stopped", Toast.LENGTH_SHORT).show()
@@ -425,10 +423,7 @@ fun MainScreen(
                             isCheckingForUpdate = false
                             if (info != null) {
                                 pendingUpdate = info
-                                val dest = appUpdater.getUpdateFile(info.version)
-                                if (dest.exists() && dest.length() > 0L && (info.apkSize == 0L || dest.length() == info.apkSize)) {
-                                    downloadedApkFile = dest
-                                }
+                                downloadedApkFile = appUpdater.findReadyUpdateFile(info)
                             } else {
                                 snackbarHostState.showSnackbar("You're on the latest version (v${BuildConfig.VERSION_NAME})")
                             }
@@ -494,13 +489,6 @@ fun MainScreen(
                 }
             )
 
-            LaunchedEffect(Unit) {
-                while (true) {
-                    learningStats = learningStore.stats()
-                    delay(3000L)
-                }
-            }
-
             TypingAndControlsCard(
                 keyboardTranslatorEnabled = keyboardTranslatorEnabled,
                 learningEnabled = learningEnabled,
@@ -526,6 +514,7 @@ fun MainScreen(
                 ResetLearningDialog(
                     onConfirm = {
                         learningStore.clearAll()
+                        ServiceBridge.onLearningDataCleared?.invoke()
                         learningStats = learningStore.stats()
                         showResetLearningDialog = false
                     },

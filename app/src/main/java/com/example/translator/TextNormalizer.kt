@@ -44,7 +44,6 @@ object TextNormalizer {
         "acasa" to "acasă",
         "multumesc" to "mulțumesc",
         "buna" to "bună",
-        "dragă" to "dragă",
         "draga" to "dragă",
         "multa" to "multă",
         "multi" to "mulți",
@@ -77,14 +76,23 @@ object TextNormalizer {
         "dupa" to "după",
         "alaturi" to "alături",
         "intotdeauna" to "întotdeauna",
-        "niciodata" to "niciodată",
-        "noapte buna" to "noapte bună",
-        "buna dimineata" to "bună dimineața",
-        "buna seara" to "bună seara",
-        "buna ziua" to "bună ziua"
+        "niciodata" to "niciodată"
     )
 
     private val WORD_BOUNDARY_REGEX = Regex("""(?i)\b([a-zăâîșț]+(-[a-zăâîșț]+)?)\b""")
+
+    private val MULTI_WORD_DIACRITIC_RULES: List<Pair<Regex, String>> = listOf(
+        "noapte buna" to "noapte bună",
+        "noapte bună" to "noapte bună",
+        "buna dimineata" to "bună dimineața",
+        "bună dimineață" to "bună dimineața",
+        "buna seara" to "bună seara",
+        "bună seară" to "bună seara",
+        "buna ziua" to "bună ziua",
+        "bună ziua" to "bună ziua"
+    ).map { (plain, withDiacritics) ->
+        Regex("""(?iu)(?<!\p{L})${Regex.escape(plain)}(?!\p{L})""") to withDiacritics
+    }
 
     /**
      * Restaura los signos diacríticos rumanos para palabras comunes de chat.
@@ -98,27 +106,15 @@ object TextNormalizer {
         // saludos fijos ("bună seara", "bună dimineața") prevalezcan sobre formas indefinidas ("seară").
         result = WORD_BOUNDARY_REGEX.replace(result) { match ->
             val word = match.value
-            val lower = word.lowercase()
-            val replacement = ROMANIAN_DIACRITICS_MAP[lower]
-            if (replacement != null && !replacement.contains(" ")) {
+            val replacement = ROMANIAN_DIACRITICS_MAP[word.lowercase()]
+            if (replacement != null) {
                 matchCasing(word, replacement)
             } else {
                 word
             }
         }
 
-        val multiWordOverrides = mapOf(
-            "noapte buna" to "noapte bună",
-            "noapte bună" to "noapte bună",
-            "buna dimineata" to "bună dimineața",
-            "bună dimineață" to "bună dimineața",
-            "buna seara" to "bună seara",
-            "bună seară" to "bună seara",
-            "buna ziua" to "bună ziua",
-            "bună ziua" to "bună ziua"
-        )
-        for ((plain, withDiacritics) in multiWordOverrides) {
-            val pattern = Regex("""(?iu)(?<!\p{L})${Regex.escape(plain)}(?!\p{L})""")
+        for ((pattern, withDiacritics) in MULTI_WORD_DIACRITIC_RULES) {
             result = pattern.replace(result) { match ->
                 matchCasing(match.value, withDiacritics)
             }

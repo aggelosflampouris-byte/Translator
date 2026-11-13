@@ -116,7 +116,9 @@ class ForegroundSessionTracker(
             !ForegroundTargetResolver.isSystemTransientPackage(packageName) &&
             (packageName != selfPackage || eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)
         ) {
-            diagnostics.recordSeenExternalPackage(packageName)
+            if (!TargetAppCatalog.isPrivacySensitivePackage(packageName)) {
+                diagnostics.recordSeenExternalPackage(packageName)
+            }
             var isSmallTransientOverlay = false
             var hasSubstantialNonTargetBounds = false
             if (!isTargetEvt && eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {

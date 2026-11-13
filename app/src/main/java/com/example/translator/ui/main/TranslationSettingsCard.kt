@@ -38,7 +38,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.translator.AppDefaults
-import java.util.Locale
 
 /**
  * Tarjeta principal de configuración de idiomas, modo de activación y glosario aprendido.
@@ -245,12 +244,6 @@ fun LanguageDropdown(
         }
     }
 
-    val formatDisplayName = { code: String ->
-        Locale.forLanguageTag(code).displayLanguage.replaceFirstChar {
-            if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString()
-        }
-    }
-
     ExposedDropdownMenuBox(
         expanded = expanded && enabled,
         onExpandedChange = { if (enabled) expanded = !expanded }
@@ -262,7 +255,7 @@ fun LanguageDropdown(
             readOnly = true,
             singleLine = true,
             enabled = enabled,
-            value = formatDisplayName(selectedCode),
+            value = AppDefaults.formatLanguageDisplayName(selectedCode),
             onValueChange = {},
             textStyle = MaterialTheme.typography.bodyMedium,
             label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -275,7 +268,7 @@ fun LanguageDropdown(
         ) {
             options.forEach { code ->
                 DropdownMenuItem(
-                    text = { Text(formatDisplayName(code)) },
+                    text = { Text(AppDefaults.formatLanguageDisplayName(code)) },
                     onClick = {
                         onSelected(code)
                         expanded = false

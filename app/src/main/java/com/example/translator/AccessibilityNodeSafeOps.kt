@@ -32,7 +32,7 @@ object AccessibilityNodeSafeOps {
                 onFetchMode("d")
                 return direct
             }
-            // Por qué: En árboles Litho profundos (Messenger), el prefetch híbrido puede superar el límite Binder;
+            // Por qué: En árboles de UI profundos, el prefetch híbrido puede superar el límite Binder;
             // pedir el nodo raíz sin prefetch (0) o ininterrumpible recupera la jerarquía sin bloqueos.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 val noPrefetch = service.getRootInActiveWindow(0)
@@ -104,7 +104,7 @@ object AccessibilityNodeSafeOps {
      * reporta `packageName == null` o `"android"` (wrappers `DecorView`/`FrameLayout` en One UI).
      *
      * Por qué: Unifica la atribución de paquete entre la resolución de primer plano y la captura
-     * de raíz, evitando descartar ventanas de Viber o Messenger envueltas en contenedores del sistema.
+     * de raíz, evitando descartar ventanas de chat envueltas en contenedores del sistema.
      */
     fun inspectWindowPackageAndRoot(
         root: AccessibilityNodeInfo?,
@@ -225,7 +225,7 @@ object AccessibilityNodeSafeOps {
         return null
     }
 
-    // Por qué: Cuando Litho (Messenger) o ChatMessageCell (Telegram) aplana la fila del mensaje a todo
+    // Por qué: Cuando una app aplana la fila del mensaje a todo
     // el ancho de pantalla, reduce un 4% por lado para superar el umbral geométrico de burbuja.
     fun normalizeFullWidthMessageBounds(
         rect: Rect,
