@@ -20,8 +20,7 @@ object TranslationSenseEngine {
         "it", "for", "not", "on", "with", "he", "as", "you", "do", "at",
         "this", "but", "his", "by", "from", "they", "we", "say", "her", "she",
         "or", "an", "will", "my", "one", "all", "would", "there", "their", "what",
-        "driving", "directions", "live", "traffic", "road", "conditions", "updates",
-        "realtime", "waze", "fellow", "drivers", "destination", "route", "share",
+        "driving", "directions", "live", "traffic", "road", "updates", "share",
         "get", "based", "today", "yesterday", "message", "type", "call", "audio",
         "is", "are", "was", "were", "been", "has", "had", "can", "could", "should",
         "our", "your", "who", "which", "when", "where", "why", "how", "so", "up",
@@ -29,11 +28,9 @@ object TranslationSenseEngine {
         "look", "come", "its", "over", "also", "back", "after", "use", "two", "work",
         "first", "even", "new", "want", "because", "any", "these", "give", "day", "days",
         "week", "weeks", "month", "months", "year", "years", "time", "no", "yes", "please",
-        "thanks", "thank", "job", "offer", "experience", "needed", "salary", "bonus", "payment",
-        "language", "written", "speaking", "good", "knowledge", "tickets", "contract", "training",
-        "team", "activities", "hours", "nightshift", "overtime", "holidays", "weekends", "subscription",
-        "public", "transportation", "medical", "clinic", "private", "relocation", "period", "paid",
-        "online", "game", "presenters", "monthly", "net", "meal", "bank", "christmas", "easter"
+        "thanks", "thank", "hello", "good", "morning", "evening", "night", "sorry",
+        "know", "think", "going", "need", "make", "take", "want", "friends", "friend",
+        "people", "happy", "love", "tomorrow", "tonight", "later", "soon", "here", "there"
     )
 
     val COMMON_ROMANIAN_WORDS = setOf(
@@ -47,10 +44,7 @@ object TranslationSenseEngine {
         "om", "oameni", "totul", "tot", "mesaj", "mesaje", "mesajul", "scuze", "noroc",
         "sanatate", "sănătate", "vorbim", "sigur", "desigur", "bineinteles", "bineînțeles",
         "perfect", "bravo", "trebuie", "vino", "stai", "asteapta", "așteaptă", "poate", "cred",
-        "se", "depun", "secretariat", "urmatoarele", "următoarele", "cerere", "borderou",
-        "completat", "semnat", "titular", "chitantele", "chitanțele", "copie", "xerox",
-        "dupa", "după", "cardul", "termen", "depunere", "ultima", "saptamana", "săptămână",
-        "fiecarui", "semestru", "acasa", "acasă", "bani", "loc", "treaba", "treabă", "drum",
+        "dupa", "după", "acasa", "acasă", "bani", "loc", "treaba", "treabă", "drum",
         "masina", "mașină", "casa", "casă", "facem", "vedem", "cand", "când", "daca", "dacă",
         "dar", "sau", "adica", "adică", "deja", "inca", "încă", "foarte", "mult", "puțin", "putin",
         "astazi", "astăzi", "aseara", "aseară", "dimineata", "dimineață", "zi", "zile",
@@ -64,12 +58,22 @@ object TranslationSenseEngine {
         "imi", "îmi", "isi", "își", "pleci", "plecați", "plecati", "ajungi",
         "ajungem", "mergi", "mergeți", "mergeti", "mâncăm", "cafeaua", "serios",
         "misto", "mișto", "pupa", "pupă", "pupici", "iubire", "iubito", "frumoaso",
-        "scumpule", "dimineață", "neata", "neatza", "salutari", "salutări",
+        "scumpule", "neata", "neatza", "salutari", "salutări",
         "astepti", "aștepți", "treci", "auzim", "raman", "rămân", "intram", "intrăm",
         "iesim", "ieșim", "dormi", "dorm", "lucrez", "lucrezi", "muncesc", "muncesti"
     )
 
     private val GENERIC_ROMANCE_PREPOSITIONS = setOf("de", "in", "e", "a", "la")
+
+    // Por qué: Tabla declarativa de nombres propios masculinos frecuentes para convertir nominativo a vocativo tras la NMT.
+    private val GREEK_NOMINATIVE_TO_VOCATIVE_NAMES = mapOf(
+        "Γιάννης" to "Γιάννη",
+        "Άγγελος" to "Άγγελε",
+        "Γιώργος" to "Γιώργο",
+        "Νίκος" to "Νίκο",
+        "Κώστας" to "Κώστα",
+        "Δημήτρης" to "Δημήτρη"
+    )
 
     // Por qué: Tabla declarativa de expresiones breves exactas (≤ 4 palabras) para evitar cadenas de if frágiles
     private data class IdiomRule(
@@ -325,13 +329,10 @@ object TranslationSenseEngine {
             result = result.replace(Regex("""(?iu)(?<!\p{L})ο\s+φίλος\s+μου(?!\p{L})"""), "φίλε μου")
             result = result.replace(Regex("""(?iu)(?<!\p{L})φίλος\s+μου(?!\p{L})"""), "φίλε μου")
 
-            // Por qué: Convierte la terminación nominativa a vocativa solo si el nombre ya está en la traducción
-            result = result.replace(Regex("""(?<!\p{L})Γιάννης(?=[,!;?:]|\s*$)"""), "Γιάννη")
-            result = result.replace(Regex("""(?<!\p{L})Άγγελος(?=[,!;?:]|\s*$)"""), "Άγγελε")
-            result = result.replace(Regex("""(?<!\p{L})Γιώργος(?=[,!;?:]|\s*$)"""), "Γιώργο")
-            result = result.replace(Regex("""(?<!\p{L})Νίκος(?=[,!;?:]|\s*$)"""), "Νίκο")
-            result = result.replace(Regex("""(?<!\p{L})Κώστας(?=[,!;?:]|\s*$)"""), "Κώστα")
-            result = result.replace(Regex("""(?<!\p{L})Δημήτρης(?=[,!;?:]|\s*$)"""), "Δημήτρη")
+            // Por qué: Convierte la terminación nominativa a vocativa solo si el nombre ya está en la traducción.
+            GREEK_NOMINATIVE_TO_VOCATIVE_NAMES.forEach { (nominative, vocative) ->
+                result = result.replace(Regex("""(?<!\p{L})$nominative(?=[,!;?:]|\s*$)"""), vocative)
+            }
 
             // Por qué: En griego las preguntas se cierran con ';'
             if (origNorm.endsWith("?") && result.endsWith("?")) {

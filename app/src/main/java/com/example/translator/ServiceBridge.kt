@@ -39,7 +39,7 @@ object ServiceBridge {
     @Volatile var isNotificationActive: Boolean = false
 
     /**
-     * Callback to trigger an immediate scan and translation of the visible WhatsApp chat.
+     * Callback to trigger an immediate scan and translation of the visible target chat.
      * Invoked when the user taps "Translate Screen" in the notification menu or Quick Settings tile.
      */
     @Volatile var onScanRequested: (() -> Unit)? = null

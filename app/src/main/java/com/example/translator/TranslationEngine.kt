@@ -154,7 +154,7 @@ class TranslationPipeline(
         fun preloadModels(context: Context) {
             val prefs = context.getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
             val src = prefs.getString(AppDefaults.KEY_SOURCE_LANGUAGE, AppDefaults.SOURCE_LANGUAGE)
-                ?.takeIf { it != "AUTO" } ?: AppDefaults.SOURCE_LANGUAGE
+                ?.takeIf { it in AppDefaults.AVAILABLE_LANGUAGES } ?: AppDefaults.SOURCE_LANGUAGE
             val tgt = prefs.getString(AppDefaults.KEY_TARGET_LANGUAGE, AppDefaults.TARGET_LANGUAGE)
                 ?: AppDefaults.TARGET_LANGUAGE
             val conditions = com.google.mlkit.common.model.DownloadConditions.Builder().build()

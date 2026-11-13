@@ -12,7 +12,7 @@ import androidx.core.app.NotificationCompat
  * Gestor del menú de control en la barra de notificaciones del sistema.
  *
  * Por qué: Reemplaza la burbuja flotante intrusiva en pantalla por un control nativo
- * en la bandeja de notificaciones de Android, permitiendo traducir la pantalla de WhatsApp,
+ * en la bandeja de notificaciones de Android, permitiendo traducir la pantalla de la app de chat activa,
  * pausar o detener el servicio con cero obstrucción visual sobre el chat.
  */
 object TranslationNotificationManager {
@@ -45,16 +45,8 @@ object TranslationNotificationManager {
         val src = prefs.getString(AppDefaults.KEY_SOURCE_LANGUAGE, AppDefaults.SOURCE_LANGUAGE) ?: AppDefaults.SOURCE_LANGUAGE
         val tgt = prefs.getString(AppDefaults.KEY_TARGET_LANGUAGE, AppDefaults.TARGET_LANGUAGE) ?: AppDefaults.TARGET_LANGUAGE
 
-        val srcCode = if (src == "AUTO") {
-            "Auto"
-        } else {
-            java.util.Locale.forLanguageTag(src).displayLanguage.replaceFirstChar {
-                if (it.isLowerCase()) it.titlecase(java.util.Locale.getDefault()) else it.toString()
-            }
-        }
-        val tgtCode = java.util.Locale.forLanguageTag(tgt).displayLanguage.replaceFirstChar {
-            if (it.isLowerCase()) it.titlecase(java.util.Locale.getDefault()) else it.toString()
-        }
+        val srcCode = formatLanguageDisplayName(src)
+        val tgtCode = formatLanguageDisplayName(tgt)
 
         // Intent al tocar la notificación (abre MainActivity)
         val openAppIntent = Intent(context, MainActivity::class.java).apply {
@@ -124,6 +116,12 @@ object TranslationNotificationManager {
         notificationManager.notify(NOTIFICATION_ID, builder.build())
         ServiceBridge.isNotificationActive = true
         ServiceBridge.notifyUiStateChanged()
+    }
+
+    private fun formatLanguageDisplayName(code: String): String {
+        return java.util.Locale.forLanguageTag(code).displayLanguage.replaceFirstChar {
+            if (it.isLowerCase()) it.titlecase(java.util.Locale.getDefault()) else it.toString()
+        }
     }
 
     fun cancelNotification(context: Context) {

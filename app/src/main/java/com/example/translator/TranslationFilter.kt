@@ -1,6 +1,5 @@
 package com.example.translator
 
-import com.google.mlkit.nl.languageid.IdentifiedLanguage
 import com.google.mlkit.nl.translate.TranslateLanguage
 
 /**
@@ -197,19 +196,17 @@ object TranslationFilter {
             }
         }
 
-        // Por qué: Valida estrictamente que el texto sea eligible como idioma de origen (ej. rumano),
-        // descartando ofertas de trabajo o mensajes en inglés para no traducirlos erróneamente a inglés.
-        if (configuredSource != "AUTO") {
-            if (!TranslationSenseEngine.isEligibleSourceText(
-                    text = trimmed,
-                    sourceLang = configuredSource,
-                    targetLang = configuredTarget,
-                    identifiedLang = null,
-                    allowDeferredLatinForMlKit = deferUnknownLatinToMlKit
-                )
-            ) {
-                return "elig"
-            }
+        // Por qué: Valida estrictamente que el texto sea elegible como idioma de origen,
+        // descartando otros idiomas (ej. inglés) antes de enviarlo al traductor o a la caché.
+        if (!TranslationSenseEngine.isEligibleSourceText(
+                text = trimmed,
+                sourceLang = configuredSource,
+                targetLang = configuredTarget,
+                identifiedLang = null,
+                allowDeferredLatinForMlKit = deferUnknownLatinToMlKit
+            )
+        ) {
+            return "elig"
         }
 
         return null
@@ -249,11 +246,11 @@ object TranslationFilter {
     }
 
     /**
-     * Cleans OCR- or Accessibility-detected text by stripping trailing timestamps,
-     * edited tags, and delivery status markers across supported messaging apps.
+     * Elimina prefijos de remitente conocidos (nombre o etiqueta de respuesta) sin re-ejecutar
+     * el recorte de marcas de tiempo finales.
      */
-    fun cleanMessageText(text: String): String {
-        var cleaned = stripTrailingEnvelopeMetadata(text).text
+    fun stripLeadingSenderPrefixes(cleanedText: String): String {
+        var cleaned = cleanedText.trim()
         if (cleaned.isEmpty()) return ""
         // Por qué: Elimina prefijos de accesibilidad de Messenger/Instagram ("ΑΓΓΕΛΟΣ, ", "Εσείς στείλατε: ",
         // "Απαντήσατε στο χρήστη ...: "), aplicando hasta 2 pasadas por si hay nombre + etiqueta de respuesta.
@@ -264,56 +261,16 @@ object TranslationFilter {
             cleaned = cleaned.replace(GREEK_DISPLAY_NAME_PREFIX_BEFORE_LATIN_REGEX, "").trim()
             if (cleaned == before) break
         }
-        cleaned = cleaned.replace(Regex("""[,:\s]+$"""), "").trim()
-        return cleaned
+        return cleaned.replace(Regex("""[,:\s]+$"""), "").trim()
     }
 
     /**
-     * Checks if text is already in the target language (e.g. Greek script when target is Greek,
-     * or ML Kit identified the target language with high confidence).
+     * Cleans OCR- or Accessibility-detected text by stripping trailing timestamps,
+     * edited tags, and delivery status markers across supported messaging apps.
      */
-    fun isTargetLanguage(text: String, targetLang: String, candidates: List<IdentifiedLanguage>): Boolean {
-        if (targetLang == TranslateLanguage.GREEK) {
-            val greekLetters = ScriptDetector.countGreek(text)
-            val latinLetters = ScriptDetector.countLatin(text)
-            if (greekLetters > 0 && greekLetters >= latinLetters) return true
-        }
-        val targetCandidate = candidates.firstOrNull { it.languageTag == targetLang }
-        if (targetCandidate != null && targetCandidate.confidence >= 0.40f) {
-            return true
-        }
-        return false
-    }
-
-    /**
-     * Validates that text matches the explicitly configured source language.
-     * Prevents random UI strings, other languages, or low-confidence garbage from being translated.
-     */
-    fun isMatchingSourceLanguage(text: String, sourceLang: String, candidates: List<IdentifiedLanguage>): Boolean {
-        // Romanian specific check: diacritics, common vocabulary, or Latin script without strong conflict
-        if (sourceLang == TranslateLanguage.ROMANIAN) {
-            if (ScriptDetector.hasRomanianDiacritics(text)) return true
-
-            val words = text.lowercase().split(Regex("""[^a-zăâîșț]+""")).filter { it.isNotBlank() }
-            if (words.any { TranslationSenseEngine.COMMON_ROMANIAN_WORDS.contains(it) }) return true
-
-            if (ScriptDetector.countLatin(text) >= 2) {
-                val conflictingHighConfidence = candidates.firstOrNull {
-                    it.languageTag != TranslateLanguage.ROMANIAN && it.languageTag != "und" && it.confidence >= 0.65f
-                }
-                if (conflictingHighConfidence == null) {
-                    return true
-                }
-            }
-        }
-
-        // Check candidate languages from ML Kit
-        val match = candidates.firstOrNull { it.languageTag == sourceLang }
-        if (match != null && match.confidence >= 0.15f) {
-            val higherConf = candidates.firstOrNull { it.languageTag != sourceLang && it.confidence > (match.confidence * 2.0f) }
-            return higherConf == null
-        }
-
-        return false
+    fun cleanMessageText(text: String): String {
+        val stripped = stripTrailingEnvelopeMetadata(text).text
+        if (stripped.isEmpty()) return ""
+        return stripLeadingSenderPrefixes(stripped)
     }
 }

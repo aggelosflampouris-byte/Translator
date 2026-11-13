@@ -19,8 +19,7 @@ object AppDefaults {
     // Por qué: Bandera para activar o desactivar la aplicación del glosario aprendido y validación contextual
     const val KEY_AI_ENABLED = "ai_translation_enabled"
 
-    // Por qué: Límites de contexto conversacional y términos aprendidos por inferencia
-    const val MAX_CONTEXT_MESSAGES = 3
+    // Por qué: Límite máximo de términos aprendidos incluidos como preferencia por solicitud.
     const val MAX_PREFERRED_TERMS = 8
 
     // Por qué: Permite al usuario activar o desactivar el aprendizaje local a partir de sus correcciones

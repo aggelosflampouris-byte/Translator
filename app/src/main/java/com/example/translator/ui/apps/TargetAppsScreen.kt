@@ -134,7 +134,7 @@ fun TargetAppsScreen(
         ) {
             item {
                 Text(
-                    text = "Only selected apps are observed by Accessibility. System settings, launchers, keyboards, and financial apps stay blocked.",
+                    text = "Translations appear only in the apps enabled below. System settings, launchers, keyboards, and financial apps are ignored.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 4.dp)

@@ -11,8 +11,8 @@ import androidx.annotation.RequiresApi
  * Servicio de Mosaico de Ajustes Rápidos (Quick Settings Tile).
  *
  * Por qué: Ofrece al usuario un acceso directo en la cortina superior de Android para activar
- * o desactivar la traducción de WhatsApp con un solo toque, sin necesidad de abrir la aplicación principal
- * ni mantener iconos flotantes visibles sobre la pantalla.
+ * o desactivar la traducción de pantalla con un solo toque, sin necesidad de abrir la aplicación
+ * principal ni mantener iconos flotantes visibles.
  */
 @RequiresApi(Build.VERSION_CODES.N)
 class TranslationTileService : TileService() {
@@ -26,7 +26,7 @@ class TranslationTileService : TileService() {
         super.onClick()
 
         if (!ServiceBridge.isAccessibilityActive) {
-            Toast.makeText(this, "⚠️ Accessibility Service is OFF. Toggle it ON in Settings!", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Accessibility Service is OFF. Toggle it ON in Settings.", Toast.LENGTH_LONG).show()
             val intent = Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
@@ -52,7 +52,6 @@ class TranslationTileService : TileService() {
 
         if (newState) {
             TranslationNotificationManager.showNotification(this, isTranslating = true)
-            ServiceBridge.onScanRequested?.invoke()
             Toast.makeText(this, "OverChat Active", Toast.LENGTH_SHORT).show()
         } else {
             TranslationNotificationManager.showNotification(this, isTranslating = false)

@@ -1,22 +1,50 @@
 package com.example.translator.ui.main
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,1403 +69,673 @@ import com.example.translator.TargetApps
 import com.example.translator.TranslationNotificationManager
 import com.example.translator.TranslatorApplication
 import com.example.translator.TranslatorPool
+import com.google.mlkit.common.model.DownloadConditions
+import java.io.File
+import java.util.Locale
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.io.File
-import java.util.Locale
 
+/**
+ * Pantalla principal de configuración y activación de OverChat.
+ *
+ * Por qué: Mantiene únicamente el estado de pantalla, la descarga de modelos y la barra inferior fija,
+ * delegando tarjetas y diálogos a componentes especializados.
+ */
 @Composable
 fun MainScreen(
-  onItemClick: (NavKey) -> Unit,
-  modifier: Modifier = Modifier
+    onItemClick: (NavKey) -> Unit,
+    modifier: Modifier = Modifier
 ) {
-  val context = LocalContext.current
-  val lifecycleOwner = LocalLifecycleOwner.current
-  val snackbarHostState = remember { SnackbarHostState() }
-  val coroutineScope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val snackbarHostState = remember { SnackbarHostState() }
+    val coroutineScope = rememberCoroutineScope()
 
-  // ── Actualizador interno directo (descarga e instalación in-app) ────────────
-  val appUpdater = remember { AppUpdater(context) }
-  var pendingUpdate by remember { mutableStateOf<AppUpdater.UpdateInfo?>(null) }
-  var isCheckingForUpdate by remember { mutableStateOf(false) }
-  var isDownloadingUpdate by remember { mutableStateOf(false) }
-  var downloadProgress by remember { mutableStateOf(0f) }
-  var downloadStatusText by remember { mutableStateOf("") }
-  var downloadedApkFile by remember { mutableStateOf<File?>(null) }
-  var downloadErrorMessage by remember { mutableStateOf<String?>(null) }
-  var downloadJob by remember { mutableStateOf<Job?>(null) }
+    val appUpdater = remember { AppUpdater.get(context) }
+    var pendingUpdate by remember { mutableStateOf<AppUpdater.UpdateInfo?>(null) }
+    var isCheckingForUpdate by remember { mutableStateOf(false) }
+    var isDownloadingUpdate by remember { mutableStateOf(false) }
+    var downloadProgress by remember { mutableStateOf(0f) }
+    var downloadStatusText by remember { mutableStateOf("") }
+    var downloadedApkFile by remember { mutableStateOf<File?>(null) }
+    var downloadErrorMessage by remember { mutableStateOf<String?>(null) }
+    var downloadJob by remember { mutableStateOf<Job?>(null) }
 
-  // Por qué: Verifica silenciosamente al iniciar si existe una versión más reciente en GitHub
-  LaunchedEffect(Unit) {
-      val info = appUpdater.checkForUpdates()
-      if (info != null) {
-          pendingUpdate = info
-          val dest = appUpdater.getUpdateFile(info.version)
-          if (dest.exists() && dest.length() > 0L && (info.apkSize == 0L || dest.length() == info.apkSize)) {
-              downloadedApkFile = dest
-          }
-      }
-  }
-
-  // Por qué: Traduce el resultado del instalador a estados visibles del diálogo; si la verificación falla se descarta el APK
-  fun handleInstallResult(result: AppUpdater.InstallResult) {
-      when (result) {
-          is AppUpdater.InstallResult.Success -> pendingUpdate = null
-          is AppUpdater.InstallResult.PermissionRequired -> coroutineScope.launch {
-              snackbarHostState.showSnackbar("Enable 'Allow from this source' to install update")
-          }
-          is AppUpdater.InstallResult.Error -> {
-              downloadedApkFile = null
-              downloadErrorMessage = result.message
-          }
-          is AppUpdater.InstallResult.FileNotFound -> {
-              downloadedApkFile = null
-              downloadErrorMessage = "The downloaded update file is missing."
-          }
-      }
-  }
-
-  // Por qué: Rutina única de descarga verificada compartida por los botones "Download & Install" y "Retry"
-  fun startUpdateDownload(info: AppUpdater.UpdateInfo) {
-      downloadErrorMessage = null
-      isDownloadingUpdate = true
-      downloadProgress = 0f
-      downloadStatusText = "Connecting..."
-      val destination = appUpdater.getUpdateFile(info.version)
-      downloadJob = coroutineScope.launch {
-          val success = appUpdater.downloadApk(info.apkUrl, destination, info.apkSize) { bytesDownloaded, totalBytes ->
-              downloadProgress = if (totalBytes > 0) bytesDownloaded.toFloat() / totalBytes.toFloat() else 0f
-              val mbDownloaded = bytesDownloaded / (1024f * 1024f)
-              val mbTotal = totalBytes / (1024f * 1024f)
-              val percent = if (totalBytes > 0) (bytesDownloaded * 100 / totalBytes).toInt() else 0
-              downloadStatusText = String.format(Locale.US, "%.1f MB / %.1f MB (%d%%)", mbDownloaded, mbTotal, percent)
-          }
-          isDownloadingUpdate = false
-          if (success) {
-              downloadedApkFile = destination
-              handleInstallResult(appUpdater.installApk(context, destination))
-          } else {
-              downloadErrorMessage = "Download failed. Check your internet connection."
-          }
-      }
-  }
-
-  // Por qué: Muestra un diálogo interactivo para descargar el APK directamente en la app
-  // y lanzar el instalador de paquetes sin redirigir al usuario al repositorio ni al navegador web.
-  pendingUpdate?.let { info ->
-      AlertDialog(
-          onDismissRequest = {
-              if (!isDownloadingUpdate) {
-                  pendingUpdate = null
-                  downloadErrorMessage = null
-              }
-          },
-          title = {
-              Text(
-                  text = when {
-                      downloadedApkFile != null -> "Update Ready to Install"
-                      isDownloadingUpdate -> "Downloading Update"
-                      downloadErrorMessage != null -> "Update Failed"
-                      else -> "Update Available"
-                  }
-              )
-          },
-          text = {
-              Column(modifier = Modifier.fillMaxWidth()) {
-                  when {
-                      isDownloadingUpdate -> {
-                          Text(
-                              text = "Downloading ${info.version} directly...",
-                              style = MaterialTheme.typography.bodyMedium
-                          )
-                          Spacer(modifier = Modifier.height(12.dp))
-                          LinearProgressIndicator(
-                              progress = { downloadProgress },
-                              modifier = Modifier.fillMaxWidth()
-                          )
-                          Spacer(modifier = Modifier.height(8.dp))
-                          Text(
-                              text = downloadStatusText,
-                              style = MaterialTheme.typography.bodySmall,
-                              color = MaterialTheme.colorScheme.onSurfaceVariant
-                          )
-                      }
-                      downloadedApkFile != null -> {
-                          Text(
-                              text = "Version ${info.version} has been downloaded and is ready to install.",
-                              style = MaterialTheme.typography.bodyMedium
-                          )
-                          Spacer(modifier = Modifier.height(8.dp))
-                          Text(
-                              text = "Tap Install to apply the update immediately.",
-                              style = MaterialTheme.typography.bodySmall,
-                              color = MaterialTheme.colorScheme.onSurfaceVariant
-                          )
-                      }
-                      downloadErrorMessage != null -> {
-                          Text(
-                              text = downloadErrorMessage ?: "An error occurred during download.",
-                              style = MaterialTheme.typography.bodyMedium,
-                              color = MaterialTheme.colorScheme.error
-                          )
-                          Spacer(modifier = Modifier.height(8.dp))
-                          Text(
-                              text = "You can retry downloading or open the release page in your browser.",
-                              style = MaterialTheme.typography.bodySmall,
-                              color = MaterialTheme.colorScheme.onSurfaceVariant
-                          )
-                      }
-                      else -> {
-                          val sizeFormatted = if (info.apkSize > 0) {
-                              String.format(Locale.US, " (%.1f MB)", info.apkSize / (1024f * 1024f))
-                          } else ""
-                          Text(
-                              text = "Version ${info.version}$sizeFormatted is available.",
-                              style = MaterialTheme.typography.bodyMedium
-                          )
-                          Spacer(modifier = Modifier.height(8.dp))
-                          Text(
-                              text = "Download and update directly within the app?",
-                              style = MaterialTheme.typography.bodySmall,
-                              color = MaterialTheme.colorScheme.onSurfaceVariant
-                          )
-                      }
-                  }
-              }
-          },
-          confirmButton = {
-              when {
-                  isDownloadingUpdate -> {
-                      // Descargando en progreso
-                  }
-                  downloadedApkFile != null -> {
-                      Button(
-                          onClick = {
-                              downloadedApkFile?.let { file ->
-                                  handleInstallResult(appUpdater.installApk(context, file))
-                              }
-                          }
-                      ) {
-                          Text("Install Now")
-                      }
-                  }
-                  downloadErrorMessage != null -> {
-                      Button(onClick = { startUpdateDownload(info) }) {
-                          Text("Retry")
-                      }
-                  }
-                  else -> {
-                      Button(onClick = { startUpdateDownload(info) }) {
-                          Text("Download & Install")
-                      }
-                  }
-              }
-          },
-          dismissButton = {
-              if (isDownloadingUpdate) {
-                  TextButton(
-                      onClick = {
-                          downloadJob?.cancel()
-                          isDownloadingUpdate = false
-                          downloadStatusText = ""
-                      }
-                  ) {
-                      Text("Cancel")
-                  }
-              } else {
-                  Row {
-                      if (downloadErrorMessage != null) {
-                          TextButton(
-                              onClick = {
-                                  appUpdater.openUpdatePage(context, info.htmlUrl)
-                              }
-                          ) {
-                              Text("Open Browser")
-                          }
-                      }
-                      TextButton(
-                          onClick = {
-                              pendingUpdate = null
-                              downloadErrorMessage = null
-                          }
-                      ) {
-                          Text("Later")
-                      }
-                  }
-              }
-          }
-      )
-  }
-
-  val prefs = remember { context.getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE) }
-  val availableLanguages = AppDefaults.AVAILABLE_LANGUAGES
-  var sourceLanguage by remember {
-      val saved = prefs.getString(AppDefaults.KEY_SOURCE_LANGUAGE, AppDefaults.SOURCE_LANGUAGE) ?: AppDefaults.SOURCE_LANGUAGE
-      mutableStateOf(if (availableLanguages.contains(saved)) saved else AppDefaults.SOURCE_LANGUAGE)
-  }
-  var targetLanguage by remember {
-      val saved = prefs.getString(AppDefaults.KEY_TARGET_LANGUAGE, AppDefaults.TARGET_LANGUAGE) ?: AppDefaults.TARGET_LANGUAGE
-      mutableStateOf(if (availableLanguages.contains(saved)) saved else AppDefaults.TARGET_LANGUAGE)
-  }
-  var keyboardTranslatorEnabled by remember {
-      mutableStateOf(prefs.getBoolean(AppDefaults.KEY_KEYBOARD_ENABLED, true))
-  }
-  var translationMode by remember {
-      mutableStateOf(prefs.getString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_ALL) ?: AppDefaults.MODE_ALL)
-  }
-  var aiTranslationEnabled by remember {
-      mutableStateOf(prefs.getBoolean(AppDefaults.KEY_AI_ENABLED, true))
-  }
-  // ── Aprendizaje adaptativo local (glosario personal y memoria de frases) ───
-  val learningStore = remember { LearningStore.get(context) }
-  var learningEnabled by remember {
-      mutableStateOf(prefs.getBoolean(AppDefaults.KEY_LEARNING_ENABLED, true))
-  }
-  var learningStats by remember { mutableStateOf(learningStore.stats()) }
-  var showResetLearningDialog by remember { mutableStateOf(false) }
-  var showDiagnosticsDialog by remember { mutableStateOf(false) }
-  var controlInterface by remember {
-      mutableStateOf(prefs.getString(AppDefaults.KEY_CONTROL_INTERFACE, AppDefaults.INTERFACE_NOTIFICATION) ?: AppDefaults.INTERFACE_NOTIFICATION)
-  }
-  var enabledPackages by remember {
-      mutableStateOf(TargetAppCatalog.getEnabledPackages(prefs, context.packageName))
-  }
-  var overlayTheme by remember {
-      mutableStateOf(
-          prefs.getString(AppDefaults.KEY_OVERLAY_THEME, AppDefaults.OVERLAY_THEME_AUTO)
-              ?: AppDefaults.OVERLAY_THEME_AUTO
-      )
-  }
-  // Por qué: Mantiene sincronizado el resumen de apps activas cuando el usuario vuelve desde TargetAppsScreen
-  DisposableEffect(prefs) {
-      val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-          if (key == AppDefaults.KEY_ENABLED_PACKAGES) {
-              enabledPackages = TargetAppCatalog.getEnabledPackages(prefs, context.packageName)
-          } else if (key == AppDefaults.KEY_OVERLAY_THEME) {
-              overlayTheme = prefs.getString(AppDefaults.KEY_OVERLAY_THEME, AppDefaults.OVERLAY_THEME_AUTO)
-                  ?: AppDefaults.OVERLAY_THEME_AUTO
-          }
-      }
-      prefs.registerOnSharedPreferenceChangeListener(listener)
-      onDispose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
-  }
-  var isNotificationPermissionGranted by remember {
-      mutableStateOf(
-          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-              ContextCompat.checkSelfPermission(
-                  context,
-                  Manifest.permission.POST_NOTIFICATIONS
-              ) == PackageManager.PERMISSION_GRANTED
-          } else {
-              true
-          }
-      )
-  }
-  val notificationPermissionLauncher = rememberLauncherForActivityResult(
-      ActivityResultContracts.RequestPermission()
-  ) { granted ->
-      isNotificationPermissionGranted = granted
-  }
-
-  var modelStatus by remember { mutableStateOf("Checking language models...") }
-
-  // Por qué: Descarga de forma bidireccional los modelos locales (rumano a griego y griego a rumano)
-  // garantizando que tanto la traducción en pantalla como el asistente inverso del teclado funcionen 100% offline.
-  fun ensureModelsDownloaded(source: String, target: String) {
-      val conditions = com.google.mlkit.common.model.DownloadConditions.Builder().build()
-      val sourceCode = if (source != "AUTO") source else AppDefaults.SOURCE_LANGUAGE
-      val clientForward = TranslatorPool.get(sourceCode, target)
-      val clientReverse = TranslatorPool.get(target, sourceCode)
-      modelStatus = "Downloading language models..."
-      clientForward.downloadModelIfNeeded(conditions)
-          .addOnSuccessListener {
-              TranslatorPool.markPairReady(sourceCode, target)
-              clientReverse.downloadModelIfNeeded(conditions)
-                  .addOnSuccessListener {
-                      TranslatorPool.markPairReady(target, sourceCode)
-                      modelStatus = "Language models ready (offline)"
-                  }
-                  .addOnFailureListener {
-                      modelStatus = "Model download error. Check connection."
-                  }
-          }
-          .addOnFailureListener {
-              modelStatus = "Model download error. Check connection."
-          }
-  }
-
-  LaunchedEffect(sourceLanguage, targetLanguage) {
-      if (!prefs.contains(AppDefaults.KEY_SOURCE_LANGUAGE)) {
-          prefs.edit().putString(AppDefaults.KEY_SOURCE_LANGUAGE, sourceLanguage).apply()
-      }
-      if (!prefs.contains(AppDefaults.KEY_TARGET_LANGUAGE)) {
-          prefs.edit().putString(AppDefaults.KEY_TARGET_LANGUAGE, targetLanguage).apply()
-      }
-      ensureModelsDownloaded(sourceLanguage, targetLanguage)
-  }
-
-  // Permission state — refreshed on every resume
-  var canDrawOverlays by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
-  var isAccessibilityEnabled by remember { mutableStateOf(checkAccessibilityEnabled(context)) }
-
-  // Crash Reporting
-  val crashPrefs = context.getSharedPreferences(TranslatorApplication.CRASH_PREFS, Context.MODE_PRIVATE)
-  var crashLog by remember { mutableStateOf(crashPrefs.getString(TranslatorApplication.KEY_LAST_CRASH, null)) }
-
-  if (crashLog != null) {
-      AlertDialog(
-          onDismissRequest = {
-              crashPrefs.edit().remove(TranslatorApplication.KEY_LAST_CRASH).apply()
-              crashLog = null
-          },
-          title = { Text("App Crashed") },
-          text = {
-              androidx.compose.foundation.lazy.LazyColumn {
-                  item {
-                      Text(
-                          "The app encountered an error in the previous session:\n\n$crashLog",
-                          style = MaterialTheme.typography.bodySmall
-                      )
-                  }
-              }
-          },
-          confirmButton = {
-              TextButton(onClick = {
-                  val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                  val clip = android.content.ClipData.newPlainText("Crash Log", crashLog)
-                  clipboard.setPrimaryClip(clip)
-                  android.widget.Toast.makeText(context, "Copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
-              }) {
-                  Text("Copy Log")
-              }
-          },
-          dismissButton = {
-              TextButton(onClick = {
-                  crashPrefs.edit().remove(TranslatorApplication.KEY_LAST_CRASH).apply()
-                  crashLog = null
-              }) {
-                  Text("Dismiss")
-              }
-          }
-      )
-  }
-
-  // Refresh permissions when activity resumes (user may have just returned from Settings)
-  DisposableEffect(lifecycleOwner) {
-      val observer = LifecycleEventObserver { _, event ->
-          if (event == Lifecycle.Event.ON_RESUME) {
-              canDrawOverlays = Settings.canDrawOverlays(context)
-              isAccessibilityEnabled = checkAccessibilityEnabled(context)
-              enabledPackages = TargetAppCatalog.getEnabledPackages(prefs, context.packageName)
-              ServiceBridge.notifyUiStateChanged()
-              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                  isNotificationPermissionGranted = ContextCompat.checkSelfPermission(
-                      context,
-                      Manifest.permission.POST_NOTIFICATIONS
-                  ) == PackageManager.PERMISSION_GRANTED
-              }
-          }
-      }
-      lifecycleOwner.lifecycle.addObserver(observer)
-      onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-  }
-
-  // Poll for accessibility service binding (async — can take a few seconds after enabling)
-  LaunchedEffect(isAccessibilityEnabled) {
-      if (!isAccessibilityEnabled) {
-          while (true) {
-              delay(500)
-              if (checkAccessibilityEnabled(context)) {
-                  isAccessibilityEnabled = true
-                  break
-              }
-          }
-      }
-  }
-
-  val isNotificationRequired = controlInterface == AppDefaults.INTERFACE_NOTIFICATION && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
-  val allPermissionsGranted = canDrawOverlays && isAccessibilityEnabled && (!isNotificationRequired || isNotificationPermissionGranted)
-  var isServiceActive by remember { mutableStateOf(ServiceBridge.isAnyServiceActive()) }
-
-  DisposableEffect(Unit) {
-      ServiceBridge.onUiStateChanged = {
-          isServiceActive = ServiceBridge.isAnyServiceActive()
-      }
-      onDispose {
-          ServiceBridge.onUiStateChanged = null
-      }
-  }
-
-  // Por qué: El botón principal permanece fijo en la parte inferior del Scaffold para que siempre sea accesible sin desplazarse
-  Scaffold(
-    snackbarHost = { SnackbarHost(snackbarHostState) },
-    bottomBar = {
-      Surface(
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 2.dp
-      ) {
-        Column(
-          modifier = Modifier
-            .fillMaxWidth()
-            .navigationBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 10.dp)
-        ) {
-          if (!allPermissionsGranted) {
-            Button(
-              modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp),
-              shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-              enabled = false,
-              onClick = {}
-            ) {
-              Text(
-                text = "Grant Required Permissions Above",
-                style = MaterialTheme.typography.labelLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-              )
+    // Por qué: Verifica silenciosamente al iniciar si existe una versión más reciente en GitHub.
+    LaunchedEffect(Unit) {
+        val info = appUpdater.checkForUpdates()
+        if (info != null) {
+            pendingUpdate = info
+            val dest = appUpdater.getUpdateFile(info.version)
+            if (dest.exists() && dest.length() > 0L && (info.apkSize == 0L || dest.length() == info.apkSize)) {
+                downloadedApkFile = dest
             }
-          } else if (isServiceActive) {
-            OutlinedButton(
-              modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp),
-              shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-              onClick = {
-                context.stopService(Intent(context, FloatingBubbleService::class.java))
-                TranslationNotificationManager.cancelNotification(context)
-                ServiceBridge.isBubbleRunning = false
-                ServiceBridge.isNotificationActive = false
-                ServiceBridge.isTranslatingActive = false
-                ServiceBridge.onTranslationStateChanged?.invoke(false)
-                ServiceBridge.notifyUiStateChanged()
-                isServiceActive = false
-                android.widget.Toast.makeText(context, "OverChat stopped", android.widget.Toast.LENGTH_SHORT).show()
-              }
-            ) {
-              Text(
-                text = "Stop OverChat",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.error,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-              )
-            }
-          } else {
-            Button(
-              modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp),
-              shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-              onClick = {
-                ensureModelsDownloaded(sourceLanguage, targetLanguage)
-                if (controlInterface == AppDefaults.INTERFACE_NOTIFICATION) {
-                  if (ServiceBridge.isBubbleRunning) {
-                    context.stopService(Intent(context, FloatingBubbleService::class.java))
-                    ServiceBridge.isBubbleRunning = false
-                  }
-                  ServiceBridge.isTranslatingActive = true
-                  ServiceBridge.onTranslationStateChanged?.invoke(true)
-                  TranslationNotificationManager.showNotification(context, isTranslating = true)
-                  isServiceActive = true
-                  android.widget.Toast.makeText(context, "OverChat active in notification drawer", android.widget.Toast.LENGTH_SHORT).show()
-                } else {
-                  TranslationNotificationManager.cancelNotification(context)
-                  ServiceBridge.isBubbleRunning = true
-                  val intent = Intent(context, FloatingBubbleService::class.java)
-                  context.startService(intent)
-                  ServiceBridge.notifyUiStateChanged()
-                  isServiceActive = true
-                  android.widget.Toast.makeText(context, "Floating bubble opened", android.widget.Toast.LENGTH_SHORT).show()
-                }
-              }
-            ) {
-              Text(
-                text = if (controlInterface == AppDefaults.INTERFACE_NOTIFICATION) "Start Notification Menu" else "Start Floating Bubble",
-                style = MaterialTheme.typography.labelLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-              )
-            }
-          }
-        }
-      }
-    }
-  ) { innerPadding ->
-    val scrollState = rememberScrollState()
-    val settingsEnabled = !isServiceActive
-
-    Column(
-      modifier = modifier
-          .fillMaxSize()
-          .padding(innerPadding)
-          .padding(horizontal = 16.dp, vertical = 10.dp)
-          .verticalScroll(scrollState),
-      horizontalAlignment = Alignment.Start,
-      verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-      // Cabecera compacta con indicador de bloqueo y versión interactiva
-      Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.SpaceBetween,
-          verticalAlignment = Alignment.CenterVertically
-      ) {
-          Row(
-              modifier = Modifier.weight(1f),
-              verticalAlignment = Alignment.CenterVertically
-          ) {
-              Image(
-                  painter = painterResource(id = R.drawable.ic_overchat_logo),
-                  contentDescription = "OverChat Logo",
-                  modifier = Modifier
-                      .size(42.dp)
-                      .clip(RoundedCornerShape(10.dp))
-              )
-              Spacer(modifier = Modifier.width(10.dp))
-              Column {
-                  Row(verticalAlignment = Alignment.CenterVertically) {
-                      Text(
-                          text = "OverChat",
-                          style = MaterialTheme.typography.titleLarge,
-                          color = MaterialTheme.colorScheme.onBackground
-                      )
-                      if (isServiceActive) {
-                          Spacer(modifier = Modifier.width(8.dp))
-                          Surface(
-                              shape = RoundedCornerShape(6.dp),
-                              color = MaterialTheme.colorScheme.secondaryContainer
-                          ) {
-                              Text(
-                                  text = "Locked",
-                                  style = MaterialTheme.typography.labelSmall,
-                                  color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                  modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                              )
-                          }
-                      }
-                  }
-                  Text(
-                      text = "Real-Time Chat Translator",
-                      style = MaterialTheme.typography.bodySmall,
-                      color = MaterialTheme.colorScheme.onSurfaceVariant,
-                      maxLines = 1,
-                      overflow = TextOverflow.Ellipsis
-                  )
-              }
-          }
-
-          Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-              Surface(
-                  shape = RoundedCornerShape(8.dp),
-                  color = MaterialTheme.colorScheme.surfaceVariant,
-                  modifier = Modifier.clickable { showDiagnosticsDialog = true }
-              ) {
-                  Text(
-                      text = "Debug",
-                      style = MaterialTheme.typography.labelSmall,
-                      color = MaterialTheme.colorScheme.onSurfaceVariant,
-                      modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
-                  )
-              }
-              Surface(
-                  shape = RoundedCornerShape(8.dp),
-                  color = MaterialTheme.colorScheme.surfaceVariant,
-                  // Por qué: Permite al usuario comprobar manualmente actualizaciones al pulsar sobre la versión
-                  modifier = Modifier.clickable {
-                      if (!isCheckingForUpdate && !isDownloadingUpdate) {
-                          isCheckingForUpdate = true
-                          coroutineScope.launch {
-                              val info = appUpdater.checkForUpdates()
-                              isCheckingForUpdate = false
-                              if (info != null) {
-                                  pendingUpdate = info
-                                  val dest = appUpdater.getUpdateFile(info.version)
-                                  if (dest.exists() && dest.length() > 0L && (info.apkSize == 0L || dest.length() == info.apkSize)) {
-                                      downloadedApkFile = dest
-                                  }
-                              } else {
-                                  snackbarHostState.showSnackbar("You're on the latest version (v${BuildConfig.VERSION_NAME})")
-                              }
-                          }
-                      }
-                  }
-              ) {
-                  Text(
-                      text = if (isCheckingForUpdate) "Checking..." else "v${BuildConfig.VERSION_NAME}",
-                      style = MaterialTheme.typography.labelSmall,
-                      color = MaterialTheme.colorScheme.onSurfaceVariant,
-                      modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                  )
-              }
-          }
-      }
-
-      if (showDiagnosticsDialog) {
-          val messengerOn = enabledPackages.contains("com.facebook.orca")
-          val crashPrefs = remember { context.getSharedPreferences(com.example.translator.TranslatorApplication.CRASH_PREFS, Context.MODE_PRIVATE) }
-          val lastCrashSummary = remember(showDiagnosticsDialog) {
-              val trace = crashPrefs.getString(com.example.translator.TranslatorApplication.KEY_LAST_CRASH, null)
-              if (trace.isNullOrBlank()) {
-                  null
-              } else {
-                  val lines = trace.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
-                  val headline = lines.firstOrNull()?.take(120) ?: "unknown"
-                  val appFrame = lines.firstOrNull { it.contains("com.example.translator.") }?.removePrefix("at ")?.take(120)
-                  val crashAt = crashPrefs.getLong(com.example.translator.TranslatorApplication.KEY_LAST_CRASH_AT, 0L)
-                  val ageSec = if (crashAt > 0L) ((System.currentTimeMillis() - crashAt) / 1000L).coerceAtLeast(0L) else -1L
-                  buildString {
-                      append(headline)
-                      if (appFrame != null) append(" @ $appFrame")
-                      if (ageSec >= 0L) append(" (${ageSec}s ago)")
-                  }
-              }
-          }
-          val diagReport = buildString {
-              appendLine("Version: v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
-              appendLine("AccService: ${ServiceBridge.isAccessibilityActive} | Translating: ${ServiceBridge.isTranslatingActive}")
-              appendLine("Pair: $sourceLanguage -> $targetLanguage | Mode: $translationMode")
-              appendLine("EnabledPkgs: ${enabledPackages.size} (Messenger=$messengerOn)")
-              appendLine("Runtime: ${ServiceBridge.lastRuntimeTrace}")
-              appendLine("LastScan: ${ServiceBridge.lastScanDebug}")
-              appendLine("LastTree: ${ServiceBridge.lastTreeScanDebug}")
-              appendLine("LastProbe: ${ServiceBridge.lastProbeDebug}")
-              if (ServiceBridge.lastDraftDebug != "none") {
-                  appendLine("Draft: ${ServiceBridge.lastDraftDebug}")
-              }
-              if (ServiceBridge.lastPerAppScanDebug.isNotBlank()) {
-                  appendLine("AppHistory: ${ServiceBridge.lastPerAppScanDebug}")
-              }
-              if (!lastCrashSummary.isNullOrBlank()) {
-                  appendLine("LastCrash: $lastCrashSummary")
-              }
-          }.trim()
-
-          AlertDialog(
-              onDismissRequest = { showDiagnosticsDialog = false },
-              title = { Text("Scan Diagnostics") },
-              text = {
-                  Box(
-                      modifier = Modifier
-                          .heightIn(max = 380.dp)
-                          .verticalScroll(rememberScrollState())
-                  ) {
-                      Text(
-                          text = diagReport,
-                          style = MaterialTheme.typography.bodySmall
-                      )
-                  }
-              },
-              confirmButton = {
-                  TextButton(onClick = {
-                      val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                      clipboard.setPrimaryClip(android.content.ClipData.newPlainText("OverChat Diagnostics", diagReport))
-                      showDiagnosticsDialog = false
-                      coroutineScope.launch {
-                          snackbarHostState.showSnackbar("Diagnostics copied")
-                      }
-                  }) {
-                      Text("Copy")
-                  }
-              },
-              dismissButton = {
-                  TextButton(onClick = { showDiagnosticsDialog = false }) {
-                      Text("Close")
-                  }
-              }
-          )
-      }
-
-      // ── Sección 1: Configuración de Traducción ────────────────────────────
-      OutlinedCard(
-          modifier = Modifier.fillMaxWidth(),
-          shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
-          colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-      ) {
-          Column(modifier = Modifier.padding(14.dp)) {
-              Row(
-                  modifier = Modifier.fillMaxWidth(),
-                  horizontalArrangement = Arrangement.SpaceBetween,
-                  verticalAlignment = Alignment.CenterVertically
-              ) {
-                  Text(
-                      text = "Languages",
-                      style = MaterialTheme.typography.titleSmall,
-                      color = MaterialTheme.colorScheme.onSurface
-                  )
-                  Row(verticalAlignment = Alignment.CenterVertically) {
-                      val isReady = modelStatus.contains("ready", ignoreCase = true)
-                      Surface(
-                          modifier = Modifier.size(7.dp),
-                          shape = androidx.compose.foundation.shape.CircleShape,
-                          color = if (isReady) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
-                      ) {}
-                      Spacer(modifier = Modifier.width(5.dp))
-                      Text(
-                          text = modelStatus,
-                          style = MaterialTheme.typography.labelSmall,
-                          color = MaterialTheme.colorScheme.onSurfaceVariant,
-                          maxLines = 1,
-                          overflow = TextOverflow.Ellipsis
-                      )
-                  }
-              }
-
-              Spacer(modifier = Modifier.height(8.dp))
-
-              // Selector de pares lingüísticos restringido a los idiomas disponibles
-              Row(
-                  modifier = Modifier.fillMaxWidth(),
-                  verticalAlignment = Alignment.CenterVertically
-              ) {
-                  Box(modifier = Modifier.weight(1f)) {
-                      LanguageDropdown("From", sourceLanguage, availableLanguages, enabled = settingsEnabled) { selected ->
-                          if (selected == targetLanguage) {
-                              targetLanguage = sourceLanguage
-                              prefs.edit().putString(AppDefaults.KEY_TARGET_LANGUAGE, targetLanguage).apply()
-                          }
-                          sourceLanguage = selected
-                          prefs.edit().putString(AppDefaults.KEY_SOURCE_LANGUAGE, selected).apply()
-                      }
-                  }
-
-                  IconButton(
-                      onClick = {
-                          val temp = sourceLanguage
-                          sourceLanguage = targetLanguage
-                          targetLanguage = temp
-                          prefs.edit()
-                              .putString(AppDefaults.KEY_SOURCE_LANGUAGE, sourceLanguage)
-                              .putString(AppDefaults.KEY_TARGET_LANGUAGE, targetLanguage)
-                              .apply()
-                      },
-                      enabled = settingsEnabled,
-                      modifier = Modifier.size(36.dp)
-                  ) {
-                      Text(
-                          text = "⇄",
-                          style = MaterialTheme.typography.titleMedium,
-                          color = if (settingsEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-                      )
-                  }
-
-                  Box(modifier = Modifier.weight(1f)) {
-                      LanguageDropdown("To", targetLanguage, availableLanguages, enabled = settingsEnabled) { selected ->
-                          if (selected == sourceLanguage) {
-                              sourceLanguage = targetLanguage
-                              prefs.edit().putString(AppDefaults.KEY_SOURCE_LANGUAGE, sourceLanguage).apply()
-                          }
-                          targetLanguage = selected
-                          prefs.edit().putString(AppDefaults.KEY_TARGET_LANGUAGE, selected).apply()
-                      }
-                  }
-              }
-
-              HorizontalDivider(
-                  modifier = Modifier.padding(vertical = 10.dp),
-                  color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-              )
-
-              // Modo de traducción de mensajes con etiquetas compactas de una sola línea
-              Text(
-                  text = "Chat Message Mode",
-                  style = MaterialTheme.typography.labelLarge,
-                  color = MaterialTheme.colorScheme.onSurface
-              )
-              Spacer(modifier = Modifier.height(6.dp))
-              Row(
-                  modifier = Modifier.fillMaxWidth(),
-                  horizontalArrangement = Arrangement.spacedBy(8.dp)
-              ) {
-                  FilterChip(
-                      selected = translationMode == AppDefaults.MODE_TAP,
-                      onClick = {
-                          translationMode = AppDefaults.MODE_TAP
-                          prefs.edit().putString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_TAP).apply()
-                      },
-                      enabled = settingsEnabled,
-                      label = {
-                          Text(
-                              text = "Tap Message",
-                              maxLines = 1,
-                              overflow = TextOverflow.Ellipsis
-                          )
-                      },
-                      modifier = Modifier.weight(1f)
-                  )
-                  FilterChip(
-                      selected = translationMode == AppDefaults.MODE_ALL,
-                      onClick = {
-                          translationMode = AppDefaults.MODE_ALL
-                          prefs.edit().putString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_ALL).apply()
-                      },
-                      enabled = settingsEnabled,
-                      label = {
-                          Text(
-                              text = "Auto-Translate",
-                              maxLines = 1,
-                              overflow = TextOverflow.Ellipsis
-                          )
-                      },
-                      modifier = Modifier.weight(1f)
-                  )
-              }
-              Text(
-                  text = if (translationMode == AppDefaults.MODE_TAP)
-                      "Tap any message in chat to reveal its translation."
-                  else
-                      "Translates visible chat messages automatically.",
-                  style = MaterialTheme.typography.bodySmall,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant,
-                  maxLines = 1,
-                  overflow = TextOverflow.Ellipsis
-              )
-
-              HorizontalDivider(
-                  modifier = Modifier.padding(vertical = 10.dp),
-                  color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-              )
-
-              // Por qué: Activa o desactiva la aplicación del glosario aprendido y la validación de alfabeto
-              Row(
-                  modifier = Modifier.fillMaxWidth(),
-                  verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.SpaceBetween
-              ) {
-                  Column(modifier = Modifier.weight(1f)) {
-                      Row(verticalAlignment = Alignment.CenterVertically) {
-                          Text(
-                              text = "Apply Glossary & Validation",
-                              style = MaterialTheme.typography.bodyMedium,
-                              color = MaterialTheme.colorScheme.onSurface
-                          )
-                          Spacer(modifier = Modifier.width(6.dp))
-                          Surface(
-                              shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
-                              color = if (aiTranslationEnabled) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
-                          ) {
-                              Text(
-                                  text = if (aiTranslationEnabled) "Active" else "Raw NMT",
-                                  style = MaterialTheme.typography.labelSmall,
-                                  color = if (aiTranslationEnabled) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                                  modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                              )
-                          }
-                      }
-                      Spacer(modifier = Modifier.height(2.dp))
-                      Text(
-                          text = "Applies your learned vocabulary fixes and verifies target script output.",
-                          style = MaterialTheme.typography.bodySmall,
-                          color = MaterialTheme.colorScheme.onSurfaceVariant,
-                          maxLines = 2,
-                          overflow = TextOverflow.Ellipsis
-                      )
-                  }
-                  Spacer(modifier = Modifier.width(10.dp))
-                  Switch(
-                      checked = aiTranslationEnabled,
-                      enabled = settingsEnabled,
-                      onCheckedChange = { isChecked ->
-                          aiTranslationEnabled = isChecked
-                          prefs.edit().putBoolean(AppDefaults.KEY_AI_ENABLED, isChecked).apply()
-                      }
-                  )
-              }
-          }
-      }
-
-      // ── Sección 2: Asistente de Teclado, Aprendizaje e Interfaz ────────────
-      LaunchedEffect(Unit) {
-          // Por qué: Refresca periódicamente las estadísticas mientras la pantalla está visible
-          while (true) {
-              learningStats = learningStore.stats()
-              delay(3000L)
-          }
-      }
-      OutlinedCard(
-          modifier = Modifier.fillMaxWidth(),
-          shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
-          colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-      ) {
-          Column(modifier = Modifier.padding(14.dp)) {
-              Text(
-                  text = "Typing & Controls",
-                  style = MaterialTheme.typography.titleSmall,
-                  color = MaterialTheme.colorScheme.onSurface
-              )
-              Spacer(modifier = Modifier.height(8.dp))
-
-              // Asistente de escritura en teclado
-              Row(
-                  modifier = Modifier.fillMaxWidth(),
-                  verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.SpaceBetween
-              ) {
-                  Column(modifier = Modifier.weight(1f)) {
-                      Text(
-                          text = "Keyboard Draft Translator",
-                          style = MaterialTheme.typography.bodyMedium,
-                          color = MaterialTheme.colorScheme.onSurface
-                      )
-                      Text(
-                          text = "Translates outgoing messages in real-time as you type.",
-                          style = MaterialTheme.typography.bodySmall,
-                          color = MaterialTheme.colorScheme.onSurfaceVariant,
-                          maxLines = 1,
-                          overflow = TextOverflow.Ellipsis
-                      )
-                  }
-                  Spacer(modifier = Modifier.width(10.dp))
-                  Switch(
-                      checked = keyboardTranslatorEnabled,
-                      enabled = settingsEnabled,
-                      onCheckedChange = { isChecked ->
-                          keyboardTranslatorEnabled = isChecked
-                          prefs.edit().putBoolean(AppDefaults.KEY_KEYBOARD_ENABLED, isChecked).apply()
-                      }
-                  )
-              }
-
-              HorizontalDivider(
-                  modifier = Modifier.padding(vertical = 10.dp),
-                  color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-              )
-
-              // Aprendizaje adaptativo integrado de forma compacta
-              Row(
-                  modifier = Modifier.fillMaxWidth(),
-                  verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.SpaceBetween
-              ) {
-                  Column(modifier = Modifier.weight(1f)) {
-                      Text(
-                          text = "Learn From My Edits",
-                          style = MaterialTheme.typography.bodyMedium,
-                          color = MaterialTheme.colorScheme.onSurface
-                      )
-                      Text(
-                          text = "${learningStats.first} learned words · ${learningStats.second} phrases",
-                          style = MaterialTheme.typography.labelSmall,
-                          color = MaterialTheme.colorScheme.primary,
-                          maxLines = 1,
-                          overflow = TextOverflow.Ellipsis
-                      )
-                  }
-                  if (learningStats.first + learningStats.second > 0) {
-                      TextButton(
-                          onClick = { showResetLearningDialog = true },
-                          enabled = settingsEnabled,
-                          contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                      ) {
-                          Text(
-                              text = "Reset",
-                              style = MaterialTheme.typography.labelSmall,
-                              color = if (settingsEnabled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline
-                          )
-                      }
-                  }
-                  Switch(
-                      checked = learningEnabled,
-                      enabled = settingsEnabled,
-                      onCheckedChange = { isChecked ->
-                          learningEnabled = isChecked
-                          prefs.edit().putBoolean(AppDefaults.KEY_LEARNING_ENABLED, isChecked).apply()
-                      }
-                  )
-              }
-
-              HorizontalDivider(
-                  modifier = Modifier.padding(vertical = 10.dp),
-                  color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-              )
-
-              // Método de control preferido
-              Text(
-                  text = "Control Interface",
-                  style = MaterialTheme.typography.labelLarge,
-                  color = MaterialTheme.colorScheme.onSurface
-              )
-              Spacer(modifier = Modifier.height(6.dp))
-              Row(
-                  modifier = Modifier.fillMaxWidth(),
-                  horizontalArrangement = Arrangement.spacedBy(8.dp)
-              ) {
-                  FilterChip(
-                      selected = controlInterface == AppDefaults.INTERFACE_NOTIFICATION,
-                      onClick = {
-                          controlInterface = AppDefaults.INTERFACE_NOTIFICATION
-                          prefs.edit().putString(AppDefaults.KEY_CONTROL_INTERFACE, AppDefaults.INTERFACE_NOTIFICATION).apply()
-                      },
-                      enabled = settingsEnabled,
-                      label = {
-                          Text(
-                              text = "Notification",
-                              maxLines = 1,
-                              overflow = TextOverflow.Ellipsis
-                          )
-                      },
-                      modifier = Modifier.weight(1f)
-                  )
-                  FilterChip(
-                      selected = controlInterface == AppDefaults.INTERFACE_BUBBLE,
-                      onClick = {
-                          controlInterface = AppDefaults.INTERFACE_BUBBLE
-                          prefs.edit().putString(AppDefaults.KEY_CONTROL_INTERFACE, AppDefaults.INTERFACE_BUBBLE).apply()
-                      },
-                      enabled = settingsEnabled,
-                      label = {
-                          Text(
-                              text = "Floating Bubble",
-                              maxLines = 1,
-                              overflow = TextOverflow.Ellipsis
-                          )
-                      },
-                      modifier = Modifier.weight(1f)
-                  )
-              }
-          }
-      }
-
-      if (showResetLearningDialog) {
-          AlertDialog(
-              onDismissRequest = { showResetLearningDialog = false },
-              title = { Text("Reset learned data?") },
-              text = { Text("All learned words and remembered phrases will be deleted from this phone.") },
-              confirmButton = {
-                  TextButton(onClick = {
-                      learningStore.clearAll()
-                      learningStats = learningStore.stats()
-                      showResetLearningDialog = false
-                  }) {
-                      Text("Reset", color = MaterialTheme.colorScheme.error)
-                  }
-              },
-              dismissButton = {
-                  TextButton(onClick = { showResetLearningDialog = false }) { Text("Cancel") }
-              }
-          )
-      }
-
-      // ── Sección 2B: Apps Compatibles y Tema de Burbujas ────────────────────
-      val activeCuratedNames = remember(enabledPackages) {
-          TargetAppCatalog.CURATED_PROFILES
-              .filter { profile -> profile.packageNames.any { it in enabledPackages } }
-              .map { it.displayName }
-      }
-      val extraCustomCount = remember(enabledPackages) {
-          val knownPackages = TargetAppCatalog.CURATED_PROFILES.flatMapTo(HashSet()) { it.packageNames }
-          enabledPackages.count { it !in knownPackages }
-      }
-      val enabledAppsSummary = remember(enabledPackages, activeCuratedNames, extraCustomCount) {
-          when {
-              enabledPackages.isEmpty() -> "No apps selected — tap Manage to enable chat apps."
-              else -> {
-                  val preview = activeCuratedNames.take(3).joinToString(", ")
-                  val remaining = (activeCuratedNames.size - 3).coerceAtLeast(0) + extraCustomCount
-                  val suffix = if (remaining > 0) " +$remaining more" else ""
-                  if (preview.isNotEmpty()) "$preview$suffix (${enabledPackages.size} pkgs)"
-                  else "${enabledPackages.size} custom apps enabled"
-              }
-          }
-      }
-
-      OutlinedCard(
-          modifier = Modifier.fillMaxWidth(),
-          shape = RoundedCornerShape(14.dp),
-          colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-      ) {
-          Column(modifier = Modifier.padding(14.dp)) {
-              Row(
-                  modifier = Modifier.fillMaxWidth(),
-                  horizontalArrangement = Arrangement.SpaceBetween,
-                  verticalAlignment = Alignment.CenterVertically
-              ) {
-                  Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                      Text(
-                          text = "Supported Apps & Theme",
-                          style = MaterialTheme.typography.titleSmall,
-                          color = MaterialTheme.colorScheme.onSurface
-                      )
-                      Spacer(modifier = Modifier.height(2.dp))
-                      Text(
-                          text = enabledAppsSummary,
-                          style = MaterialTheme.typography.bodySmall,
-                          color = MaterialTheme.colorScheme.onSurfaceVariant,
-                          maxLines = 2,
-                          overflow = TextOverflow.Ellipsis
-                      )
-                  }
-                  FilledTonalButton(
-                      onClick = { onItemClick(TargetApps) },
-                      enabled = settingsEnabled,
-                      contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
-                  ) {
-                      Text("Manage")
-                  }
-              }
-
-              Spacer(modifier = Modifier.height(10.dp))
-
-              Text(
-                  text = "Overlay Bubble Theme",
-                  style = MaterialTheme.typography.labelMedium,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant
-              )
-              Spacer(modifier = Modifier.height(6.dp))
-              Row(
-                  modifier = Modifier.fillMaxWidth(),
-                  horizontalArrangement = Arrangement.spacedBy(8.dp)
-              ) {
-                  val themeOptions = listOf(
-                      AppDefaults.OVERLAY_THEME_AUTO to "Auto",
-                      AppDefaults.OVERLAY_THEME_LIGHT to "Light",
-                      AppDefaults.OVERLAY_THEME_WHATSAPP to "Classic"
-                  )
-                  themeOptions.forEach { (value, label) ->
-                      FilterChip(
-                          selected = overlayTheme == value,
-                          onClick = {
-                              overlayTheme = value
-                              prefs.edit().putString(AppDefaults.KEY_OVERLAY_THEME, value).apply()
-                          },
-                          enabled = settingsEnabled,
-                          label = {
-                              Text(
-                                  text = label,
-                                  maxLines = 1,
-                                  overflow = TextOverflow.Ellipsis
-                              )
-                          },
-                          modifier = Modifier.weight(1f)
-                      )
-                  }
-              }
-          }
-      }
-
-      // ── Sección 3: Permisos del Sistema ────────────────────────────────────
-      OutlinedCard(
-          modifier = Modifier.fillMaxWidth(),
-          shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
-          colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-      ) {
-          Column(modifier = Modifier.padding(14.dp)) {
-              Row(
-                  modifier = Modifier.fillMaxWidth(),
-                  horizontalArrangement = Arrangement.SpaceBetween,
-                  verticalAlignment = Alignment.CenterVertically
-              ) {
-                  Row(verticalAlignment = Alignment.CenterVertically) {
-                      Text(
-                          text = "System Permissions",
-                          style = MaterialTheme.typography.titleSmall,
-                          color = MaterialTheme.colorScheme.onSurface
-                      )
-                      if (allPermissionsGranted) {
-                          Spacer(modifier = Modifier.width(8.dp))
-                          Text(
-                              text = "· All active",
-                              style = MaterialTheme.typography.bodySmall,
-                              color = MaterialTheme.colorScheme.onSurfaceVariant
-                          )
-                      }
-                  }
-                  if (allPermissionsGranted) {
-                      Surface(
-                          shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
-                          color = MaterialTheme.colorScheme.primaryContainer
-                      ) {
-                          Text(
-                              text = "✓ Ready",
-                              style = MaterialTheme.typography.labelSmall,
-                              color = MaterialTheme.colorScheme.onPrimaryContainer,
-                              modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                          )
-                      }
-                  }
-              }
-
-              if (!allPermissionsGranted) {
-                  Spacer(modifier = Modifier.height(10.dp))
-                  PermissionStatusRow(label = "Display over other apps", granted = canDrawOverlays) {
-                      val intent = Intent(
-                          Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                          Uri.parse("package:${context.packageName}")
-                      )
-                      context.startActivity(intent)
-                  }
-                  Spacer(modifier = Modifier.height(8.dp))
-                  PermissionStatusRow(label = "Accessibility Service", granted = isAccessibilityEnabled) {
-                      val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                      context.startActivity(intent)
-                  }
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                      Spacer(modifier = Modifier.height(8.dp))
-                      PermissionStatusRow(label = "Notifications", granted = isNotificationPermissionGranted) {
-                          notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                      }
-                  }
-
-                  if (!isAccessibilityEnabled) {
-                      Spacer(modifier = Modifier.height(8.dp))
-                      Row(
-                          modifier = Modifier.fillMaxWidth(),
-                          verticalAlignment = Alignment.CenterVertically,
-                          horizontalArrangement = Arrangement.SpaceBetween
-                      ) {
-                          Text(
-                              text = "Android 13+ restricted? App Info → ⋮ → Allow restricted settings.",
-                              style = MaterialTheme.typography.bodySmall,
-                              color = MaterialTheme.colorScheme.onSurfaceVariant,
-                              modifier = Modifier.weight(1f)
-                          )
-                          TextButton(
-                              onClick = {
-                                  val intent = Intent(
-                                      Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                                      Uri.parse("package:${context.packageName}")
-                                  )
-                                  context.startActivity(intent)
-                              }
-                          ) {
-                              Text("App Info", style = MaterialTheme.typography.labelMedium)
-                          }
-                      }
-                  }
-              }
-          }
-      }
-    }
-  }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun LanguageDropdown(
-    label: String,
-    selectedCode: String,
-    options: List<String>,
-    enabled: Boolean = true,
-    onSelected: (String) -> Unit
-) {
-    var expanded by remember { mutableStateOf(false) }
-
-    LaunchedEffect(enabled) {
-        if (!enabled) {
-            expanded = false
         }
     }
 
-    val getDisplayName = { code: String ->
-        if (code == "AUTO") "Auto-Detect"
-        else Locale.forLanguageTag(code).displayLanguage.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
+    fun handleInstallResult(result: AppUpdater.InstallResult) {
+        when (result) {
+            is AppUpdater.InstallResult.Success -> pendingUpdate = null
+            is AppUpdater.InstallResult.PermissionRequired -> coroutineScope.launch {
+                snackbarHostState.showSnackbar("Enable 'Allow from this source' to install update")
+            }
+            is AppUpdater.InstallResult.Error -> {
+                downloadedApkFile = null
+                downloadErrorMessage = result.message
+            }
+            is AppUpdater.InstallResult.FileNotFound -> {
+                downloadedApkFile = null
+                downloadErrorMessage = "The downloaded update file is missing."
+            }
+        }
     }
 
-    ExposedDropdownMenuBox(
-        expanded = expanded && enabled,
-        onExpandedChange = { if (enabled) expanded = !expanded }
-    ) {
-        OutlinedTextField(
-            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
-            readOnly = true,
-            singleLine = true,
-            enabled = enabled,
-            value = getDisplayName(selectedCode),
-            onValueChange = {},
-            textStyle = MaterialTheme.typography.bodyMedium,
-            label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded && enabled) },
-            colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
+    fun startUpdateDownload(info: AppUpdater.UpdateInfo) {
+        downloadErrorMessage = null
+        isDownloadingUpdate = true
+        downloadProgress = 0f
+        downloadStatusText = "Connecting..."
+        val destination = appUpdater.getUpdateFile(info.version)
+        downloadJob = coroutineScope.launch {
+            val success = appUpdater.downloadApk(info.apkUrl, destination, info.apkSize) { bytesDownloaded, totalBytes ->
+                downloadProgress = if (totalBytes > 0) bytesDownloaded.toFloat() / totalBytes.toFloat() else 0f
+                val mbDownloaded = bytesDownloaded / (1024f * 1024f)
+                val mbTotal = totalBytes / (1024f * 1024f)
+                val percent = if (totalBytes > 0) (bytesDownloaded * 100 / totalBytes).toInt() else 0
+                downloadStatusText = String.format(Locale.US, "%.1f MB / %.1f MB (%d%%)", mbDownloaded, mbTotal, percent)
+            }
+            isDownloadingUpdate = false
+            if (success) {
+                downloadedApkFile = destination
+                handleInstallResult(appUpdater.installApk(context, destination))
+            } else {
+                downloadErrorMessage = "Download failed. Check your internet connection."
+            }
+        }
+    }
+
+    pendingUpdate?.let { info ->
+        AppUpdateDialog(
+            info = info,
+            isDownloading = isDownloadingUpdate,
+            downloadProgress = downloadProgress,
+            downloadStatusText = downloadStatusText,
+            downloadedApkFile = downloadedApkFile,
+            downloadErrorMessage = downloadErrorMessage,
+            onDownloadOrRetry = { startUpdateDownload(info) },
+            onInstall = { file -> handleInstallResult(appUpdater.installApk(context, file)) },
+            onCancelDownload = {
+                downloadJob?.cancel()
+                isDownloadingUpdate = false
+                downloadStatusText = ""
+            },
+            onOpenBrowser = { appUpdater.openUpdatePage(context, info.htmlUrl) },
+            onDismiss = {
+                pendingUpdate = null
+                downloadErrorMessage = null
+            }
         )
-        ExposedDropdownMenu(
-            expanded = expanded && enabled,
-            onDismissRequest = { expanded = false }
-        ) {
-            options.forEach { code ->
-                DropdownMenuItem(
-                    text = { Text(getDisplayName(code)) },
-                    onClick = {
-                        onSelected(code)
-                        expanded = false
+    }
+
+    val prefs = remember { context.getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE) }
+    val availableLanguages = AppDefaults.AVAILABLE_LANGUAGES
+    var sourceLanguage by remember {
+        val saved = prefs.getString(AppDefaults.KEY_SOURCE_LANGUAGE, AppDefaults.SOURCE_LANGUAGE) ?: AppDefaults.SOURCE_LANGUAGE
+        mutableStateOf(if (availableLanguages.contains(saved)) saved else AppDefaults.SOURCE_LANGUAGE)
+    }
+    var targetLanguage by remember {
+        val saved = prefs.getString(AppDefaults.KEY_TARGET_LANGUAGE, AppDefaults.TARGET_LANGUAGE) ?: AppDefaults.TARGET_LANGUAGE
+        mutableStateOf(if (availableLanguages.contains(saved)) saved else AppDefaults.TARGET_LANGUAGE)
+    }
+    var keyboardTranslatorEnabled by remember {
+        mutableStateOf(prefs.getBoolean(AppDefaults.KEY_KEYBOARD_ENABLED, true))
+    }
+    var translationMode by remember {
+        mutableStateOf(prefs.getString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_ALL) ?: AppDefaults.MODE_ALL)
+    }
+    var glossaryEnabled by remember {
+        mutableStateOf(prefs.getBoolean(AppDefaults.KEY_AI_ENABLED, true))
+    }
+
+    val learningStore = remember { LearningStore.get(context) }
+    var learningEnabled by remember {
+        mutableStateOf(prefs.getBoolean(AppDefaults.KEY_LEARNING_ENABLED, true))
+    }
+    var learningStats by remember { mutableStateOf(learningStore.stats()) }
+    var showResetLearningDialog by remember { mutableStateOf(false) }
+    var showDiagnosticsDialog by remember { mutableStateOf(false) }
+    var controlInterface by remember {
+        mutableStateOf(prefs.getString(AppDefaults.KEY_CONTROL_INTERFACE, AppDefaults.INTERFACE_NOTIFICATION) ?: AppDefaults.INTERFACE_NOTIFICATION)
+    }
+    var enabledPackages by remember {
+        mutableStateOf(TargetAppCatalog.getEnabledPackages(prefs, context.packageName))
+    }
+    var overlayTheme by remember {
+        mutableStateOf(
+            prefs.getString(AppDefaults.KEY_OVERLAY_THEME, AppDefaults.OVERLAY_THEME_AUTO)
+                ?: AppDefaults.OVERLAY_THEME_AUTO
+        )
+    }
+
+    // Por qué: Sincroniza los cambios hechos en pantallas secundarias (como TargetAppsScreen).
+    DisposableEffect(prefs) {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            when (key) {
+                AppDefaults.KEY_ENABLED_PACKAGES -> {
+                    enabledPackages = TargetAppCatalog.getEnabledPackages(prefs, context.packageName)
+                }
+                AppDefaults.KEY_OVERLAY_THEME -> {
+                    overlayTheme = prefs.getString(AppDefaults.KEY_OVERLAY_THEME, AppDefaults.OVERLAY_THEME_AUTO)
+                        ?: AppDefaults.OVERLAY_THEME_AUTO
+                }
+            }
+        }
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
+
+    var isNotificationPermissionGranted by remember {
+        mutableStateOf(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) == PackageManager.PERMISSION_GRANTED
+            } else {
+                true
+            }
+        )
+    }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        isNotificationPermissionGranted = granted
+    }
+
+    var modelStatus by remember { mutableStateOf("Checking language models...") }
+
+    // Por qué: Descarga los modelos en ambos sentidos (pantalla y borrador de teclado) para operar 100% offline.
+    fun ensureModelsDownloaded(source: String, target: String) {
+        val conditions = DownloadConditions.Builder().build()
+        val sourceCode = source.takeIf { it in availableLanguages } ?: AppDefaults.SOURCE_LANGUAGE
+        val clientForward = TranslatorPool.get(sourceCode, target)
+        val clientReverse = TranslatorPool.get(target, sourceCode)
+        modelStatus = "Downloading language models..."
+        clientForward.downloadModelIfNeeded(conditions)
+            .addOnSuccessListener {
+                TranslatorPool.markPairReady(sourceCode, target)
+                clientReverse.downloadModelIfNeeded(conditions)
+                    .addOnSuccessListener {
+                        TranslatorPool.markPairReady(target, sourceCode)
+                        modelStatus = "Language models ready (offline)"
                     }
-                )
+                    .addOnFailureListener {
+                        modelStatus = "Model download error. Check connection."
+                    }
+            }
+            .addOnFailureListener {
+                modelStatus = "Model download error. Check connection."
+            }
+    }
+
+    LaunchedEffect(sourceLanguage, targetLanguage) {
+        if (!prefs.contains(AppDefaults.KEY_SOURCE_LANGUAGE)) {
+            prefs.edit().putString(AppDefaults.KEY_SOURCE_LANGUAGE, sourceLanguage).apply()
+        }
+        if (!prefs.contains(AppDefaults.KEY_TARGET_LANGUAGE)) {
+            prefs.edit().putString(AppDefaults.KEY_TARGET_LANGUAGE, targetLanguage).apply()
+        }
+        ensureModelsDownloaded(sourceLanguage, targetLanguage)
+    }
+
+    var canDrawOverlays by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
+    var isAccessibilityEnabled by remember { mutableStateOf(checkAccessibilityEnabled(context)) }
+
+    val crashPrefs = remember {
+        context.getSharedPreferences(TranslatorApplication.CRASH_PREFS, Context.MODE_PRIVATE)
+    }
+    var crashLog by remember {
+        mutableStateOf(crashPrefs.getString(TranslatorApplication.KEY_LAST_CRASH, null))
+    }
+
+    crashLog?.let { currentCrashLog ->
+        CrashReportDialog(
+            crashLog = currentCrashLog,
+            onCopyLog = {
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Crash Log", currentCrashLog))
+                Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+            },
+            onDismiss = {
+                crashPrefs.edit().remove(TranslatorApplication.KEY_LAST_CRASH).apply()
+                crashLog = null
+            }
+        )
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                canDrawOverlays = Settings.canDrawOverlays(context)
+                isAccessibilityEnabled = checkAccessibilityEnabled(context)
+                enabledPackages = TargetAppCatalog.getEnabledPackages(prefs, context.packageName)
+                ServiceBridge.notifyUiStateChanged()
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    isNotificationPermissionGranted = ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.POST_NOTIFICATIONS
+                    ) == PackageManager.PERMISSION_GRANTED
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    LaunchedEffect(isAccessibilityEnabled) {
+        if (!isAccessibilityEnabled) {
+            while (true) {
+                delay(500)
+                if (checkAccessibilityEnabled(context)) {
+                    isAccessibilityEnabled = true
+                    break
+                }
             }
         }
     }
-}
 
-@Composable
-private fun PermissionStatusRow(label: String, granted: Boolean, onFix: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.weight(1f)
-        ) {
-            Surface(
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
-                color = if (granted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-                modifier = Modifier.padding(end = 12.dp)
-            ) {
-                Text(
-                    text = if (granted) "Active" else "Required",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (granted) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                )
-            }
-            Text(
-                text = label,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface
+    val isNotificationRequired = controlInterface == AppDefaults.INTERFACE_NOTIFICATION && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+    val allPermissionsGranted = canDrawOverlays && isAccessibilityEnabled && (!isNotificationRequired || isNotificationPermissionGranted)
+    var isServiceActive by remember { mutableStateOf(ServiceBridge.isAnyServiceActive()) }
+
+    DisposableEffect(Unit) {
+        ServiceBridge.onUiStateChanged = {
+            isServiceActive = ServiceBridge.isAnyServiceActive()
+        }
+        onDispose {
+            ServiceBridge.onUiStateChanged = null
+        }
+    }
+
+    // Por qué: El botón principal permanece fijo en la barra inferior para iniciar o detener sin desplazarse.
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        bottomBar = {
+            MainActionBottomBar(
+                allPermissionsGranted = allPermissionsGranted,
+                isServiceActive = isServiceActive,
+                controlInterface = controlInterface,
+                onStart = {
+                    ensureModelsDownloaded(sourceLanguage, targetLanguage)
+                    if (controlInterface == AppDefaults.INTERFACE_NOTIFICATION) {
+                        if (ServiceBridge.isBubbleRunning) {
+                            context.stopService(Intent(context, FloatingBubbleService::class.java))
+                            ServiceBridge.isBubbleRunning = false
+                        }
+                        ServiceBridge.isTranslatingActive = true
+                        ServiceBridge.onTranslationStateChanged?.invoke(true)
+                        TranslationNotificationManager.showNotification(context, isTranslating = true)
+                        isServiceActive = true
+                        Toast.makeText(context, "OverChat active in notification drawer", Toast.LENGTH_SHORT).show()
+                    } else {
+                        TranslationNotificationManager.cancelNotification(context)
+                        ServiceBridge.isBubbleRunning = true
+                        context.startService(Intent(context, FloatingBubbleService::class.java))
+                        ServiceBridge.notifyUiStateChanged()
+                        isServiceActive = true
+                        Toast.makeText(context, "Floating bubble opened", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onStop = {
+                    context.stopService(Intent(context, FloatingBubbleService::class.java))
+                    TranslationNotificationManager.cancelNotification(context)
+                    ServiceBridge.isBubbleRunning = false
+                    ServiceBridge.isNotificationActive = false
+                    ServiceBridge.isTranslatingActive = false
+                    ServiceBridge.onTranslationStateChanged?.invoke(false)
+                    ServiceBridge.notifyUiStateChanged()
+                    isServiceActive = false
+                    Toast.makeText(context, "OverChat stopped", Toast.LENGTH_SHORT).show()
+                }
             )
         }
-        if (!granted) {
-            TextButton(
-                onClick = onFix,
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+    ) { innerPadding ->
+        val scrollState = rememberScrollState()
+        val settingsEnabled = !isServiceActive
+
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .padding(horizontal = 16.dp, vertical = 10.dp)
+                .verticalScroll(scrollState),
+            horizontalAlignment = Alignment.Start,
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            MainScreenHeader(
+                isServiceActive = isServiceActive,
+                isCheckingForUpdate = isCheckingForUpdate,
+                onOpenDiagnostics = { showDiagnosticsDialog = true },
+                onCheckUpdates = {
+                    if (!isCheckingForUpdate && !isDownloadingUpdate) {
+                        isCheckingForUpdate = true
+                        coroutineScope.launch {
+                            val info = appUpdater.checkForUpdates()
+                            isCheckingForUpdate = false
+                            if (info != null) {
+                                pendingUpdate = info
+                                val dest = appUpdater.getUpdateFile(info.version)
+                                if (dest.exists() && dest.length() > 0L && (info.apkSize == 0L || dest.length() == info.apkSize)) {
+                                    downloadedApkFile = dest
+                                }
+                            } else {
+                                snackbarHostState.showSnackbar("You're on the latest version (v${BuildConfig.VERSION_NAME})")
+                            }
+                        }
+                    }
+                }
+            )
+
+            if (showDiagnosticsDialog) {
+                ScanDiagnosticsDialog(
+                    sourceLanguage = sourceLanguage,
+                    targetLanguage = targetLanguage,
+                    translationMode = translationMode,
+                    enabledPackages = enabledPackages,
+                    onCopied = {
+                        showDiagnosticsDialog = false
+                        coroutineScope.launch { snackbarHostState.showSnackbar("Diagnostics copied") }
+                    },
+                    onDismiss = { showDiagnosticsDialog = false }
+                )
+            }
+
+            TranslationSettingsCard(
+                sourceLanguage = sourceLanguage,
+                targetLanguage = targetLanguage,
+                availableLanguages = availableLanguages,
+                modelStatus = modelStatus,
+                translationMode = translationMode,
+                glossaryEnabled = glossaryEnabled,
+                settingsEnabled = settingsEnabled,
+                onSourceSelected = { selected ->
+                    if (selected == targetLanguage) {
+                        targetLanguage = sourceLanguage
+                        prefs.edit().putString(AppDefaults.KEY_TARGET_LANGUAGE, targetLanguage).apply()
+                    }
+                    sourceLanguage = selected
+                    prefs.edit().putString(AppDefaults.KEY_SOURCE_LANGUAGE, selected).apply()
+                },
+                onTargetSelected = { selected ->
+                    if (selected == sourceLanguage) {
+                        sourceLanguage = targetLanguage
+                        prefs.edit().putString(AppDefaults.KEY_SOURCE_LANGUAGE, sourceLanguage).apply()
+                    }
+                    targetLanguage = selected
+                    prefs.edit().putString(AppDefaults.KEY_TARGET_LANGUAGE, selected).apply()
+                },
+                onSwapLanguages = {
+                    val temp = sourceLanguage
+                    sourceLanguage = targetLanguage
+                    targetLanguage = temp
+                    prefs.edit()
+                        .putString(AppDefaults.KEY_SOURCE_LANGUAGE, sourceLanguage)
+                        .putString(AppDefaults.KEY_TARGET_LANGUAGE, targetLanguage)
+                        .apply()
+                },
+                onTranslationModeChanged = { mode ->
+                    translationMode = mode
+                    prefs.edit().putString(AppDefaults.KEY_TRANSLATE_MODE, mode).apply()
+                },
+                onGlossaryChanged = { isChecked ->
+                    glossaryEnabled = isChecked
+                    prefs.edit().putBoolean(AppDefaults.KEY_AI_ENABLED, isChecked).apply()
+                }
+            )
+
+            LaunchedEffect(Unit) {
+                while (true) {
+                    learningStats = learningStore.stats()
+                    delay(3000L)
+                }
+            }
+
+            TypingAndControlsCard(
+                keyboardTranslatorEnabled = keyboardTranslatorEnabled,
+                learningEnabled = learningEnabled,
+                learningStats = learningStats,
+                controlInterface = controlInterface,
+                settingsEnabled = settingsEnabled,
+                onKeyboardTranslatorChanged = { isChecked ->
+                    keyboardTranslatorEnabled = isChecked
+                    prefs.edit().putBoolean(AppDefaults.KEY_KEYBOARD_ENABLED, isChecked).apply()
+                },
+                onLearningChanged = { isChecked ->
+                    learningEnabled = isChecked
+                    prefs.edit().putBoolean(AppDefaults.KEY_LEARNING_ENABLED, isChecked).apply()
+                },
+                onRequestResetLearning = { showResetLearningDialog = true },
+                onControlInterfaceChanged = { selected ->
+                    controlInterface = selected
+                    prefs.edit().putString(AppDefaults.KEY_CONTROL_INTERFACE, selected).apply()
+                }
+            )
+
+            if (showResetLearningDialog) {
+                ResetLearningDialog(
+                    onConfirm = {
+                        learningStore.clearAll()
+                        learningStats = learningStore.stats()
+                        showResetLearningDialog = false
+                    },
+                    onDismiss = { showResetLearningDialog = false }
+                )
+            }
+
+            SupportedAppsAndThemeCard(
+                enabledPackages = enabledPackages,
+                overlayTheme = overlayTheme,
+                settingsEnabled = settingsEnabled,
+                onManageApps = { onItemClick(TargetApps) },
+                onOverlayThemeChanged = { value ->
+                    overlayTheme = value
+                    prefs.edit().putString(AppDefaults.KEY_OVERLAY_THEME, value).apply()
+                }
+            )
+
+            SystemPermissionsCard(
+                canDrawOverlays = canDrawOverlays,
+                isAccessibilityEnabled = isAccessibilityEnabled,
+                isNotificationPermissionGranted = isNotificationPermissionGranted,
+                allPermissionsGranted = allPermissionsGranted,
+                onRequestOverlayPermission = {
+                    val intent = Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:${context.packageName}")
+                    )
+                    context.startActivity(intent)
+                },
+                onRequestAccessibilityPermission = {
+                    context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                },
+                onRequestNotificationPermission = {
+                    notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                },
+                onOpenAppInfo = {
+                    val intent = Intent(
+                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:${context.packageName}")
+                    )
+                    context.startActivity(intent)
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun MainScreenHeader(
+    isServiceActive: Boolean,
+    isCheckingForUpdate: Boolean,
+    onOpenDiagnostics: () -> Unit,
+    onCheckUpdates: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(
+            modifier = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Image(
+                painter = painterResource(id = R.drawable.ic_overchat_logo),
+                contentDescription = "OverChat Logo",
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(RoundedCornerShape(10.dp))
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "OverChat",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    if (isServiceActive) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer
+                        ) {
+                            Text(
+                                text = "Locked",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+                Text(
+                    text = "Real-Time Chat Translator",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.clickable(onClick = onOpenDiagnostics)
             ) {
-                Text("Enable", style = MaterialTheme.typography.labelMedium)
+                Text(
+                    text = "Debug",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                )
+            }
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.clickable(onClick = onCheckUpdates)
+            ) {
+                Text(
+                    text = if (isCheckingForUpdate) "Checking..." else "v${BuildConfig.VERSION_NAME}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                )
             }
         }
     }
 }
 
-fun checkAccessibilityEnabled(context: Context): Boolean {
-    // Primary check: if the bridge reports the service is active, trust it
-    if (ServiceBridge.isAccessibilityActive) {
-        return true
-    }
-
-    val serviceClassName = "com.example.translator.TranslationAccessibilityService"
-
-    // Method 1: Read Settings.Secure directly (most reliable on OEM ROMs)
-    val settingValue = Settings.Secure.getString(
-        context.applicationContext.contentResolver,
-        Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-    )
-    if (settingValue != null) {
-        val splitter = android.text.TextUtils.SimpleStringSplitter(':')
-        splitter.setString(settingValue)
-        while (splitter.hasNext()) {
-            if (splitter.next().contains(context.packageName, ignoreCase = true)) {
-                return true
+@Composable
+private fun MainActionBottomBar(
+    allPermissionsGranted: Boolean,
+    isServiceActive: Boolean,
+    controlInterface: String,
+    onStart: () -> Unit,
+    onStop: () -> Unit
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 2.dp
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 10.dp)
+        ) {
+            when {
+                !allPermissionsGranted -> {
+                    Button(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        enabled = false,
+                        onClick = {}
+                    ) {
+                        Text(
+                            text = "Grant Required Permissions Above",
+                            style = MaterialTheme.typography.labelLarge,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                isServiceActive -> {
+                    OutlinedButton(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        onClick = onStop
+                    ) {
+                        Text(
+                            text = "Stop OverChat",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.error,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                else -> {
+                    Button(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        onClick = onStart
+                    ) {
+                        Text(
+                            text = if (controlInterface == AppDefaults.INTERFACE_NOTIFICATION) {
+                                "Start Notification Menu"
+                            } else {
+                                "Start Floating Bubble"
+                            },
+                            style = MaterialTheme.typography.labelLarge,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
             }
         }
-    }
-
-    // Method 2: Fallback to AccessibilityManager query
-    val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE)
-        as android.view.accessibility.AccessibilityManager
-    val enabledServices = am.getEnabledAccessibilityServiceList(
-        android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_ALL_MASK
-    )
-    return enabledServices.any {
-        it.resolveInfo.serviceInfo.packageName == context.packageName &&
-        it.resolveInfo.serviceInfo.name == serviceClassName
     }
 }

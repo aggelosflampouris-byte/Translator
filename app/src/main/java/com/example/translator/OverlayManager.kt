@@ -91,6 +91,7 @@ class OverlayManager(private val context: Context) {
         if (matchedId != null) {
             val bubble = activeBubbles[matchedId]
             if (bubble != null) {
+                if (draftBounds != null && Rect.intersects(draftBounds, bubble.overlayBounds)) return
                 updateBubble(bubble, rect, translatedText, profile)
                 return
             }
@@ -98,6 +99,7 @@ class OverlayManager(private val context: Context) {
 
         val view = inflater.inflate(R.layout.bubble_overlay, null)
         val (params, overlayBounds) = calculateBubbleLayout(rect, view, translatedText, profile)
+        if (draftBounds != null && Rect.intersects(draftBounds, overlayBounds)) return
         val newId = "bubble_${bubbleIdCounter.incrementAndGet()}"
         addBubble(rect, translatedText, newId, view, params, overlayBounds, profile)
     }
@@ -174,7 +176,7 @@ class OverlayManager(private val context: Context) {
 
         // Por qué: Si es sincronización completa, eliminar overlays que ya no están visibles en pantalla.
         // Si no es sincronización completa (ej: renderizado incremental), conservar los activos no colisionantes.
-        val screenHeight = context.resources.displayMetrics.heightPixels
+        val screenHeight = ScreenMetricsHelper.currentBounds(context).heightPx
         val iterator = activeBubbles.iterator()
         while (iterator.hasNext()) {
             val entry = iterator.next()
@@ -199,7 +201,7 @@ class OverlayManager(private val context: Context) {
         text: String,
         claimedIds: Set<String> = emptySet()
     ): String? {
-        val density = context.resources.displayMetrics.density
+        val density = ScreenMetricsHelper.currentBounds(context).density
 
         // Por qué: Para asociar una pastilla existente al mismo mensaje físico durante pequeños ajustes
         // de desplazamiento (scroll settling), la distancia vertical debe ser muy reducida (máximo 30dp)
@@ -307,7 +309,7 @@ class OverlayManager(private val context: Context) {
         text: String,
         profile: ChatAppProfile = TargetAppCatalog.GENERIC_DEFAULT_PROFILE
     ): Pair<WindowManager.LayoutParams, Rect> {
-        val screenWidth = context.resources.displayMetrics.widthPixels
+        val screenWidth = ScreenMetricsHelper.currentBounds(context).widthPx
 
         // Por qué: Adapta el color y contraste de la burbuja al tema seleccionado y al modo de alineación de la app
         val isRightSide = targetRect.right > (screenWidth * 0.65f)
@@ -361,7 +363,6 @@ class OverlayManager(private val context: Context) {
     }
 
     private var draftOverlayView: View? = null
-    private var currentDraftText: String? = null
     var currentDraftOverlayBounds: Rect? = null
         private set
 
@@ -477,8 +478,8 @@ class OverlayManager(private val context: Context) {
             return
         }
 
-        val metrics = context.resources.displayMetrics
-        val screenWidth = metrics.widthPixels
+        val metrics = ScreenMetricsHelper.currentBounds(context)
+        val screenWidth = metrics.widthPx
         val density = metrics.density
 
         // Por qué: Si la coordenada superior del campo de texto no es válida o está fuera de la zona inferior normal,
@@ -516,13 +517,11 @@ class OverlayManager(private val context: Context) {
             try {
                 windowManager.addView(view, params)
                 draftOverlayView = view
-                currentDraftText = text
             } catch (e: Exception) {
                 try {
                     params.type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
                     windowManager.addView(view, params)
                     draftOverlayView = view
-                    currentDraftText = text
                 } catch (e2: Exception) {
                     android.util.Log.e("Translator", "Failed to add draft overlay", e2)
                 }
@@ -536,7 +535,6 @@ class OverlayManager(private val context: Context) {
 
             try {
                 windowManager.updateViewLayout(view, params)
-                currentDraftText = text
             } catch (e: Exception) {
                 // Ignore WindowManager errors
             }
@@ -556,7 +554,6 @@ class OverlayManager(private val context: Context) {
                 // Ignore
             }
             draftOverlayView = null
-            currentDraftText = null
         }
     }
 
@@ -575,13 +572,18 @@ class OverlayManager(private val context: Context) {
         targetLangCode: String = "EL",
         onDismiss: () -> Unit = {}
     ) {
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            mainHandler.post { showSingleMessagePill(targetRect, translatedText, targetLangCode, onDismiss) }
+            return
+        }
+
         if (translatedText.isBlank()) {
             removeSingleMessagePill()
             return
         }
 
-        val metrics = context.resources.displayMetrics
-        val screenWidth = metrics.widthPixels
+        val metrics = ScreenMetricsHelper.currentBounds(context)
+        val screenWidth = metrics.widthPx
         val density = metrics.density
 
         val view = singlePillView ?: inflater.inflate(R.layout.single_message_pill_overlay, null)
@@ -595,8 +597,7 @@ class OverlayManager(private val context: Context) {
         textView.text = translatedText
 
         copyBtn.setOnClickListener {
-            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Translation", translatedText))
+            ClipboardHelper.copySensitiveText(context, "Translation", translatedText)
             android.widget.Toast.makeText(context, "Copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
         }
 
@@ -692,7 +693,7 @@ class OverlayManager(private val context: Context) {
     @Synchronized
     fun purgeOrphans(currentValidRects: List<Rect>) {
         if (activeBubbles.isEmpty()) return
-        val density = context.resources.displayMetrics.density
+        val density = ScreenMetricsHelper.currentBounds(context).density
         val tolerance = (25 * density).toInt()
 
         val iterator = activeBubbles.iterator()
@@ -715,7 +716,7 @@ class OverlayManager(private val context: Context) {
     }
 
     // Por qué: Permite verificar de forma atómica si hay alguna superposición activa dibujada en pantalla
-    // para que el vigilante en segundo plano pueda purgar la pantalla inmediatamente al salir de WhatsApp.
+    // para que el vigilante en segundo plano pueda purgar la pantalla inmediatamente al salir del chat activo.
     @Synchronized
     fun hasOverlays(): Boolean {
         return activeBubbles.isNotEmpty() || singlePillView != null || draftOverlayView != null
@@ -725,6 +726,5 @@ class OverlayManager(private val context: Context) {
     fun removeAllOverlays() {
         removeAllMessageOverlays()
         removeDraftOverlay()
-        removeSingleMessagePill()
     }
 }

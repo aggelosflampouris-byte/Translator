@@ -66,68 +66,73 @@ class TranslationFilterTest {
     }
 
     @Test
-    fun isTargetLanguage_detectsGreekScript() {
-        assertTrue(TranslationFilter.isTargetLanguage("Εδω παρκαρα εγβ", TranslateLanguage.GREEK, emptyList()))
-        assertFalse(TranslationFilter.isTargetLanguage("La mulți ani", TranslateLanguage.GREEK, emptyList()))
+    fun shouldTranslate_detectsTargetGreekScript() {
+        assertFalse(TranslationFilter.shouldTranslate("Εδω παρκαρα εγβ", TranslateLanguage.GREEK))
+        assertTrue(TranslationFilter.shouldTranslate("La mulți ani", TranslateLanguage.GREEK))
     }
 
     @Test
-    fun isMatchingSourceLanguage_matchesRomanianWithDiacritics() {
-        val result = TranslationFilter.isMatchingSourceLanguage(
+    fun isEligibleSourceText_matchesRomanianWithDiacritics() {
+        val result = TranslationSenseEngine.isEligibleSourceText(
             "La mulți ani și un An Nou fericit",
             TranslateLanguage.ROMANIAN,
+            TranslateLanguage.GREEK,
             emptyList()
         )
         assertTrue(result)
     }
 
     @Test
-    fun isMatchingSourceLanguage_rejectsMismatchedCandidates() {
+    fun isEligibleSourceText_rejectsMismatchedCandidates() {
         val candidates = listOf(
             IdentifiedLanguage("en", 0.95f),
             IdentifiedLanguage("ro", 0.05f)
         )
-        val result = TranslationFilter.isMatchingSourceLanguage(
+        val result = TranslationSenseEngine.isEligibleSourceText(
             "Hello my friend how are you",
             TranslateLanguage.ROMANIAN,
+            TranslateLanguage.GREEK,
             candidates
         )
         assertFalse(result)
     }
 
     @Test
-    fun isMatchingSourceLanguage_acceptsHighConfidenceCandidate() {
+    fun isEligibleSourceText_acceptsHighConfidenceCandidate() {
         val candidates = listOf(
             IdentifiedLanguage("ro", 0.85f),
             IdentifiedLanguage("it", 0.15f)
         )
-        val result = TranslationFilter.isMatchingSourceLanguage(
+        val result = TranslationSenseEngine.isEligibleSourceText(
             "La multi ani si un An Nou fericit",
             TranslateLanguage.ROMANIAN,
+            TranslateLanguage.GREEK,
             candidates
         )
         assertTrue(result)
     }
 
     @Test
-    fun isMatchingSourceLanguage_matchesRomanianWithoutDiacriticsWhenCommonWordsPresent() {
-        val result = TranslationFilter.isMatchingSourceLanguage(
+    fun isEligibleSourceText_matchesRomanianWithoutDiacriticsWhenCommonWordsPresent() {
+        val result = TranslationSenseEngine.isEligibleSourceText(
             "La multi ani si un An Nou fericit, Angelos",
             TranslateLanguage.ROMANIAN,
+            TranslateLanguage.GREEK,
             emptyList()
         )
         assertTrue(result)
 
-        val result2 = TranslationFilter.isMatchingSourceLanguage(
+        val result2 = TranslationSenseEngine.isEligibleSourceText(
             "Ce faci prietene?",
             TranslateLanguage.ROMANIAN,
+            TranslateLanguage.GREEK,
             emptyList()
         )
         assertTrue(result2)
     }
 
     @Test
-    fun cleanMessageText_stripsWhatsAppDeliveryStatusAndGreekTimestamps() {
+    fun cleanMessageText_stripsDeliveryStatusAndGreekTimestamps() {
         val raw = "La mulți ani și un An Nou fericit, Angelos., 7:27 μ.μ., Παραδόθηκε"
         val cleaned = TranslationFilter.cleanMessageText(raw)
         assertEquals("La mulți ani și un An Nou fericit, Angelos.", cleaned)
@@ -152,18 +157,20 @@ class TranslationFilterTest {
     }
 
     @Test
-    fun isMatchingSourceLanguage_acceptsShortLatinRomanianSentences() {
+    fun isEligibleSourceText_acceptsShortLatinRomanianSentences() {
         assertTrue(
-            TranslationFilter.isMatchingSourceLanguage(
+            TranslationSenseEngine.isEligibleSourceText(
                 "Sunt pe drum",
                 TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
                 emptyList()
             )
         )
         assertTrue(
-            TranslationFilter.isMatchingSourceLanguage(
+            TranslationSenseEngine.isEligibleSourceText(
                 "Vorbiți mai târziu",
                 TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
                 emptyList()
             )
         )

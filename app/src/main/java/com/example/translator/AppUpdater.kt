@@ -23,8 +23,11 @@ import java.util.concurrent.TimeUnit
 /**
  * Gestiona la verificación de versiones en GitHub, la descarga directa dentro de la app
  * y el lanzamiento seguro del instalador de paquetes de Android.
+ *
+ * Por qué: Usa un singleton inicializado con `applicationContext` para reutilizar el mismo
+ * `OkHttpClient` (pool de conexiones/hilos) y evitar fugas de memoria de `Activity`.
  */
-class AppUpdater(private val appContext: Context) {
+class AppUpdater private constructor(private val appContext: Context) {
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -353,6 +356,18 @@ class AppUpdater(private val appContext: Context) {
     }
 
     companion object {
+        @Volatile
+        private var instance: AppUpdater? = null
+
+        /**
+         * Devuelve la instancia única de [AppUpdater] ligada al ciclo de vida de la aplicación.
+         */
+        fun get(context: Context): AppUpdater {
+            return instance ?: synchronized(this) {
+                instance ?: AppUpdater(context.applicationContext).also { instance = it }
+            }
+        }
+
         const val REPO_PATH = "aggelosflampouris-byte/Translator"
 
         // Por qué: GitHub sirve los binarios de las versiones desde estos dominios de CDN tras la redirección

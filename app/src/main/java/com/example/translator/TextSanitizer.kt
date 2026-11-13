@@ -1,17 +1,15 @@
 package com.example.translator
 
 /**
- * Extra knowledge passed to an engine for a single translation request.
+ * Conocimiento adicional enviado al motor para una solicitud de traducción puntual.
  *
- * @property contextMessages Recent chat messages shown above the text, oldest first.
- * @property preferredTerms Wording the user has taught the app for this language pair.
+ * @property preferredTerms Expresiones o traducciones enseñadas por el usuario para este par de idiomas.
  */
 data class TranslationHints(
-    val contextMessages: List<String> = emptyList(),
     val preferredTerms: List<TermCorrection> = emptyList()
 ) {
     val isEmpty: Boolean
-        get() = contextMessages.isEmpty() && preferredTerms.isEmpty()
+        get() = preferredTerms.isEmpty()
 
     companion object {
         val NONE = TranslationHints()
@@ -24,7 +22,7 @@ data class TranslationHints(
  */
 object TextSanitizer {
 
-    // Por qué: Caracteres de control invisibles, marcas direccionales de WhatsApp y carácter de reemplazo Unicode
+    // Por qué: Caracteres de control invisibles, marcas direccionales de chat y carácter de reemplazo Unicode
     // que pueden corromper la tokenización o introducir secuencias invisibles en el texto traducido.
     private val INVISIBLE_AND_CONTROL_REGEX = Regex(
         """[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u200B\u200C\u200E\u200F\u202A-\u202E\u2060-\u206F\uFEFF\uFFFD]"""

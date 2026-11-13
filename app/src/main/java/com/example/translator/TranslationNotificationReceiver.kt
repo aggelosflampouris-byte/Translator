@@ -19,11 +19,14 @@ class TranslationNotificationReceiver : BroadcastReceiver() {
         when (action) {
             TranslationNotificationManager.ACTION_SCAN -> {
                 if (!ServiceBridge.isAccessibilityActive) {
-                    Toast.makeText(context, "⚠️ Accessibility Service is OFF. Toggle it ON in Settings!", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, "Accessibility Service is OFF. Toggle it ON in Settings.", Toast.LENGTH_LONG).show()
                     return
                 }
+                val wasActive = ServiceBridge.isTranslatingActive
                 ServiceBridge.isTranslatingActive = true
-                ServiceBridge.onTranslationStateChanged?.invoke(true)
+                if (!wasActive) {
+                    ServiceBridge.onTranslationStateChanged?.invoke(true)
+                }
                 ServiceBridge.onScanRequested?.invoke()
                 TranslationNotificationManager.showNotification(context, isTranslating = true)
             }
