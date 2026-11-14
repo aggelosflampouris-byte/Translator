@@ -20,7 +20,6 @@ object TranslationNotificationManager {
     const val CHANNEL_ID = "translation_controls_channel"
     const val NOTIFICATION_ID = 2026
 
-    const val ACTION_SCAN = "com.example.translator.ACTION_SCAN"
     const val ACTION_TOGGLE = "com.example.translator.ACTION_TOGGLE"
     const val ACTION_STOP = "com.example.translator.ACTION_STOP"
 
@@ -56,12 +55,11 @@ object TranslationNotificationManager {
         tapTitle: String = "OverChat · Tap Mode",
         pausedTitle: String = "OverChat Paused",
         subtitle: String = "$srcName to $tgtName",
-        autoActionLabel: String = "Scan Now",
-        tapActionLabel: String = "Scan All",
+        switchActionLabel: String = "Switch Lang",
         pauseLabel: String = "Pause",
         resumeLabel: String = "Resume",
         autoHint: String = "Automatically translates visible chat screens.",
-        tapHint: String = "Tap any message in chat to translate, or tap Scan All.",
+        tapHint: String = "Tap any message in chat to translate.",
         pausedHint: String = "Translation is paused. Tap Resume to continue."
     ): NotificationCopy {
         val isTapMode = mode == AppDefaults.MODE_TAP
@@ -70,7 +68,6 @@ object TranslationNotificationManager {
             isTapMode -> tapTitle
             else -> autoTitle
         }
-        val primaryActionLabel = if (isTapMode) tapActionLabel else autoActionLabel
         val toggleActionLabel = if (isTranslating) pauseLabel else resumeLabel
         val expandedHint = when {
             !isTranslating -> pausedHint
@@ -80,7 +77,7 @@ object TranslationNotificationManager {
         return NotificationCopy(
             title = title,
             subtitle = subtitle,
-            primaryActionLabel = primaryActionLabel,
+            primaryActionLabel = switchActionLabel,
             toggleActionLabel = toggleActionLabel,
             expandedHint = expandedHint
         )
@@ -108,14 +105,14 @@ object TranslationNotificationManager {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // Acción 1: Traducir pantalla ahora
-        val scanIntent = Intent(context, TranslationNotificationReceiver::class.java).apply {
-            action = ACTION_SCAN
+        // Acción 1: Abrir ventana flotante rápida para cambiar idiomas
+        val switchIntent = Intent(context, LanguageQuickSwitchActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
-        val scanPendingIntent = PendingIntent.getBroadcast(
+        val switchPendingIntent = PendingIntent.getActivity(
             context,
             1,
-            scanIntent,
+            switchIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -150,8 +147,7 @@ object TranslationNotificationManager {
             tapTitle = context.getString(R.string.notif_title_tap_active),
             pausedTitle = context.getString(R.string.notif_title_paused),
             subtitle = context.getString(R.string.notif_subtitle_pair, srcCode, tgtCode),
-            autoActionLabel = context.getString(R.string.notif_action_scan_now),
-            tapActionLabel = context.getString(R.string.notif_action_scan_all),
+            switchActionLabel = context.getString(R.string.notif_action_switch_languages),
             pauseLabel = context.getString(R.string.notif_action_pause),
             resumeLabel = context.getString(R.string.notif_action_resume),
             autoHint = context.getString(R.string.notif_hint_auto),
@@ -169,7 +165,7 @@ object TranslationNotificationManager {
             .addAction(
                 R.drawable.ic_translate_sphere,
                 copy.primaryActionLabel,
-                scanPendingIntent
+                switchPendingIntent
             )
             .addAction(R.drawable.ic_translate_sphere, copy.toggleActionLabel, togglePendingIntent)
             .addAction(

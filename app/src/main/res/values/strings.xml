@@ -19,14 +19,15 @@
     <string name="notif_title_tap_active">OverChat · Tap Mode</string>
     <string name="notif_title_paused">OverChat Paused</string>
     <string name="notif_subtitle_pair">%1$s to %2$s</string>
-    <string name="notif_action_scan_now">Scan Now</string>
-    <string name="notif_action_scan_all">Scan All</string>
+    <string name="notif_action_switch_languages">Switch Lang</string>
     <string name="notif_action_pause">Pause</string>
     <string name="notif_action_resume">Resume</string>
     <string name="notif_action_stop">Stop</string>
     <string name="notif_hint_auto">Automatically translates visible chat screens.</string>
-    <string name="notif_hint_tap">Tap any message in chat to translate, or tap Scan All.</string>
+    <string name="notif_hint_tap">Tap any message in chat to translate.</string>
     <string name="notif_hint_paused">Translation is paused. Tap Resume to continue.</string>
+    <string name="quick_switch_title">Switch Languages</string>
+    <string name="quick_switch_subtitle">Applies immediately to active chat translations.</string>
 
     <string name="sphere_first_hint">Tap sphere to pause or resume. Hold for options.</string>
     <string name="sphere_menu_to_tap">Mode: Tap</string>

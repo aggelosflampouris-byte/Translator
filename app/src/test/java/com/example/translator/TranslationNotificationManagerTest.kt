@@ -4,7 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * Pruebas unitarias de los textos adaptativos de notificación según el modo de traducción.
+ * Pruebas unitarias de los textos adaptativos de notificación y acción rápida de idiomas.
  */
 class TranslationNotificationManagerTest {
 
@@ -18,7 +18,7 @@ class TranslationNotificationManagerTest {
         )
         assertEquals("OverChat · Auto", autoActive.title)
         assertEquals("Romanian to Greek", autoActive.subtitle)
-        assertEquals("Scan Now", autoActive.primaryActionLabel)
+        assertEquals("Switch Lang", autoActive.primaryActionLabel)
         assertEquals("Pause", autoActive.toggleActionLabel)
         assertEquals("Automatically translates visible chat screens.", autoActive.expandedHint)
 
@@ -29,9 +29,9 @@ class TranslationNotificationManagerTest {
             tgtName = "Greek"
         )
         assertEquals("OverChat · Tap Mode", tapActive.title)
-        assertEquals("Scan All", tapActive.primaryActionLabel)
+        assertEquals("Switch Lang", tapActive.primaryActionLabel)
         assertEquals("Pause", tapActive.toggleActionLabel)
-        assertEquals("Tap any message in chat to translate, or tap Scan All.", tapActive.expandedHint)
+        assertEquals("Tap any message in chat to translate.", tapActive.expandedHint)
 
         val pausedTap = TranslationNotificationManager.buildNotificationCopy(
             mode = AppDefaults.MODE_TAP,
@@ -41,8 +41,7 @@ class TranslationNotificationManagerTest {
         )
         assertEquals("OverChat Paused", pausedTap.title)
         assertEquals("Resume", pausedTap.toggleActionLabel)
-        assertEquals("Scan All", pausedTap.primaryActionLabel)
+        assertEquals("Switch Lang", pausedTap.primaryActionLabel)
         assertEquals("Translation is paused. Tap Resume to continue.", pausedTap.expandedHint)
     }
 }
-

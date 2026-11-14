@@ -35,6 +35,16 @@
             </intent-filter>
         </activity>
 
+        <!-- Ventana flotante ligera para cambiar idiomas desde la notificación sin traer MainActivity al frente -->
+        <activity
+            android:name=".LanguageQuickSwitchActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleInstance"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Translator.QuickSwitch" />
+
         <!-- Receptor de acciones del menú de notificaciones del sistema -->
         <receiver
             android:name=".TranslationNotificationReceiver"
