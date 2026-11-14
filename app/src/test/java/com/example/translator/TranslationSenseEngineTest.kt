@@ -427,4 +427,62 @@ class TranslationSenseEngineTest {
         assertFalse(TranslationSenseEngine.isLikelyRowSenderHeader("ce e aia", TranslateLanguage.ROMANIAN))
         assertFalse(TranslationSenseEngine.isLikelyRowSenderHeader("Da doar la STB", TranslateLanguage.ROMANIAN))
     }
+
+    @Test
+    fun needsLanguageIdentification_skipsClearScripts_andQueriesAmbiguousText() {
+        // Griego dominante con destino griego no necesita ML Kit Language ID.
+        assertFalse(
+            TranslationSenseEngine.needsLanguageIdentification(
+                "Καλημέρα φίλε μου",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK
+            )
+        )
+        // Diacríticos rumanos o múltiples tokens rumanos inequívocos omiten Language ID.
+        assertFalse(
+            TranslationSenseEngine.needsLanguageIdentification(
+                "Vreau să plec acum",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK
+            )
+        )
+        assertFalse(
+            TranslationSenseEngine.needsLanguageIdentification(
+                "ce mai tii minte acum",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK
+            )
+        )
+        // Inglés inequívoco (>=2 tokens exclusivos sin tokens rumanos) también se descarta sin IPC.
+        assertFalse(
+            TranslationSenseEngine.needsLanguageIdentification(
+                "How are you doing today?",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK
+            )
+        )
+        // Textos cortos o ambiguos sin señal clara siguen consultando ML Kit Language ID.
+        assertTrue(
+            TranslationSenseEngine.needsLanguageIdentification(
+                "hotel",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK
+            )
+        )
+        assertTrue(
+            TranslationSenseEngine.needsLanguageIdentification(
+                "hola amigo",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK
+            )
+        )
+        // URLs o blancos nunca disparan Language ID.
+        assertFalse(
+            TranslationSenseEngine.needsLanguageIdentification(
+                "https://example.com",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK
+            )
+        )
+    }
 }

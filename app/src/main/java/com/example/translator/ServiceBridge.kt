@@ -60,10 +60,9 @@ object ServiceBridge {
         }
 
     /**
-     * Callback to trigger an immediate scan and translation of the visible target chat.
-     * Invoked when the user taps "Translate Screen" in the notification menu or Quick Settings tile.
+     * Callback para actualizar bajo demanda las cadenas diagnósticas cuando el usuario abre el diálogo de diagnóstico.
      */
-    @Volatile var onScanRequested: (() -> Unit)? = null
+    @Volatile var onDiagnosticsRefreshRequested: (() -> Unit)? = null
 
     /**
      * Callback para sincronizar inmediatamente la apariencia de la esfera flotante si está visible.

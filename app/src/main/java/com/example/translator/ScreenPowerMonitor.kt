@@ -79,6 +79,9 @@ class ScreenPowerMonitor(
 
     fun markTargetInteraction(nowMs: Long = SystemClock.uptimeMillis()) {
         lastTargetInteractionMs = nowMs
+        if (idlePauseJob != null) {
+            cancelIdlePauseTimer()
+        }
     }
 
     fun cancelIdlePauseTimer() {
@@ -102,6 +105,18 @@ class ScreenPowerMonitor(
     }
 
     fun scheduleIdleAutoPauseAfterScreenOff() {
+        scheduleIdlePauseAfter(reason = "idle_scroff", requireScreenOff = true)
+    }
+
+    /**
+     * Programa una única comprobación diferida al salir de apps de chat sin sondeo continuo.
+     */
+    fun scheduleIdleAutoPauseIfAway() {
+        if (idlePauseJob?.isActive == true) return
+        scheduleIdlePauseAfter(reason = "idle_away", requireScreenOff = false)
+    }
+
+    private fun scheduleIdlePauseAfter(reason: String, requireScreenOff: Boolean) {
         cancelIdlePauseTimer()
         val limitMinutes = idleAutoPauseMinutes
         if (limitMinutes <= 0 || !isTranslatingActive()) return
@@ -110,8 +125,10 @@ class ScreenPowerMonitor(
         val remainingMs = (limitMs - elapsedMs).coerceAtLeast(0L)
         idlePauseJob = scope.launch(workerDispatcher) {
             if (remainingMs > 0L) delay(remainingMs)
-            if (isTranslatingActive() && !isInteractiveNow()) {
-                onIdleAutoPauseTriggered("idle_scroff")
+            if (!isTranslatingActive()) return@launch
+            if (requireScreenOff && isInteractiveNow()) return@launch
+            if (shouldTriggerIdleAutoPause()) {
+                onIdleAutoPauseTriggered(reason)
             }
         }
     }

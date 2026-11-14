@@ -1,8 +1,10 @@
 package com.example.translator
 
 import android.accessibilityservice.AccessibilityService
+import android.content.ComponentCallbacks2
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
@@ -23,6 +25,7 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.resume
 import kotlin.math.abs
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -67,14 +70,20 @@ class TranslationAccessibilityService : AccessibilityService() {
     private lateinit var powerMonitor: ScreenPowerMonitor
 
     private val languageIdentifier = LanguageIdentification.getClient()
+    private val callGuard = TranslationCallGuard.shared
     private val mainHandler = Handler(Looper.getMainLooper())
     private val workerExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "OverChat-A11yWorker").apply { isDaemon = true }
     }
     private val workerDispatcher: CoroutineDispatcher = workerExecutor.asCoroutineDispatcher()
-    private val serviceScope = CoroutineScope(workerDispatcher + SupervisorJob())
+    // Por qué: Desacopla las llamadas a ML Kit de los recorridos Binder de accesibilidad para paralelizar lotes.
+    private val translationDispatcher: CoroutineDispatcher = Dispatchers.Default.limitedParallelism(3)
+    private val serviceExceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        Log.e("Translator", "Unhandled coroutine exception in AccessibilityService", throwable)
+    }
+    private val serviceScope = CoroutineScope(workerDispatcher + SupervisorJob() + serviceExceptionHandler)
 
-    private val translationCache = LruCache<String, String>(500)
+    private val translationCache = LruCache<String, String>(750)
     private val inFlightKeys = ConcurrentHashMap.newKeySet<String>()
     private val resourcesReleased = AtomicBoolean(false)
 
@@ -91,6 +100,8 @@ class TranslationAccessibilityService : AccessibilityService() {
     private var cumulativeSmallScrollDy: Int = 0
     private var cumulativeScrollWindowStartMs: Long = 0L
     @Volatile private var lastBgEventFgCheckMs: Long = 0L
+    @Volatile private var lastContentEventMs: Long = 0L
+    @Volatile private var lastNightModeMask: Int = 0
 
     private fun initSettingsAndPowerMonitors(): Set<String> {
         settingsObserver = ServiceSettingsObserver(
@@ -202,17 +213,24 @@ class TranslationAccessibilityService : AccessibilityService() {
     }
 
     private fun isScrollQuieted(nowMs: Long = SystemClock.uptimeMillis()): Boolean {
-        if (coordinator.isScreenScrolling && (nowMs - coordinator.lastScrollTimestampMs >= 450L)) {
+        if (coordinator.isScreenScrolling && (nowMs - coordinator.lastScrollTimestampMs >= ScanTimingPolicy.SCROLL_FORCE_CLEAR_MS)) {
             coordinator.isScreenScrolling = false
         }
-        return !coordinator.isScreenScrolling && (nowMs - coordinator.lastScrollTimestampMs >= 350L)
+        return !coordinator.isScreenScrolling && (nowMs - coordinator.lastScrollTimestampMs >= ScanTimingPolicy.SCROLL_QUIET_THRESHOLD_MS)
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         resourcesReleased.set(false)
+        lastNightModeMask = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
 
-        overlayManager = OverlayManager(this)
+        overlayManager = OverlayManager(this).apply {
+            onOverlaysActiveChanged = { hasOverlays ->
+                if (hasOverlays) {
+                    ensureOverlayWatchdogRunning()
+                }
+            }
+        }
         floatingSphereController = FloatingSphereOverlayController(
             context = this,
             windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager,
@@ -265,6 +283,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             pipeline = pipeline,
             scope = serviceScope,
             workerDispatcher = workerDispatcher,
+            translationDispatcher = translationDispatcher,
             postToMain = ::postToMain,
             currentOverlayEpoch = { coordinator.overlayEpoch.get() },
             recordOverlayDrawn = { epoch -> coordinator.recordOverlayDrawn(epoch) },
@@ -329,10 +348,8 @@ class TranslationAccessibilityService : AccessibilityService() {
             ServiceBridge.notifyUiStateChanged()
         }
 
-        ServiceBridge.onScanRequested = {
-            powerMonitor.markTargetInteraction()
-            ensureOverlayWatchdogRunning()
-            coordinator.requestManualScan(delayBeforeAttemptMs = 0L)
+        ServiceBridge.onDiagnosticsRefreshRequested = {
+            diagnostics.flushToServiceBridge()
         }
 
         ServiceBridge.onLearningDataCleared = {
@@ -349,7 +366,6 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
         if (ServiceBridge.isTranslatingActive) {
             if (powerMonitor.isInteractiveNow()) {
-                ensureOverlayWatchdogRunning()
                 if (translationMode != AppDefaults.MODE_TAP) {
                     coordinator.startPeriodicLoop()
                 }
@@ -363,34 +379,21 @@ class TranslationAccessibilityService : AccessibilityService() {
 
     private fun ensureOverlayWatchdogRunning() {
         if (!powerMonitor.isInteractiveNow()) return
+        if (!overlayManager.hasOverlays()) return
         if (overlayWatchdogJob?.isActive == true) return
-        if (!ServiceBridge.isTranslatingActive && !overlayManager.hasOverlays()) return
         overlayWatchdogJob = serviceScope.launch(workerDispatcher) {
-            while ((ServiceBridge.isTranslatingActive || overlayManager.hasOverlays()) &&
-                powerMonitor.isInteractiveNow()
-            ) {
-                // Por qué: Acelera la detección de salida a 250ms solo mientras hay burbujas visibles en pantalla,
-                // reduciendo 4x los despertares en reposo cuando la pantalla está limpia.
-                val delayMs = if (overlayManager.hasOverlays()) 250L else 1000L
-                delay(delayMs)
-                if (!ServiceBridge.isTranslatingActive && !overlayManager.hasOverlays()) break
-                if (!powerMonitor.isInteractiveNow()) break
-                if (ServiceBridge.isTranslatingActive &&
-                    translationMode != AppDefaults.MODE_TAP &&
-                    !coordinator.isLoopAlive
-                ) {
-                    coordinator.startPeriodicLoop()
-                }
+            // Por qué: Solo vigila salidas mientras haya burbujas o píldoras visibles; en reposo limpio consume 0 despertares.
+            while (overlayManager.hasOverlays() && powerMonitor.isInteractiveNow()) {
+                delay(ScanTimingPolicy.WATCHDOG_OVERLAY_INTERVAL_MS)
+                if (!overlayManager.hasOverlays() || !powerMonitor.isInteractiveNow()) break
                 val fg = sessionTracker.resolveForeground(captureExternalSnapshot = false)
                 applyForegroundTransition(fg.packageName, fg.resolveReason)
                 if (fg.packageName != null) {
                     powerMonitor.markTargetInteraction()
-                } else if (powerMonitor.shouldTriggerIdleAutoPause()) {
-                    performIdleAutoPause("idle_away")
-                    break
                 }
                 if (overlayManager.hasOverlays() && (fg.packageName == null || !ServiceBridge.isTranslatingActive)) {
                     coordinator.invalidateAndClearAllOverlays()
+                    break
                 }
             }
             overlayWatchdogJob = null
@@ -444,6 +447,9 @@ class TranslationAccessibilityService : AccessibilityService() {
     private fun applyForegroundTransition(activeTargetPkg: String?, resolveReason: String) {
         if (activeTargetPkg != null) {
             powerMonitor.markTargetInteraction()
+        } else {
+            coordinator.clearDirtyOnDeparture()
+            powerMonitor.scheduleIdleAutoPauseIfAway()
         }
         val effect = sessionTracker.applyTransition(
             activeTargetPkg = activeTargetPkg,
@@ -473,28 +479,32 @@ class TranslationAccessibilityService : AccessibilityService() {
         if (event == null) return
 
         val packageName = event.packageName?.toString() ?: ""
-        val eventType = event.eventType
-        val nowMs = SystemClock.uptimeMillis()
+        if (sessionTracker.isKeyboardPackage(packageName)) {
+            return
+        }
 
+        val eventType = event.eventType
+        val isTargetEvt = sessionTracker.isEnabledTargetPackage(packageName)
+        val isStateChange = eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+        if (!isTargetEvt && !isStateChange) {
+            // Por qué: Descartamos eventos de aplicaciones no objetivo antes de leer marcas de tiempo
+            // o tocar trazas diagnósticas para minimizar trabajo Binder y CPU en segundo plano.
+            return
+        }
+
+        val nowMs = SystemClock.uptimeMillis()
         diagnostics.eventCount++
         diagnostics.lastEventPkg = packageName
         diagnostics.lastEventType = eventType
         diagnostics.lastEventTimeMs = nowMs
 
-        if (sessionTracker.isKeyboardPackage(packageName)) {
-            return
-        }
-
-        val isTargetEvt = sessionTracker.isEnabledTargetPackage(packageName)
         if (isTargetEvt && ServiceBridge.isTranslatingActive) {
             powerMonitor.markTargetInteraction(nowMs)
         }
-        val isStateChange = eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
-        val needSourceNode = isTargetEvt || isStateChange
 
         // Por qué: Android recicla `event` al retornar `onAccessibilityEvent`; leemos escalares y nodo fuente
         // síncronamente antes de delegar los recorridos Binder al hilo trabajador.
-        val rawSourceNode = if (needSourceNode && (ServiceBridge.isTranslatingActive || ServiceBridge.isBubbleRunning)) {
+        val rawSourceNode = if (ServiceBridge.isTranslatingActive || ServiceBridge.isBubbleRunning) {
             try { event.source } catch (_: Exception) { null }
         } else {
             null
@@ -519,17 +529,6 @@ class TranslationAccessibilityService : AccessibilityService() {
             )
         } else {
             null
-        }
-
-        if (!isTargetEvt && !isStateChange) {
-            // Por qué: Evita saturar Binder cuando apps externas (Chrome/Launcher) emiten ráfagas 2048;
-            // el vigilante cada 250ms y `STATE_CHANGED` cubren los cambios reales de ventana.
-            if (!ServiceBridge.isTranslatingActive && nowMs - diagnostics.lastTraceUpdateMs >= 450L) {
-                serviceScope.launch(workerDispatcher) {
-                    updateRuntimeTraceNow("evt")
-                }
-            }
-            return
         }
 
         serviceScope.launch(workerDispatcher) {
@@ -562,14 +561,15 @@ class TranslationAccessibilityService : AccessibilityService() {
             }
 
             if (currentFg == null) {
-                ServiceBridge.lastScanDebug =
-                    "abort=evt_target_no_fg | pkg=$packageName | evt=$eventType | ${diagnostics.lastResolveReason} | ${diagnostics.lastExternalWindowsSummary}"
+                val diag = "abort=evt_target_no_fg | pkg=$packageName | evt=$eventType | ${diagnostics.lastResolveReason} | ${diagnostics.lastExternalWindowsSummary}"
+                diagnostics.setAbortDiag(diag)
                 diagnostics.recordPerAppDiag(packageName, "evtNoFg(${diagnostics.lastResolveReason})")
                 return@launch
             }
 
             dispatchTargetEventOnWorker(
                 eventType = eventType,
+                nowMs = nowMs,
                 capturedSource = capturedSource,
                 rawSource = rawSourceNode,
                 rawIsEditable = rawIsEditable,
@@ -580,6 +580,7 @@ class TranslationAccessibilityService : AccessibilityService() {
 
     private fun dispatchTargetEventOnWorker(
         eventType: Int,
+        nowMs: Long,
         capturedSource: AccessibilityNodeInfo?,
         rawSource: AccessibilityNodeInfo?,
         rawIsEditable: Boolean,
@@ -637,14 +638,14 @@ class TranslationAccessibilityService : AccessibilityService() {
                             return
                         }
                     } else if (scrollDecision.reason.startsWith("layout_jitter") && isScrollQuieted()) {
-                        coordinator.scheduleContentScan(220L, settleSource)
+                        coordinator.scheduleContentScan(ScanTimingPolicy.QUIET_CONTENT_DEBOUNCE_MS, settleSource)
                     }
                     return
                 }
                 cumulativeSmallScrollDy = 0
                 if (!scrollDecision.shouldInterruptOverlays) {
                     if (isScrollQuieted()) {
-                        coordinator.scheduleContentScan(220L, settleSource)
+                        coordinator.scheduleContentScan(ScanTimingPolicy.QUIET_CONTENT_DEBOUNCE_MS, settleSource)
                     }
                     return
                 }
@@ -677,7 +678,13 @@ class TranslationAccessibilityService : AccessibilityService() {
                 } else {
                     postToMain(null) { overlayManager.removeDraftOverlay() }
                 }
-                coordinator.scheduleContentScan(360L, capturedSource ?: rawSource)
+                val debounceMs = if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                    ScanTimingPolicy.QUIET_CONTENT_DEBOUNCE_MS
+                } else {
+                    ScanTimingPolicy.chooseContentDebounceMs(nowMs, lastContentEventMs)
+                }
+                lastContentEventMs = nowMs
+                coordinator.scheduleContentScan(debounceMs, capturedSource ?: rawSource)
             }
             AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED,
             AccessibilityEvent.TYPE_VIEW_FOCUSED -> {
@@ -712,45 +719,29 @@ class TranslationAccessibilityService : AccessibilityService() {
         inFlightKeys.clear()
 
         val eventSource = eventSourceToken as? AccessibilityNodeInfo
-        var resolution = sessionTracker.resolveForeground(
+        val resolution = sessionTracker.resolveForeground(
             captureExternalSnapshot = true,
             includeRoot = true,
             eventSource = eventSource
         )
-        if (isManualRequest && resolution.packageName == null) {
-            // Por qué: Al tocar "Translate Screen" en la notificación, SystemUI tarda ~300ms en cerrarse.
-            delay(350L)
-            resolution = sessionTracker.resolveForeground(
-                captureExternalSnapshot = true,
-                includeRoot = true,
-                eventSource = eventSource
-            )
-        }
         applyForegroundTransition(resolution.packageName, resolution.resolveReason)
 
         val fgPkg = resolution.packageName
         if (fgPkg == null) {
             val activePkg = try { rootInActiveWindow?.packageName?.toString() } catch (_: Exception) { null }
             val prefix = if (isManualRequest) "abort=scanReq_no_fg" else "abort=no_fg_target"
-            ServiceBridge.lastScanDebug =
-                "$prefix | activeWin=${activePkg ?: "null"} | ${diagnostics.lastResolveReason} | ${diagnostics.lastExternalWindowsSummary}"
+            diagnostics.setAbortDiag("$prefix | activeWin=${activePkg ?: "null"} | ${diagnostics.lastResolveReason} | ${diagnostics.lastExternalWindowsSummary}")
             val diagPkg = sessionTracker.state.lastTargetEventPkg ?: sessionTracker.state.lastForegroundTargetPackage
             if (sessionTracker.isEnabledTargetPackage(diagPkg)) {
                 diagnostics.recordPerAppDiag(diagPkg ?: "", "scanNoFg(${diagnostics.lastResolveReason})")
             }
             coordinator.invalidateAndClearAllOverlays()
-            if (isManualRequest) {
-                mainHandler.post {
-                    Toast.makeText(applicationContext, "Open a supported chat app to translate messages", Toast.LENGTH_SHORT).show()
-                }
-            }
             return ScanOutcome.ABORT_NO_FG
         }
 
         val rootNode = resolution.rootNode
         if (rootNode == null) {
-            ServiceBridge.lastScanDebug =
-                "abort=null_root(${diagnostics.lastRootOrigin}) | fg=$fgPkg | ${diagnostics.lastResolveReason} | ${diagnostics.lastExternalWindowsSummary}"
+            diagnostics.setAbortDiag("abort=null_root(${diagnostics.lastRootOrigin}) | fg=$fgPkg | ${diagnostics.lastResolveReason} | ${diagnostics.lastExternalWindowsSummary}")
             diagnostics.recordPerAppDiag(fgPkg, "nullRoot(${diagnostics.lastRootOrigin}|${diagnostics.lastResolveReason})")
             coordinator.invalidateAndClearAllOverlays()
             return ScanOutcome.ABORT_NULL_ROOT
@@ -768,10 +759,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         if (draftController.isKeyboardVisible(candidateNode = currentInputNode, preferredRoot = rootNode)) {
             val editRect = Rect().also { currentInputNode?.getBoundsInScreen(it) }
             val kbDiag = "abort=kb_visible | fg=$fgPkg (${activeProfile.id}) | root=${diagnostics.lastRootOrigin} | scr=${screenWidth}x$screenHeight | editRect=${editRect.flattenToString()}"
-            ServiceBridge.lastScanDebug = kbDiag
-            if (ServiceBridge.lastTreeScanDebug == "No non-null root scan yet.") {
-                ServiceBridge.lastTreeScanDebug = kbDiag
-            }
+            diagnostics.setAbortDiag(kbDiag, isTreeContext = true)
             diagnostics.recordPerAppDiag(fgPkg, "kbVis(r=${diagnostics.lastRootOrigin},ed=${currentInputNode != null})")
             postToMain(overlayEpoch) {
                 overlayManager.removeAllMessageOverlays()
@@ -826,14 +814,22 @@ class TranslationAccessibilityService : AccessibilityService() {
             stats = stats
         )
 
-        val baseDiag = "fg=$fgPkg(${activeProfile.id}) root=${diagnostics.lastRootOrigin} src=$configuredSource->$configuredTarget " +
-            "scr=${screenWidth}x$screenHeight d=${"%.2f".format(density)} y=$topInset..$effectiveBottom " +
-            "vis=${stats.visitedNodes} ed=${stats.editableNodes} t=${stats.nodesWithText} dsc=${stats.nodesWithDesc} " +
-            "skW=${stats.skippedWidget} skF=${stats.skippedFilter}${stats.formatFilterBreakdown()} skTiny=${stats.skippedTinyDesc} skBnd=${stats.skippedBubbleBounds} " +
-            "cands=${stats.passedCandidates}/${dedupedCandidates.size} smp=${stats.formatSamples()}"
-
         if (dedupedCandidates.isEmpty()) {
-            diagnostics.setTreeScanDiag("$baseDiag | out=empty")
+            diagnostics.recordScanStatsSnapshot(
+                fgPkg = fgPkg,
+                profileId = activeProfile.id,
+                rootOrigin = diagnostics.lastRootOrigin,
+                sourceLang = configuredSource,
+                targetLang = configuredTarget,
+                screenWidth = screenWidth,
+                screenHeight = screenHeight,
+                density = density,
+                topInset = topInset,
+                effectiveBottom = effectiveBottom,
+                stats = stats,
+                dedupedCount = 0,
+                outcome = "out=empty"
+            )
             diagnostics.recordPerAppDiag(fgPkg, "empty(r=${diagnostics.lastRootOrigin},vis=${stats.visitedNodes},ed=${stats.editableNodes})")
             postToMain(overlayEpoch) {
                 overlayManager.removeAllMessageOverlays()
@@ -841,7 +837,21 @@ class TranslationAccessibilityService : AccessibilityService() {
             return ScanOutcome.TRANSLATED_OR_EMPTY
         }
 
-        diagnostics.setTreeScanDiag("$baseDiag | out=translating(${dedupedCandidates.size})")
+        diagnostics.recordScanStatsSnapshot(
+            fgPkg = fgPkg,
+            profileId = activeProfile.id,
+            rootOrigin = diagnostics.lastRootOrigin,
+            sourceLang = configuredSource,
+            targetLang = configuredTarget,
+            screenWidth = screenWidth,
+            screenHeight = screenHeight,
+            density = density,
+            topInset = topInset,
+            effectiveBottom = effectiveBottom,
+            stats = stats,
+            dedupedCount = dedupedCandidates.size,
+            outcome = "out=translating(${dedupedCandidates.size})"
+        )
         diagnostics.recordPerAppDiag(fgPkg, "tr(${dedupedCandidates.size},r=${diagnostics.lastRootOrigin})")
 
         val expectedSlots = dedupedCandidates.map {
@@ -915,9 +925,16 @@ class TranslationAccessibilityService : AccessibilityService() {
             val flightKey = cacheKey(msgSource, msgTarget, cleanText)
             if (!inFlightKeys.add(flightKey)) continue
 
-            serviceScope.launch(workerDispatcher + batchSupervisor) {
+            // Por qué: Ejecuta detección de idioma y NMT en el pool paralelo acotado para no frenar el hilo Binder.
+            serviceScope.launch(translationDispatcher + batchSupervisor) {
                 try {
-                    val detectedLang = identifyLanguageAsync(cleanText)
+                    val detectedLang = if (
+                        TranslationSenseEngine.needsLanguageIdentification(cleanText, msgSource, msgTarget, alreadyCleaned = true)
+                    ) {
+                        identifyLanguageAsync(cleanText)
+                    } else {
+                        null
+                    }
                     val isEligible = TranslationSenseEngine.isEligibleSourceText(
                         text = cleanText,
                         sourceLang = msgSource,
@@ -956,9 +973,9 @@ class TranslationAccessibilityService : AccessibilityService() {
                         diagnostics.appendTreeScanDiag("pendGen")
                         if (generation != coordinator.scanGeneration.get() && rescheduledOnGenMismatch.compareAndSet(false, true)) {
                             val remainingQuiet = if (coordinator.isScreenScrolling) {
-                                360L
+                                ScanTimingPolicy.SCROLL_SETTLE_DELAY_MS
                             } else {
-                                (370L - timeSinceScroll).coerceAtLeast(80L)
+                                (ScanTimingPolicy.SCROLL_QUIET_THRESHOLD_MS + 20L - timeSinceScroll).coerceAtLeast(80L)
                             }
                             coordinator.scheduleContentScan(remainingQuiet)
                         }
@@ -968,7 +985,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                     val liveFg = sessionTracker.state.lastForegroundTargetPackage != null ||
                         sessionTracker.resolveForeground().packageName != null
                     if (coordinator.isScreenScrolling ||
-                        timeSinceScroll < 350L ||
+                        timeSinceScroll < ScanTimingPolicy.SCROLL_QUIET_THRESHOLD_MS ||
                         !liveFg ||
                         !ServiceBridge.isTranslatingActive
                     ) {
@@ -1038,8 +1055,14 @@ class TranslationAccessibilityService : AccessibilityService() {
             val preferredTerms = if (isLearningEnabled) learningStore.promptTerms(msgSource, msgTarget) else emptyList()
             val hints = TranslationHints(preferredTerms = preferredTerms)
 
-            serviceScope.launch(workerDispatcher) {
-                val detectedLang = identifyLanguageAsync(cleanText)
+            serviceScope.launch(translationDispatcher) {
+                val detectedLang = if (
+                    TranslationSenseEngine.needsLanguageIdentification(cleanText, msgSource, msgTarget, alreadyCleaned = true)
+                ) {
+                    identifyLanguageAsync(cleanText)
+                } else {
+                    null
+                }
                 val isEligible = TranslationSenseEngine.isEligibleSourceText(
                     text = cleanText,
                     sourceLang = msgSource,
@@ -1069,17 +1092,21 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
     }
 
-    private suspend fun identifyLanguageAsync(text: String): String? = suspendCancellableCoroutine { cont ->
-        languageIdentifier.identifyLanguage(text)
-            .addOnSuccessListener { langCode ->
-                if (cont.isActive) cont.resume(if (langCode == "und") null else langCode)
+    private suspend fun identifyLanguageAsync(text: String): String? {
+        return callGuard.runGuarded(TranslationCallGuard.DEFAULT_IDENTIFY_TIMEOUT_MS) {
+            suspendCancellableCoroutine { cont ->
+                languageIdentifier.identifyLanguage(text)
+                    .addOnSuccessListener { langCode ->
+                        if (cont.isActive) cont.resume(if (langCode == "und") null else langCode)
+                    }
+                    .addOnFailureListener {
+                        if (cont.isActive) cont.resume(null)
+                    }
+                    .addOnCanceledListener {
+                        if (cont.isActive) cont.resume(null)
+                    }
             }
-            .addOnFailureListener {
-                if (cont.isActive) cont.resume(null)
-            }
-            .addOnCanceledListener {
-                if (cont.isActive) cont.resume(null)
-            }
+        }
     }
 
     private fun updateRuntimeTraceNow(tag: String) {
@@ -1110,7 +1137,7 @@ class TranslationAccessibilityService : AccessibilityService() {
         ServiceBridge.onTranslationStateChanged = null
         ServiceBridge.onBubbleVisibilityChanged = null
         ServiceBridge.onBubbleAppearanceSync = null
-        ServiceBridge.onScanRequested = null
+        ServiceBridge.onDiagnosticsRefreshRequested = null
         ServiceBridge.onLearningDataCleared = null
         TranslationTileService.requestSync(this)
         ServiceBridge.notifyUiStateChanged()
@@ -1218,6 +1245,59 @@ class TranslationAccessibilityService : AccessibilityService() {
         TranslationTileService.requestSync(this)
         ServiceBridge.notifyUiStateChanged()
         Toast.makeText(this, "OverChat stopped", Toast.LENGTH_SHORT).show()
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (!::settingsObserver.isInitialized) return
+        val activePairs = setOf(configuredSource to configuredTarget, configuredTarget to configuredSource)
+        // Por qué: TRIM_MEMORY_RUNNING_* (5..15) son menores que TRIM_MEMORY_UI_HIDDEN (20);
+        // excluir el rango >= UI_HIDDEN evita recortar la caché caliente en transiciones normales de UI.
+        when {
+            level >= ComponentCallbacks2.TRIM_MEMORY_COMPLETE ||
+                level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL -> {
+                if (!ServiceBridge.isTranslatingActive) {
+                    TranslatorPool.releaseAll()
+                } else {
+                    TranslatorPool.evictExcept(activePairs)
+                }
+                synchronized(translationCache) { translationCache.evictAll() }
+            }
+            level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND ||
+                level in ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW until ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN -> {
+                TranslatorPool.evictExcept(activePairs)
+                synchronized(translationCache) {
+                    val half = (translationCache.size() / 2).coerceAtLeast(50)
+                    translationCache.trimToSize(half)
+                }
+            }
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (!::overlayManager.isInitialized || !::coordinator.isInitialized) return
+        val newNightMask = newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK
+        val themeChanged = newNightMask != lastNightModeMask
+        lastNightModeMask = newNightMask
+
+        coordinator.cancelDebouncedWorkOnly()
+        if (::draftController.isInitialized) {
+            draftController.cancelTypingAndHideDraft()
+        }
+        mainHandler.post {
+            overlayManager.removeAllOverlays()
+        }
+        if (themeChanged || ServiceBridge.isTranslatingActive) {
+            coordinator.markScreenDirty()
+            if (ServiceBridge.isTranslatingActive &&
+                translationMode != AppDefaults.MODE_TAP &&
+                sessionTracker.state.lastForegroundTargetPackage != null
+            ) {
+                coordinator.scheduleContentScan(ScanTimingPolicy.QUIET_CONTENT_DEBOUNCE_MS)
+            }
+        }
     }
 
     override fun onUnbind(intent: Intent?): Boolean {

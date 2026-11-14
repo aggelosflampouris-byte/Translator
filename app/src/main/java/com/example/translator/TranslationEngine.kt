@@ -3,7 +3,13 @@ package com.example.translator
 import android.content.Context
 import android.util.Log
 import com.google.mlkit.nl.translate.TranslateLanguage
+import com.google.mlkit.nl.translate.Translator
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlin.coroutines.resume
 
 /**
@@ -21,12 +27,20 @@ interface TranslationEngine {
 /**
  * Motor de traducción neuronal local basado en Google ML Kit NMT.
  *
- * Por qué: Proporciona traducción neuronal 100% offline en menos de 30 ms y consulta la caché
- * de preparación de [TranslatorPool] para evitar verificar la descarga en cada línea.
+ * Por qué: Traduce líneas en paralelo bajo concurrencia acotada y protege cada llamada IPC con
+ * tiempos límite y caché de preparación en [TranslatorPool] para reducir latencia y bloqueos.
  */
-class MLKitTranslationEngine : TranslationEngine {
+class MLKitTranslationEngine(
+    private val callGuard: TranslationCallGuard = TranslationCallGuard.shared,
+    private val maxConcurrentLines: Int = DEFAULT_MAX_CONCURRENT_LINES
+) : TranslationEngine {
+
+    companion object {
+        private const val DEFAULT_MAX_CONCURRENT_LINES = 3
+    }
 
     private val downloadConditions = com.google.mlkit.common.model.DownloadConditions.Builder().build()
+    private val lineConcurrencyLimiter = Semaphore(maxConcurrentLines.coerceAtLeast(1))
 
     private fun isLineAlreadyInTargetScript(line: String, targetLang: String): Boolean {
         if (targetLang == "el" || targetLang == TranslateLanguage.GREEK) {
@@ -35,31 +49,41 @@ class MLKitTranslationEngine : TranslationEngine {
         return false
     }
 
+    private suspend fun awaitModelReady(
+        client: Translator,
+        sourceLang: String,
+        targetLang: String
+    ): Boolean {
+        if (TranslatorPool.isPairReady(sourceLang, targetLang)) return true
+        val downloaded = callGuard.runGuarded(TranslationCallGuard.DEFAULT_DOWNLOAD_TIMEOUT_MS) {
+            suspendCancellableCoroutine<Boolean> { continuation ->
+                client.downloadModelIfNeeded(downloadConditions)
+                    .addOnSuccessListener {
+                        TranslatorPool.markPairReady(sourceLang, targetLang)
+                        if (continuation.isActive) continuation.resume(true)
+                    }
+                    .addOnFailureListener { error ->
+                        Log.w("MLKitEngine", "ML Kit model download failed for $sourceLang->$targetLang", error)
+                        if (continuation.isActive) continuation.resume(false)
+                    }
+                    .addOnCanceledListener {
+                        if (continuation.isActive) continuation.resume(false)
+                    }
+            }
+        }
+        return downloaded == true
+    }
+
     private suspend fun translateSingleLine(
         line: String,
         sourceLang: String,
         targetLang: String
-    ): String? = suspendCancellableCoroutine { continuation ->
+    ): String? {
         val client = TranslatorPool.get(sourceLang, targetLang)
-        // Por qué: Si el modelo del par ya fue verificado, traduce directamente sin sobrecarga de IPC
-        if (TranslatorPool.isPairReady(sourceLang, targetLang)) {
-            client.translate(line)
-                .addOnSuccessListener { result ->
-                    if (continuation.isActive) continuation.resume(result)
-                }
-                .addOnFailureListener { error ->
-                    Log.w("MLKitEngine", "ML Kit line translation failed", error)
-                    if (continuation.isActive) continuation.resume(null)
-                }
-                .addOnCanceledListener {
-                    if (continuation.isActive) continuation.resume(null)
-                }
-            return@suspendCancellableCoroutine
-        }
+        if (!awaitModelReady(client, sourceLang, targetLang)) return null
 
-        client.downloadModelIfNeeded(downloadConditions)
-            .addOnSuccessListener {
-                TranslatorPool.markPairReady(sourceLang, targetLang)
+        return callGuard.runGuarded(TranslationCallGuard.DEFAULT_TRANSLATE_TIMEOUT_MS) {
+            suspendCancellableCoroutine<String?> { continuation ->
                 client.translate(line)
                     .addOnSuccessListener { result ->
                         if (continuation.isActive) continuation.resume(result)
@@ -72,13 +96,37 @@ class MLKitTranslationEngine : TranslationEngine {
                         if (continuation.isActive) continuation.resume(null)
                     }
             }
-            .addOnFailureListener { error ->
-                Log.w("MLKitEngine", "ML Kit model download failed for $sourceLang->$targetLang", error)
-                if (continuation.isActive) continuation.resume(null)
+        }
+    }
+
+    private suspend fun translateMultiline(
+        lines: List<String>,
+        sourceLang: String,
+        targetLang: String
+    ): String? = coroutineScope {
+        val resolvedLines = lines.map { line ->
+            val trimmed = line.trim()
+            if (trimmed.isEmpty() || !trimmed.any { it.isLetter() } || isLineAlreadyInTargetScript(trimmed, targetLang)) {
+                async { line to false }
+            } else {
+                async {
+                    lineConcurrencyLimiter.withPermit {
+                        val translated = translateSingleLine(trimmed, sourceLang, targetLang)
+                        if (!translated.isNullOrBlank()) {
+                            translated to !translated.trim().equals(trimmed, ignoreCase = true)
+                        } else {
+                            line to false
+                        }
+                    }
+                }
             }
-            .addOnCanceledListener {
-                if (continuation.isActive) continuation.resume(null)
-            }
+        }.awaitAll()
+
+        if (resolvedLines.any { it.second }) {
+            resolvedLines.joinToString("\n") { it.first }
+        } else {
+            null
+        }
     }
 
     override suspend fun translate(
@@ -91,30 +139,9 @@ class MLKitTranslationEngine : TranslationEngine {
             return translateSingleLine(text, sourceLang, targetLang)
         }
 
-        // Por qué: En mensajes multilínea (ej. ofertas de trabajo o anuncios con encabezados en griego
-        // y cuerpo en inglés), se traduce línea por línea para preservar saltos de línea y encabezados ya en destino.
-        val lines = text.split('\n')
-        val translatedLines = ArrayList<String>(lines.size)
-        var anyTranslated = false
-
-        for (line in lines) {
-            val trimmed = line.trim()
-            if (trimmed.isEmpty() || !trimmed.any { it.isLetter() } || isLineAlreadyInTargetScript(trimmed, targetLang)) {
-                translatedLines.add(line)
-                continue
-            }
-            val translated = translateSingleLine(trimmed, sourceLang, targetLang)
-            if (!translated.isNullOrBlank()) {
-                translatedLines.add(translated)
-                if (!translated.trim().equals(trimmed, ignoreCase = true)) {
-                    anyTranslated = true
-                }
-            } else {
-                translatedLines.add(line)
-            }
-        }
-
-        return if (anyTranslated) translatedLines.joinToString("\n") else null
+        // Por qué: En mensajes multilínea, traducir líneas elegibles en paralelo acorta la espera
+        // total a ~1 llamada en vez de N secuenciales, conservando saltos y encabezados en destino.
+        return translateMultiline(text.split('\n'), sourceLang, targetLang)
     }
 }
 

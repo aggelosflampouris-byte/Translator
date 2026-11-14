@@ -228,5 +228,85 @@ class OverlayThemeTest {
         assertEquals(R.drawable.bg_translation_bubble_quoted_light, lightQuoted.backgroundRes)
         assertEquals(0xFF334155.toInt(), lightQuoted.textColor)
     }
+
+    @Test
+    fun `draft pill style adapts across themes undo state and stale pending state`() {
+        val autoLight = OverlayManager.resolveDraftPillStyle(
+            overlayTheme = AppDefaults.OVERLAY_THEME_AUTO,
+            isSystemDarkMode = false
+        )
+        assertEquals(R.drawable.bg_draft_bubble_light, autoLight.containerBgRes)
+        assertEquals(R.drawable.bg_draft_badge_light, autoLight.badgeBgRes)
+        assertEquals(R.drawable.bg_draft_action_btn_light, autoLight.actionBgRes)
+        assertEquals(R.drawable.bg_draft_close_btn_light, autoLight.closeBgRes)
+        assertEquals(lightSurfaceText, autoLight.bodyTextColor)
+
+        val whatsappEvenLightSystem = OverlayManager.resolveDraftPillStyle(
+            overlayTheme = AppDefaults.OVERLAY_THEME_WHATSAPP,
+            isSystemDarkMode = false
+        )
+        assertEquals(R.drawable.bg_draft_bubble_dark, whatsappEvenLightSystem.containerBgRes)
+        assertEquals(R.drawable.bg_draft_badge_dark, whatsappEvenLightSystem.badgeBgRes)
+        assertEquals(R.drawable.bg_draft_action_btn, whatsappEvenLightSystem.actionBgRes)
+
+        val undoDark = OverlayManager.resolveDraftPillStyle(
+            overlayTheme = AppDefaults.OVERLAY_THEME_AUTO,
+            isSystemDarkMode = true,
+            isUndoMode = true
+        )
+        assertEquals(R.drawable.bg_draft_undo_btn_dark, undoDark.actionBgRes)
+        assertEquals(0xFF34D399.toInt(), undoDark.actionTextColor)
+
+        val undoLight = OverlayManager.resolveDraftPillStyle(
+            overlayTheme = AppDefaults.OVERLAY_THEME_LIGHT,
+            isSystemDarkMode = true,
+            isUndoMode = true
+        )
+        assertEquals(R.drawable.bg_draft_undo_btn_light, undoLight.actionBgRes)
+        assertEquals(0xFF047857.toInt(), undoLight.badgeTextColor)
+
+        val staleDark = OverlayManager.resolveDraftPillStyle(
+            overlayTheme = AppDefaults.OVERLAY_THEME_AUTO,
+            isSystemDarkMode = true,
+            isStalePending = true
+        )
+        assertEquals(0xFFCBD5E1.toInt(), staleDark.bodyTextColor)
+    }
+
+    @Test
+    fun `draft frame computes compact width caps at 420dp and clamps inside composer viewport`() {
+        val density = 2f
+        val compact = OverlayManager.resolveDraftFrame(
+            measuredWidth = 180,
+            measuredHeight = 60,
+            anchorTop = 900,
+            anchorLeft = 40,
+            screenWidth = 1080,
+            screenHeight = 1920,
+            density = density,
+            isUndoMode = false
+        )
+        // Ancho mínimo de 200dp * 2 = 400px, altura mínima 44dp * 2 = 88px.
+        assertEquals(400, compact.bubbleWidth)
+        assertEquals(88, compact.bubbleHeight)
+        assertEquals(40, compact.posX)
+        assertEquals(900 - 88 - 16, compact.posY)
+
+        val clampedWide = OverlayManager.resolveDraftFrame(
+            measuredWidth = 1600,
+            measuredHeight = 200,
+            anchorTop = 40,
+            anchorLeft = 1000,
+            screenWidth = 1080,
+            screenHeight = 1920,
+            density = density,
+            isUndoMode = true
+        )
+        // Tope de 420dp * 2 = 840px y sujeción a márgenes horizontales (12dp=24px) y superior (48dp=96px).
+        assertEquals(840, clampedWide.bubbleWidth)
+        assertEquals(200, clampedWide.bubbleHeight)
+        assertEquals(1080 - 840 - 24, clampedWide.posX)
+        assertEquals(96, clampedWide.posY)
+    }
 }
 

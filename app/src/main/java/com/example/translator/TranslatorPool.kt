@@ -56,6 +56,9 @@ object TranslatorPool {
     }
 
     @Synchronized
+    fun activeCount(): Int = translators.size
+
+    @Synchronized
     fun releaseAll() {
         readyPairs.clear()
         translators.values.forEach(::closeSafely)

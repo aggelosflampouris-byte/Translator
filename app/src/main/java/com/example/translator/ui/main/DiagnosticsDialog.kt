@@ -86,6 +86,8 @@ private fun buildDiagnosticsReport(
     translationMode: String,
     enabledPackages: Set<String>
 ): String {
+    // Por qué: Materializa las trazas acumuladas bajo demanda justo al abrir el diálogo para evitar costo en tiempo real.
+    ServiceBridge.onDiagnosticsRefreshRequested?.invoke()
     val trace = crashPrefs.getString(TranslatorApplication.KEY_LAST_CRASH, null)
     val lastCrashSummary = if (trace.isNullOrBlank()) {
         null

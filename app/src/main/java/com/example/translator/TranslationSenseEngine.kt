@@ -264,6 +264,90 @@ object TranslationSenseEngine {
         return true
     }
 
+    private data class ScriptFacts(
+        val greekLetters: Int,
+        val latinLetters: Int,
+        val hasRoDiacritics: Boolean,
+        val wordCount: Int,
+        val englishTokenCount: Int,
+        val exclusiveEnglishTokenCount: Int,
+        val romanianTokenCount: Int,
+        val specificRomanianTokens: Int
+    )
+
+    private fun analyzeScriptFacts(text: String, alreadyCleaned: Boolean): ScriptFacts? {
+        val clean = (if (alreadyCleaned) text else TranslationFilter.cleanMessageText(text)).trim()
+        if (clean.length < 2 || ScriptDetector.containsUrlOrDomain(clean)) return null
+
+        val greekLetters = ScriptDetector.countGreek(clean)
+        val latinLetters = ScriptDetector.countLatin(clean)
+        val cedillaNormalized = TextNormalizer.normalizeRomanianCedillas(clean)
+        val words = cedillaNormalized.lowercase().split(WORD_SPLIT_REGEX).filter { it.isNotBlank() }
+
+        var englishTokenCount = 0
+        var exclusiveEnglishTokenCount = 0
+        var romanianTokenCount = 0
+        var specificRomanianTokens = 0
+        for (word in words) {
+            val isCommonEn = COMMON_ENGLISH_TOKENS.contains(word)
+            val isCommonRo = COMMON_ROMANIAN_WORDS.contains(word)
+            val isAmbiguous = AMBIGUOUS_ROMANCE_OR_ENGLISH_TOKENS.contains(word)
+            if (isCommonEn) {
+                englishTokenCount++
+                if (!isCommonRo && !isAmbiguous) exclusiveEnglishTokenCount++
+            }
+            if (isCommonRo) {
+                romanianTokenCount++
+                if (!isAmbiguous) specificRomanianTokens++
+            }
+        }
+
+        return ScriptFacts(
+            greekLetters = greekLetters,
+            latinLetters = latinLetters,
+            hasRoDiacritics = ScriptDetector.hasRomanianDiacritics(cedillaNormalized),
+            wordCount = words.size,
+            englishTokenCount = englishTokenCount,
+            exclusiveEnglishTokenCount = exclusiveEnglishTokenCount,
+            romanianTokenCount = romanianTokenCount,
+            specificRomanianTokens = specificRomanianTokens
+        )
+    }
+
+    /**
+     * Determina si es indispensable consultar ML Kit Language ID o si el alfabeto/vocabulario ya resuelve el caso.
+     *
+     * Por qué: Evita llamadas IPC innecesarias a ML Kit para griego o frases rumanas/inglesas inequívocas.
+     */
+    fun needsLanguageIdentification(
+        text: String,
+        sourceLang: String,
+        targetLang: String,
+        alreadyCleaned: Boolean = false
+    ): Boolean {
+        val facts = analyzeScriptFacts(text, alreadyCleaned) ?: return false
+        if (targetLang == TranslateLanguage.GREEK &&
+            facts.greekLetters > 0 &&
+            (facts.latinLetters == 0 || facts.greekLetters > facts.latinLetters)
+        ) {
+            return false
+        }
+        return when (sourceLang) {
+            TranslateLanguage.ROMANIAN -> {
+                if (facts.hasRoDiacritics) false
+                else if (facts.exclusiveEnglishTokenCount >= 2 && facts.romanianTokenCount == 0) false
+                else !(facts.specificRomanianTokens >= 2 && facts.specificRomanianTokens >= facts.exclusiveEnglishTokenCount)
+            }
+            TranslateLanguage.ENGLISH -> {
+                facts.latinLetters >= 2 &&
+                    facts.englishTokenCount == 0 &&
+                    !facts.hasRoDiacritics &&
+                    facts.romanianTokenCount == 0
+            }
+            else -> false
+        }
+    }
+
     /**
      * Enforces strict source-language eligibility.
      */
@@ -276,62 +360,39 @@ object TranslationSenseEngine {
         alreadyCleaned: Boolean = false,
         conversationMatchesSource: Boolean = false
     ): Boolean {
-        val clean = (if (alreadyCleaned) text else TranslationFilter.cleanMessageText(text)).trim()
-        if (clean.length < 2) return false
-
-        if (ScriptDetector.containsUrlOrDomain(clean)) {
-            return false
-        }
-
-        val greekLetters = ScriptDetector.countGreek(clean)
-        val latinLetters = ScriptDetector.countLatin(clean)
+        val facts = analyzeScriptFacts(text, alreadyCleaned) ?: return false
 
         if (targetLang == TranslateLanguage.GREEK) {
-            if (greekLetters > 0 && (latinLetters == 0 || greekLetters > latinLetters)) {
+            if (facts.greekLetters > 0 && (facts.latinLetters == 0 || facts.greekLetters > facts.latinLetters)) {
                 return false
             }
         }
-
-        val cedillaNormalized = TextNormalizer.normalizeRomanianCedillas(clean)
-        val words = cedillaNormalized.lowercase().split(WORD_SPLIT_REGEX).filter { it.isNotBlank() }
-        val englishTokenCount = words.count { COMMON_ENGLISH_TOKENS.contains(it) }
-        val exclusiveEnglishTokenCount = words.count {
-            COMMON_ENGLISH_TOKENS.contains(it) &&
-                !COMMON_ROMANIAN_WORDS.contains(it) &&
-                !AMBIGUOUS_ROMANCE_OR_ENGLISH_TOKENS.contains(it)
-        }
-        val romanianTokenCount = words.count { COMMON_ROMANIAN_WORDS.contains(it) }
-        val hasRoDiacritics = ScriptDetector.hasRomanianDiacritics(cedillaNormalized)
 
         if (sourceLang == TranslateLanguage.ROMANIAN) {
-            if (hasRoDiacritics) return true
+            if (facts.hasRoDiacritics) return true
 
-            if (exclusiveEnglishTokenCount >= 2 && romanianTokenCount == 0) {
+            if (facts.exclusiveEnglishTokenCount >= 2 && facts.romanianTokenCount == 0) {
                 return false
-            }
-
-            val specificRomanianTokens = words.count {
-                COMMON_ROMANIAN_WORDS.contains(it) && !AMBIGUOUS_ROMANCE_OR_ENGLISH_TOKENS.contains(it)
             }
 
             // Por qué: Frases mixtas o coloquiales en rumano (ej. "I see, thanks, si dam poze..." o "ce e aia")
             // con múltiples tokens rumanos inequívocos deben traducirse aunque ML Kit detecte "en" al inicio.
-            if (specificRomanianTokens >= 2 && specificRomanianTokens >= exclusiveEnglishTokenCount) {
+            if (facts.specificRomanianTokens >= 2 && facts.specificRomanianTokens >= facts.exclusiveEnglishTokenCount) {
                 return true
             }
 
             // Por qué: En mensajes rumanos breves sin diacríticos (ej. "buna ziua", "ce faci"), ML Kit
             // suele reportar danés o italiano; el vocabulario rumano inequívoco sin tokens ingleses debe prevalecer.
-            if (specificRomanianTokens > 0 &&
-                exclusiveEnglishTokenCount == 0 &&
-                (identifiedLang != TranslateLanguage.ENGLISH && identifiedLang != "eng" || specificRomanianTokens >= 2)
+            if (facts.specificRomanianTokens > 0 &&
+                facts.exclusiveEnglishTokenCount == 0 &&
+                (identifiedLang != TranslateLanguage.ENGLISH && identifiedLang != "eng" || facts.specificRomanianTokens >= 2)
             ) {
                 return true
             }
 
             if (conversationMatchesSource &&
                 identifiedLang != targetLang &&
-                (specificRomanianTokens > 0 || (words.size in 1..4 && exclusiveEnglishTokenCount == 0 && latinLetters >= 2))
+                (facts.specificRomanianTokens > 0 || (facts.wordCount in 1..4 && facts.exclusiveEnglishTokenCount == 0 && facts.latinLetters >= 2))
             ) {
                 return true
             }
@@ -340,11 +401,11 @@ object TranslationSenseEngine {
                 return false
             }
 
-            if (specificRomanianTokens > 0 && exclusiveEnglishTokenCount < 2) {
+            if (facts.specificRomanianTokens > 0 && facts.exclusiveEnglishTokenCount < 2) {
                 return true
             }
 
-            if (exclusiveEnglishTokenCount > 0 && romanianTokenCount == 0) {
+            if (facts.exclusiveEnglishTokenCount > 0 && facts.romanianTokenCount == 0) {
                 return false
             }
 
@@ -352,7 +413,7 @@ object TranslationSenseEngine {
                 return true
             }
 
-            if (allowDeferredLatinForMlKit && identifiedLang == null && latinLetters >= 2) {
+            if (allowDeferredLatinForMlKit && identifiedLang == null && facts.latinLetters >= 2) {
                 return true
             }
 
@@ -360,10 +421,10 @@ object TranslationSenseEngine {
         }
 
         if (sourceLang == TranslateLanguage.ENGLISH) {
-            if (latinLetters < 2) return false
-            if (englishTokenCount > 0) return true
+            if (facts.latinLetters < 2) return false
+            if (facts.englishTokenCount > 0) return true
             if (identifiedLang == TranslateLanguage.ENGLISH || identifiedLang == "eng") return true
-            if (hasRoDiacritics || romanianTokenCount > 0) return false
+            if (facts.hasRoDiacritics || facts.romanianTokenCount > 0) return false
             if (identifiedLang != null &&
                 identifiedLang != "und" &&
                 identifiedLang != TranslateLanguage.ENGLISH &&
@@ -375,11 +436,11 @@ object TranslationSenseEngine {
         }
 
         if (sourceLang == TranslateLanguage.GREEK) {
-            return greekLetters > 0
+            return facts.greekLetters > 0
         }
 
         if (targetLang == TranslateLanguage.GREEK) {
-            return latinLetters >= 2
+            return facts.latinLetters >= 2
         }
 
         return true

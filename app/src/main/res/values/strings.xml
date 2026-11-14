@@ -37,6 +37,11 @@
 
     <string name="settings_title">Settings</string>
     <string name="draft_switch_lang_desc">Switch translation language</string>
+    <string name="draft_action_replace">Replace</string>
+    <string name="draft_action_undo">Undo</string>
+    <string name="draft_undo_applied_badge">✓ Applied</string>
+    <string name="draft_undo_caption">Inserted in chat · Tap Undo to restore</string>
+    <string name="draft_dismiss_desc">Dismiss translation preview</string>
 
     <string name="perm_card_title">System Permissions</string>
     <string name="perm_accessibility_label">Accessibility Service</string>

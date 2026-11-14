@@ -257,6 +257,15 @@ class TranslationScanCoordinatorTest {
         runCurrent()
         assertEquals(2, scanCalls)
 
+        // Si el usuario sale antes de procesarse un cambio, clearDirtyOnDeparture evita un escaneo fantasma al volver.
+        inTargetApp = false
+        coordinator.markScreenDirty()
+        coordinator.clearDirtyOnDeparture()
+        inTargetApp = true
+        advanceTimeBy(5_000L)
+        runCurrent()
+        assertEquals(2, scanCalls)
+
         coordinator.stopAll()
     }
 }

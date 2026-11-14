@@ -21,10 +21,38 @@ class OverlayManager(private val context: Context) {
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val bubbleIdCounter = AtomicLong(0)
     @Volatile private var overlayTheme: String = AppDefaults.OVERLAY_THEME_AUTO
+    @Volatile private var lastReportedHasOverlays: Boolean = false
+    @Volatile var onOverlaysActiveChanged: ((Boolean) -> Unit)? = null
 
     data class BubbleStyle(
         val backgroundRes: Int,
         val textColor: Int
+    )
+
+    data class DraftPillStyle(
+        val containerBgRes: Int,
+        val badgeBgRes: Int,
+        val badgeTextColor: Int,
+        val bodyTextColor: Int,
+        val actionBgRes: Int,
+        val actionTextColor: Int,
+        val closeBgRes: Int,
+        val closeTextColor: Int
+    )
+
+    data class DraftFrame(
+        val posX: Int,
+        val posY: Int,
+        val bubbleWidth: Int,
+        val bubbleHeight: Int
+    )
+
+    data class DraftLayout(
+        val posX: Int,
+        val posY: Int,
+        val bubbleWidth: Int,
+        val bubbleHeight: Int,
+        val overlayBounds: Rect
     )
 
     data class ExpectedBubbleSlot(
@@ -106,6 +134,124 @@ class OverlayManager(private val context: Context) {
                     textColor = TEXT_COLOR_DARK_SURFACE
                 )
             }
+        }
+
+        /**
+         * Resuelve los colores y drawables de las píldoras flotantes (borrador y toque individual) según el tema.
+         *
+         * Por qué: Alinea la píldora de teclado con el tema elegido y separa visualmente el estado
+         * de reemplazo (`Replace`) del estado tonal de confirmación (`✓ Applied · Undo`).
+         */
+        fun resolveDraftPillStyle(
+            overlayTheme: String,
+            isSystemDarkMode: Boolean,
+            isUndoMode: Boolean = false,
+            isStalePending: Boolean = false
+        ): DraftPillStyle {
+            val useLightSurface = overlayTheme == AppDefaults.OVERLAY_THEME_LIGHT ||
+                (overlayTheme == AppDefaults.OVERLAY_THEME_AUTO && !isSystemDarkMode)
+            return if (useLightSurface) {
+                DraftPillStyle(
+                    containerBgRes = R.drawable.bg_draft_bubble_light,
+                    badgeBgRes = R.drawable.bg_draft_badge_light,
+                    badgeTextColor = if (isUndoMode) 0xFF047857.toInt() else 0xFF059669.toInt(),
+                    bodyTextColor = if (isUndoMode || isStalePending) 0xFF475569.toInt() else TEXT_COLOR_LIGHT_SURFACE,
+                    actionBgRes = if (isUndoMode) R.drawable.bg_draft_undo_btn_light else R.drawable.bg_draft_action_btn_light,
+                    actionTextColor = if (isUndoMode) 0xFF047857.toInt() else 0xFFFFFFFF.toInt(),
+                    closeBgRes = R.drawable.bg_draft_close_btn_light,
+                    closeTextColor = 0xFF64748B.toInt()
+                )
+            } else {
+                DraftPillStyle(
+                    containerBgRes = R.drawable.bg_draft_bubble_dark,
+                    badgeBgRes = R.drawable.bg_draft_badge_dark,
+                    badgeTextColor = 0xFF34D399.toInt(),
+                    bodyTextColor = if (isUndoMode || isStalePending) 0xFFCBD5E1.toInt() else 0xFFF8FAFC.toInt(),
+                    actionBgRes = if (isUndoMode) R.drawable.bg_draft_undo_btn_dark else R.drawable.bg_draft_action_btn,
+                    actionTextColor = if (isUndoMode) 0xFF34D399.toInt() else 0xFFFFFFFF.toInt(),
+                    closeBgRes = R.drawable.bg_draft_close_btn_dark,
+                    closeTextColor = 0xFF94A3B8.toInt()
+                )
+            }
+        }
+
+        /**
+         * Calcula dimensiones compactas y coordenadas seguras en enteros puros para pruebas JVM
+         * sin instanciar `android.graphics.Rect`.
+         */
+        fun resolveDraftFrame(
+            measuredWidth: Int,
+            measuredHeight: Int,
+            anchorTop: Int,
+            anchorLeft: Int,
+            screenWidth: Int,
+            screenHeight: Int,
+            density: Float,
+            isUndoMode: Boolean = false
+        ): DraftFrame {
+            val horizMargin = (12 * density).toInt()
+            val maxWidth = min(
+                (screenWidth - horizMargin * 2).coerceAtLeast((180 * density).toInt()),
+                (420 * density).toInt()
+            )
+            val minDp = if (isUndoMode) 220f else 200f
+            val minWidth = min((minDp * density).toInt(), maxWidth)
+            val bubbleWidth = measuredWidth.coerceIn(minWidth, maxWidth)
+            val bubbleHeight = measuredHeight.coerceAtLeast((44 * density).toInt())
+
+            val spacing = (8 * density).toInt()
+            val minTop = (48 * density).toInt()
+            val maxTop = (screenHeight - bubbleHeight - horizMargin).coerceAtLeast(minTop)
+            val maxLeft = (screenWidth - bubbleWidth - horizMargin).coerceAtLeast(horizMargin)
+
+            val posX = anchorLeft.coerceIn(horizMargin, maxLeft)
+            val posY = (anchorTop - bubbleHeight - spacing).coerceIn(minTop, maxTop)
+            return DraftFrame(posX, posY, bubbleWidth, bubbleHeight)
+        }
+
+        /**
+         * Calcula dimensiones compactas y coordenadas seguras sobre el compositor para la píldora de borrador.
+         */
+        fun resolveDraftBounds(
+            measuredWidth: Int,
+            measuredHeight: Int,
+            anchorTop: Int,
+            anchorLeft: Int,
+            screenWidth: Int,
+            screenHeight: Int,
+            density: Float,
+            isUndoMode: Boolean = false
+        ): DraftLayout {
+            val frame = resolveDraftFrame(
+                measuredWidth = measuredWidth,
+                measuredHeight = measuredHeight,
+                anchorTop = anchorTop,
+                anchorLeft = anchorLeft,
+                screenWidth = screenWidth,
+                screenHeight = screenHeight,
+                density = density,
+                isUndoMode = isUndoMode
+            )
+            val overlayBounds = Rect(
+                frame.posX,
+                frame.posY,
+                frame.posX + frame.bubbleWidth,
+                frame.posY + frame.bubbleHeight
+            )
+            return DraftLayout(frame.posX, frame.posY, frame.bubbleWidth, frame.bubbleHeight, overlayBounds)
+        }
+    }
+
+    private fun isSystemDarkModeNow(): Boolean {
+        val nightMask = context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK
+        return nightMask != android.content.res.Configuration.UI_MODE_NIGHT_NO
+    }
+
+    private fun notifyOverlayPresenceLocked() {
+        val current = activeBubbles.isNotEmpty() || singlePillView != null || draftOverlayView != null
+        if (current != lastReportedHasOverlays) {
+            lastReportedHasOverlays = current
+            onOverlaysActiveChanged?.invoke(current)
         }
     }
 
@@ -377,6 +523,7 @@ class OverlayManager(private val context: Context) {
                 iterator.remove()
             }
         }
+        notifyOverlayPresenceLocked()
     }
 
     private fun findMatchingBubble(
@@ -465,6 +612,7 @@ class OverlayManager(private val context: Context) {
                 maxBottomPx = maxBottomPx,
                 scanId = scanId
             )
+            notifyOverlayPresenceLocked()
         } else {
             ServiceBridge.lastScanDebug = "${ServiceBridge.lastScanDebug} | wmErr=addBubbleFailed"
         }
@@ -530,14 +678,12 @@ class OverlayManager(private val context: Context) {
 
         // Por qué: Adapta el color y contraste al tema, modo día/noche, si es cita y alineación exacta de grupo
         val isRightSide = isOutgoingBubble(targetRect.left, targetRect.right, screenWidth, profile.alignmentMode)
-        val nightMask = context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK
-        val isSystemDarkMode = nightMask != android.content.res.Configuration.UI_MODE_NIGHT_NO
         val style = resolveBubbleStyle(
             overlayTheme = overlayTheme,
             alignmentMode = profile.alignmentMode,
             isRightSide = isRightSide,
             isWhatsAppApp = profile.id == "whatsapp",
-            isSystemDarkMode = isSystemDarkMode,
+            isSystemDarkMode = isSystemDarkModeNow(),
             isQuoted = isQuoted
         )
         view.setBackgroundResource(style.backgroundRes)
@@ -634,32 +780,53 @@ class OverlayManager(private val context: Context) {
     var currentDraftOverlayBounds: Rect? = null
         private set
 
-    private data class DraftLayout(
-        val posX: Int,
-        val posY: Int,
-        val bubbleWidth: Int,
-        val bubbleHeight: Int,
-        val overlayBounds: Rect
-    )
+    private fun applyDraftStyleToViews(view: View, style: DraftPillStyle, isStalePending: Boolean) {
+        view.setBackgroundResource(style.containerBgRes)
+        val badgeView = view.findViewById<TextView>(R.id.draft_badge)
+        val textView = view.findViewById<TextView>(R.id.draft_text)
+        val actionBtn = view.findViewById<TextView>(R.id.draft_action_replace)
+        val closeBtn = view.findViewById<TextView>(R.id.draft_action_close)
+
+        badgeView.setBackgroundResource(style.badgeBgRes)
+        badgeView.setTextColor(style.badgeTextColor)
+        textView.setTextColor(style.bodyTextColor)
+        textView.alpha = if (isStalePending) 0.65f else 1.0f
+        actionBtn.setBackgroundResource(style.actionBgRes)
+        actionBtn.setTextColor(style.actionTextColor)
+        closeBtn.setBackgroundResource(style.closeBgRes)
+        closeBtn.setTextColor(style.closeTextColor)
+    }
 
     private fun bindDraftView(
         view: View,
         text: String,
         targetLangCode: String,
+        sourceLangCode: String?,
         showReplace: Boolean,
+        isStalePending: Boolean,
         onInsertClicked: () -> Unit,
         onDismissClicked: () -> Unit,
         onBadgeClicked: (() -> Unit)? = null
     ) {
+        val style = resolveDraftPillStyle(
+            overlayTheme = overlayTheme,
+            isSystemDarkMode = isSystemDarkModeNow(),
+            isUndoMode = false,
+            isStalePending = isStalePending
+        )
+        applyDraftStyleToViews(view, style, isStalePending = isStalePending)
+
         val textView = view.findViewById<TextView>(R.id.draft_text)
         val badgeView = view.findViewById<TextView>(R.id.draft_badge)
         val replaceBtn = view.findViewById<TextView>(R.id.draft_action_replace)
 
         textView.text = text
-        textView.setTextColor(if (showReplace) 0xFFF8FAFC.toInt() else 0xFF94A3B8.toInt())
-        badgeView.text = "⇄ $targetLangCode"
-        badgeView.setTextColor(0xFF94A3B8.toInt())
-        replaceBtn.text = "Replace"
+        badgeView.text = if (!sourceLangCode.isNullOrBlank()) {
+            "$sourceLangCode → $targetLangCode"
+        } else {
+            "⇄ $targetLangCode"
+        }
+        replaceBtn.setText(R.string.draft_action_replace)
         replaceBtn.visibility = if (showReplace) View.VISIBLE else View.GONE
 
         if (showReplace) {
@@ -677,7 +844,7 @@ class OverlayManager(private val context: Context) {
         }
 
         // Por qué: Permite pulsar directamente sobre la insignia de idioma para alternar manualmente
-        // la dirección de traducción (ej. cambiar de ⇄ RO a ⇄ EL) cuando la autodetección de alfabeto no sea la deseada.
+        // la dirección de traducción (ej. cambiar de EL → RO a RO → EL) cuando se prefiera invertirla.
         if (onBadgeClicked != null) {
             badgeView.setOnClickListener {
                 onBadgeClicked()
@@ -691,22 +858,106 @@ class OverlayManager(private val context: Context) {
         view: View,
         inputRect: Rect,
         screenWidth: Int,
-        density: Float
+        screenHeight: Int,
+        density: Float,
+        isUndoMode: Boolean = false
     ): DraftLayout {
+        val horizMargin = (12 * density).toInt()
+        val maxWidth = min(
+            (screenWidth - horizMargin * 2).coerceAtLeast((180 * density).toInt()),
+            (420 * density).toInt()
+        )
+        val headerRow = view.findViewById<View>(R.id.draft_header_row)
+        val spacer = view.findViewById<View>(R.id.draft_header_spacer)
+
+        // Pasada 1: Mide el ancho intrínseco compacto evitando que el espaciador flexible expanda píldoras cortas.
+        if (headerRow != null && spacer != null) {
+            headerRow.layoutParams = headerRow.layoutParams.apply {
+                width = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+            }
+            (spacer.layoutParams as? android.widget.LinearLayout.LayoutParams)?.apply {
+                width = (12 * density).toInt()
+                weight = 0f
+            }
+        }
         view.measure(
-            View.MeasureSpec.makeMeasureSpec(screenWidth - (20 * density).toInt(), View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(maxWidth, View.MeasureSpec.AT_MOST),
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
         )
+        val initialLayout = resolveDraftBounds(
+            measuredWidth = view.measuredWidth,
+            measuredHeight = view.measuredHeight,
+            anchorTop = inputRect.top,
+            anchorLeft = inputRect.left,
+            screenWidth = screenWidth,
+            screenHeight = screenHeight,
+            density = density,
+            isUndoMode = isUndoMode
+        )
 
-        val bubbleWidth = screenWidth - (20 * density).toInt()
-        val bubbleHeight = view.measuredHeight.coerceAtLeast((42 * density).toInt())
+        // Pasada 2: Fija el ancho acotado exacto y alinea los botones en los extremos de la cabecera.
+        if (headerRow != null && spacer != null) {
+            headerRow.layoutParams = headerRow.layoutParams.apply {
+                width = android.view.ViewGroup.LayoutParams.MATCH_PARENT
+            }
+            (spacer.layoutParams as? android.widget.LinearLayout.LayoutParams)?.apply {
+                width = 0
+                weight = 1f
+            }
+        }
+        view.measure(
+            View.MeasureSpec.makeMeasureSpec(initialLayout.bubbleWidth, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+        )
+        return resolveDraftBounds(
+            measuredWidth = initialLayout.bubbleWidth,
+            measuredHeight = view.measuredHeight,
+            anchorTop = inputRect.top,
+            anchorLeft = inputRect.left,
+            screenWidth = screenWidth,
+            screenHeight = screenHeight,
+            density = density,
+            isUndoMode = isUndoMode
+        )
+    }
 
-        val spacing = (6 * density).toInt()
-        val posX = (10 * density).toInt()
-        val posY = (inputRect.top - bubbleHeight - spacing).coerceAtLeast((48 * density).toInt())
-
-        val overlayBounds = Rect(posX, posY, posX + bubbleWidth, posY + bubbleHeight)
-        return DraftLayout(posX, posY, bubbleWidth, bubbleHeight, overlayBounds)
+    private fun attachOrUpdateDraftWindow(
+        view: View,
+        layout: DraftLayout,
+        label: String
+    ) {
+        if (draftOverlayView == null) {
+            val params = WindowManager.LayoutParams(
+                layout.bubbleWidth,
+                layout.bubbleHeight,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                x = layout.posX
+                y = layout.posY
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                    layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                }
+            }
+            if (addWindowViewWithFallback(view, params, label)) {
+                draftOverlayView = view
+                notifyOverlayPresenceLocked()
+            }
+        } else {
+            val params = view.layoutParams as WindowManager.LayoutParams
+            params.width = layout.bubbleWidth
+            params.height = layout.bubbleHeight
+            params.x = layout.posX
+            params.y = layout.posY
+            try {
+                windowManager.updateViewLayout(view, params)
+            } catch (_: Exception) {
+                // Ignorar errores transitorios de WindowManager
+            }
+        }
     }
 
     @Synchronized
@@ -731,14 +982,19 @@ class OverlayManager(private val context: Context) {
         inputRect: Rect,
         text: String,
         targetLangCode: String = "RO",
+        sourceLangCode: String? = null,
         showReplace: Boolean = true,
+        isStalePending: Boolean = false,
         onInsertClicked: () -> Unit,
         onDismissClicked: () -> Unit,
         onBadgeClicked: (() -> Unit)? = null
     ) {
         if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
             mainHandler.post {
-                updateDraftOverlay(inputRect, text, targetLangCode, showReplace, onInsertClicked, onDismissClicked, onBadgeClicked)
+                updateDraftOverlay(
+                    inputRect, text, targetLangCode, sourceLangCode, showReplace, isStalePending,
+                    onInsertClicked, onDismissClicked, onBadgeClicked
+                )
             }
             return
         }
@@ -750,6 +1006,7 @@ class OverlayManager(private val context: Context) {
 
         val metrics = ScreenMetricsHelper.currentBounds(context)
         val screenWidth = metrics.widthPx
+        val screenHeight = metrics.heightPx
         val density = metrics.density
 
         // Por qué: Si la coordenada superior del campo de texto no es válida o está fuera de la zona inferior normal,
@@ -761,46 +1018,30 @@ class OverlayManager(private val context: Context) {
 
         synchronized(this) {
             val view = draftOverlayView ?: inflater.inflate(R.layout.draft_preview_overlay, null)
-            bindDraftView(view, text, targetLangCode, showReplace, onInsertClicked, onDismissClicked, onBadgeClicked)
+            bindDraftView(
+                view = view,
+                text = text,
+                targetLangCode = targetLangCode,
+                sourceLangCode = sourceLangCode,
+                showReplace = showReplace,
+                isStalePending = isStalePending,
+                onInsertClicked = onInsertClicked,
+                onDismissClicked = onDismissClicked,
+                onBadgeClicked = onBadgeClicked
+            )
 
-            val layout = computeDraftLayout(view, inputRect, screenWidth, density)
+            val layout = computeDraftLayout(
+                view = view,
+                inputRect = inputRect,
+                screenWidth = screenWidth,
+                screenHeight = screenHeight,
+                density = density,
+                isUndoMode = false
+            )
             currentDraftOverlayBounds = layout.overlayBounds
 
             purgeCollidingBubbles(layout.overlayBounds, inputRect)
-
-            if (draftOverlayView == null) {
-                val params = WindowManager.LayoutParams(
-                    layout.bubbleWidth,
-                    layout.bubbleHeight,
-                    WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                    PixelFormat.TRANSLUCENT
-                ).apply {
-                    gravity = Gravity.TOP or Gravity.START
-                    x = layout.posX
-                    y = layout.posY
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                        layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-                    }
-                }
-
-                if (addWindowViewWithFallback(view, params, "draft overlay")) {
-                    draftOverlayView = view
-                }
-            } else {
-                val params = view.layoutParams as WindowManager.LayoutParams
-                params.width = layout.bubbleWidth
-                params.height = layout.bubbleHeight
-                params.x = layout.posX
-                params.y = layout.posY
-
-                try {
-                    windowManager.updateViewLayout(view, params)
-                } catch (e: Exception) {
-                    // Ignore WindowManager errors
-                }
-            }
+            attachOrUpdateDraftWindow(view, layout, "draft overlay")
         }
     }
 
@@ -816,8 +1057,9 @@ class OverlayManager(private val context: Context) {
 
         val metrics = ScreenMetricsHelper.currentBounds(context)
         val screenWidth = metrics.widthPx
+        val screenHeight = metrics.heightPx
         val density = metrics.density
-        val fallbackBottom = (metrics.heightPx - (120 * density).toInt()).coerceAtLeast((220 * density).toInt())
+        val fallbackBottom = (screenHeight - (120 * density).toInt()).coerceAtLeast((220 * density).toInt())
         val anchorRect = if (inputRect.top > (100 * density).toInt()) {
             inputRect
         } else {
@@ -826,56 +1068,38 @@ class OverlayManager(private val context: Context) {
 
         synchronized(this) {
             val view = draftOverlayView ?: inflater.inflate(R.layout.draft_preview_overlay, null)
+            val style = resolveDraftPillStyle(
+                overlayTheme = overlayTheme,
+                isSystemDarkMode = isSystemDarkModeNow(),
+                isUndoMode = true,
+                isStalePending = false
+            )
+            applyDraftStyleToViews(view, style, isStalePending = false)
+
             val textView = view.findViewById<TextView>(R.id.draft_text)
             val badgeView = view.findViewById<TextView>(R.id.draft_badge)
             val actionBtn = view.findViewById<TextView>(R.id.draft_action_replace)
 
-            badgeView.text = "✓"
-            badgeView.setTextColor(0xFF10B981.toInt())
+            badgeView.setText(R.string.draft_undo_applied_badge)
             badgeView.setOnClickListener(null)
-            textView.text = "Replaced in chat"
-            textView.setTextColor(0xFFF8FAFC.toInt())
-            actionBtn.text = "Undo"
+            textView.setText(R.string.draft_undo_caption)
+            actionBtn.setText(R.string.draft_action_undo)
             actionBtn.visibility = View.VISIBLE
 
             view.findViewById<View>(R.id.draft_container).setOnClickListener { onUndoClicked() }
             actionBtn.setOnClickListener { onUndoClicked() }
             view.findViewById<View>(R.id.draft_action_close).setOnClickListener { onDismissClicked() }
 
-            val layout = computeDraftLayout(view, anchorRect, screenWidth, density)
+            val layout = computeDraftLayout(
+                view = view,
+                inputRect = anchorRect,
+                screenWidth = screenWidth,
+                screenHeight = screenHeight,
+                density = density,
+                isUndoMode = true
+            )
             currentDraftOverlayBounds = layout.overlayBounds
-
-            if (draftOverlayView == null) {
-                val params = WindowManager.LayoutParams(
-                    layout.bubbleWidth,
-                    layout.bubbleHeight,
-                    WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                    PixelFormat.TRANSLUCENT
-                ).apply {
-                    gravity = Gravity.TOP or Gravity.START
-                    x = layout.posX
-                    y = layout.posY
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                        layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-                    }
-                }
-                if (addWindowViewWithFallback(view, params, "draft undo overlay")) {
-                    draftOverlayView = view
-                }
-            } else {
-                val params = view.layoutParams as WindowManager.LayoutParams
-                params.width = layout.bubbleWidth
-                params.height = layout.bubbleHeight
-                params.x = layout.posX
-                params.y = layout.posY
-                try {
-                    windowManager.updateViewLayout(view, params)
-                } catch (_: Exception) {
-                    // Ignorar errores transitorios de WindowManager
-                }
-            }
+            attachOrUpdateDraftWindow(view, layout, "draft undo overlay")
         }
     }
 
@@ -895,6 +1119,7 @@ class OverlayManager(private val context: Context) {
                 }
                 draftOverlayView = null
             }
+            notifyOverlayPresenceLocked()
         }
     }
 
@@ -928,12 +1153,29 @@ class OverlayManager(private val context: Context) {
 
         synchronized(this) {
             val view = singlePillView ?: inflater.inflate(R.layout.single_message_pill_overlay, null)
+            val style = resolveDraftPillStyle(
+                overlayTheme = overlayTheme,
+                isSystemDarkMode = isSystemDarkModeNow(),
+                isUndoMode = false,
+                isStalePending = false
+            )
+            view.setBackgroundResource(style.containerBgRes)
 
             val badgeView = view.findViewById<TextView>(R.id.pill_badge)
             val textView = view.findViewById<TextView>(R.id.pill_translated_text)
             val peekBtn = view.findViewById<TextView>(R.id.pill_btn_peek)
-            val copyBtn = view.findViewById<View>(R.id.pill_btn_copy)
-            val closeBtn = view.findViewById<View>(R.id.pill_btn_close)
+            val copyBtn = view.findViewById<TextView>(R.id.pill_btn_copy)
+            val closeBtn = view.findViewById<TextView>(R.id.pill_btn_close)
+
+            badgeView.setBackgroundResource(style.badgeBgRes)
+            badgeView.setTextColor(style.badgeTextColor)
+            peekBtn.setBackgroundResource(style.badgeBgRes)
+            peekBtn.setTextColor(style.closeTextColor)
+            copyBtn.setBackgroundResource(style.badgeBgRes)
+            copyBtn.setTextColor(style.closeTextColor)
+            closeBtn.setBackgroundResource(style.closeBgRes)
+            closeBtn.setTextColor(style.closeTextColor)
+            textView.setTextColor(style.bodyTextColor)
 
             val canPeekOriginal = !originalText.isNullOrBlank() && originalText != translatedText
             var showingOriginal = false
@@ -1016,6 +1258,7 @@ class OverlayManager(private val context: Context) {
             if (singlePillView == null) {
                 if (addWindowViewWithFallback(view, params, "single pill overlay")) {
                     singlePillView = view
+                    notifyOverlayPresenceLocked()
                 }
             } else {
                 try {
@@ -1037,6 +1280,7 @@ class OverlayManager(private val context: Context) {
             }
             singlePillView = null
         }
+        notifyOverlayPresenceLocked()
     }
 
     @Synchronized
@@ -1050,6 +1294,7 @@ class OverlayManager(private val context: Context) {
         }
         activeBubbles.clear()
         removeSingleMessagePill()
+        notifyOverlayPresenceLocked()
     }
 
     // Por qué: Reconcilia burbujas activas 1 a 1 contra los ranurados actuales verificando texto fuente
@@ -1091,6 +1336,7 @@ class OverlayManager(private val context: Context) {
                 iterator.remove()
             }
         }
+        notifyOverlayPresenceLocked()
     }
 
     @Synchronized
@@ -1115,6 +1361,7 @@ class OverlayManager(private val context: Context) {
                 iterator.remove()
             }
         }
+        notifyOverlayPresenceLocked()
     }
 
     // Por qué: Permite verificar de forma atómica si hay alguna superposición activa dibujada en pantalla

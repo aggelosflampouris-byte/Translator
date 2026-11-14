@@ -1,5 +1,6 @@
 *.iml
 .gradle
+/.kotlin/
 /.vscode/
 local.properties
 .env

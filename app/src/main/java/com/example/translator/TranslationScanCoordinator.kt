@@ -4,10 +4,12 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 
 enum class ScanOutcome {
     TRANSLATED_OR_EMPTY,
@@ -43,6 +45,7 @@ class TranslationScanCoordinator(
     val scanGeneration = AtomicLong(0)
     val overlayEpoch = AtomicLong(0)
     private val dirtyVersion = AtomicLong(1)
+    private val dirtyWakeSignal = Channel<Unit>(Channel.CONFLATED)
     @Volatile private var screenNeedsRescan: Boolean = true
     @Volatile private var lastDrawnOverlayEpoch: Long = -1L
     @Volatile private var lastClearedOverlayEpoch: Long = -1L
@@ -96,11 +99,19 @@ class TranslationScanCoordinator(
     }
 
     /**
-     * Marca la pantalla actual como modificada para que el siguiente pulso del bucle o debounce vuelva a escanear.
+     * Marca la pantalla actual como modificada y despierta el coordinador solo cuando hace falta reescanear.
      */
     fun markScreenDirty() {
         dirtyVersion.incrementAndGet()
         screenNeedsRescan = true
+        dirtyWakeSignal.trySend(Unit)
+    }
+
+    /**
+     * Limpia el estado pendiente al salir de apps de chat para evitar despertares innecesarios en reposo.
+     */
+    fun clearDirtyOnDeparture() {
+        screenNeedsRescan = false
     }
 
     /**
@@ -129,10 +140,32 @@ class TranslationScanCoordinator(
                 }
             }
 
+            var offTargetDirtyTicks = 0
             while (isTranslatingActive() && !isTapMode()) {
-                delay(2000L)
+                // Por qué: Si la pantalla ya está limpia, suspendemos sin temporizadores (0 despertares)
+                // hasta que `markScreenDirty` señale nuevo contenido o regreso a primer plano.
+                if (!screenNeedsRescan) {
+                    offTargetDirtyTicks = 0
+                    dirtyWakeSignal.receive()
+                    continue
+                }
+                withTimeoutOrNull(2000L) {
+                    dirtyWakeSignal.receive()
+                }
                 if (!isTranslatingActive() || isTapMode()) break
-                if (!isInteractive() || !isInTargetForeground()) continue
+                if (!screenNeedsRescan) {
+                    offTargetDirtyTicks = 0
+                    continue
+                }
+                if (!isInteractive() || !isInTargetForeground()) {
+                    offTargetDirtyTicks++
+                    if (offTargetDirtyTicks >= 5) {
+                        screenNeedsRescan = false
+                        offTargetDirtyTicks = 0
+                    }
+                    continue
+                }
+                offTargetDirtyTicks = 0
                 onLoopTick(false)
                 val nowLoop = uptimeMs()
                 if (screenNeedsRescan && isScrollQuieted(nowLoop)) {
@@ -187,7 +220,7 @@ class TranslationScanCoordinator(
         }
 
         scrollSettleJob = scope.launch(workerDispatcher) {
-            delay(360L)
+            delay(ScanTimingPolicy.SCROLL_SETTLE_DELAY_MS)
             isScreenScrolling = false
             if (!isTranslatingActive() || isTapMode()) return@launch
             runSingleFlightScan(eventSourceToken = eventSourceToken, isManualRequest = false, ignoreThrottle = true)
@@ -199,9 +232,14 @@ class TranslationScanCoordinator(
         markScreenDirty()
 
         val now = uptimeMs()
+        val scrollThreshold = ScanTimingPolicy.SCROLL_QUIET_THRESHOLD_MS + 20L
         val waitForScrollMs = if (!isScrollQuieted(now)) {
             val elapsedSinceScroll = (now - lastScrollTimestampMs).coerceAtLeast(0L)
-            if (isScreenScrolling) 360L else (370L - elapsedSinceScroll).coerceIn(80L, 370L)
+            if (isScreenScrolling) {
+                ScanTimingPolicy.SCROLL_SETTLE_DELAY_MS
+            } else {
+                (scrollThreshold - elapsedSinceScroll).coerceIn(80L, scrollThreshold)
+            }
         } else {
             0L
         }
@@ -213,13 +251,13 @@ class TranslationScanCoordinator(
             pendingScanWindowStartMs = now
         }
         val elapsedSinceWindowStart = now - pendingScanWindowStartMs
-        // Por qué: Limita la inanición del debounce a 750ms para que actualizaciones continuas
-        // de la UI no pospongan indefinidamente el escaneo de burbujas visibles.
-        if (scanDebounceJob?.isActive == true && elapsedSinceWindowStart >= 750L) {
+        // Por qué: Limita la inanición del debounce según la política centralizada para que ráfagas de UI
+        // no pospongan indefinidamente el escaneo de burbujas visibles.
+        if (scanDebounceJob?.isActive == true && elapsedSinceWindowStart >= ScanTimingPolicy.MAX_CONTENT_STARVATION_MS) {
             return
         }
         scanDebounceJob?.cancel()
-        val cappedDelayMs = minOf(targetDelayMs, (750L - elapsedSinceWindowStart).coerceAtLeast(80L))
+        val cappedDelayMs = minOf(targetDelayMs, (ScanTimingPolicy.MAX_CONTENT_STARVATION_MS - elapsedSinceWindowStart).coerceAtLeast(80L))
         val effectiveDelayMs = maxOf(waitForScrollMs, cappedDelayMs)
         scanDebounceJob = scope.launch(workerDispatcher) {
             delay(effectiveDelayMs)
@@ -231,7 +269,11 @@ class TranslationScanCoordinator(
             val nowAfterDelay = uptimeMs()
             if (!isScrollQuieted(nowAfterDelay)) {
                 val age = (nowAfterDelay - lastScrollTimestampMs).coerceAtLeast(0L)
-                val retryWaitMs = if (isScreenScrolling) 360L else (370L - age).coerceIn(80L, 360L)
+                val retryWaitMs = if (isScreenScrolling) {
+                    ScanTimingPolicy.SCROLL_SETTLE_DELAY_MS
+                } else {
+                    (scrollThreshold - age).coerceIn(80L, ScanTimingPolicy.SCROLL_SETTLE_DELAY_MS)
+                }
                 delay(retryWaitMs)
                 if (!isTranslatingActive() || isTapMode() || !isScrollQuieted(uptimeMs())) return@launch
             }
@@ -261,7 +303,7 @@ class TranslationScanCoordinator(
             if (!isTranslatingActive()) return
             if (!isManualRequest && isTapMode()) return
             val now = uptimeMs()
-            if (!ignoreThrottle && now - lastCompletedOrStartedScanMs < 120L) {
+            if (!ignoreThrottle && now - lastCompletedOrStartedScanMs < ScanTimingPolicy.SINGLE_FLIGHT_THROTTLE_MS) {
                 return
             }
             lastCompletedOrStartedScanMs = now

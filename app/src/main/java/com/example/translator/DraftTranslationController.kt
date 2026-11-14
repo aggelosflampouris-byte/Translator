@@ -36,6 +36,7 @@ class DraftTranslationController(
     private val pipeline: TranslationPipeline,
     private val scope: CoroutineScope,
     private val workerDispatcher: CoroutineDispatcher,
+    private val translationDispatcher: CoroutineDispatcher = workerDispatcher,
     private val postToMain: (epochCheck: Long?, () -> Unit) -> Unit,
     private val currentOverlayEpoch: () -> Long,
     private val recordOverlayDrawn: (epoch: Long) -> Unit,
@@ -331,7 +332,13 @@ class DraftTranslationController(
             return
         }
 
-        val (_, draftTargetLang) = resolveDraftDirection(rawText, manualDraftTargetLang, configuredSource, configuredTarget)
+        val (draftSourceGuess, draftTargetLang) = resolveDraftDirection(
+            text = rawText,
+            manualTarget = manualDraftTargetLang,
+            configuredSource = configuredSource,
+            configuredTarget = configuredTarget
+        )
+        val hasFastHit = pipeline.resolveFast(rawText, draftSourceGuess, draftTargetLang) != null
         val nowTypingMs = SystemClock.uptimeMillis()
 
         if (typingJob?.isActive == true &&
@@ -345,15 +352,16 @@ class DraftTranslationController(
             pendingTypingWindowStartMs = nowTypingMs
         }
         val elapsedTypingMs = nowTypingMs - pendingTypingWindowStartMs
-        if (typingJob?.isActive == true && elapsedTypingMs >= 450L) {
+        if (typingJob?.isActive == true && elapsedTypingMs >= ScanTimingPolicy.DRAFT_MAX_STARVATION_MS) {
             return
         }
 
         pendingTypingSource = rawText
         pendingTypingTargetLang = draftTargetLang
-        val effectiveTypingDelayMs = minOf(200L, (450L - elapsedTypingMs).coerceAtLeast(60L))
+        // Por qué: Si la frase ya existe en caché/memoria/modismos, mostramos la píldora en ~35ms sin esperar el rebote completo.
+        val effectiveTypingDelayMs = ScanTimingPolicy.chooseDraftDelayMs(elapsedTypingMs, hasFastHit)
 
-        diagnostics.setDraftDiag("queued(len=${rawText.length},dir=$draftTargetLang,via=${diagnostics.lastEditableFindVia})")
+        diagnostics.setDraftDiag("queued(len=${rawText.length},fast=$hasFastHit,dir=$draftTargetLang,via=${diagnostics.lastEditableFindVia})")
         typingJob?.cancel()
         val scanEpoch = currentOverlayEpoch()
         typingJob = scope.launch(workerDispatcher) {
@@ -384,102 +392,182 @@ class DraftTranslationController(
                 freshRect.set(currentRect)
             }
 
+            val liveNodePkg = try { liveNode.packageName?.toString() } catch (_: Exception) { null }
+            val fgOrLiveTarget = sessionTracker.resolveForeground().packageName != null ||
+                sessionTracker.isEnabledTargetPackage(liveNodePkg)
+
             val greekLang = TranslateLanguage.GREEK
             val hasGreekAndLatinPair = (configuredSource == greekLang) xor (configuredTarget == greekLang)
-            val detectedNonGreek = if (manualDraftTargetLang == null && !hasGreekAndLatinPair) {
-                identifyLanguage(liveText)
-            } else {
-                null
-            }
-            val (effectiveSourceLang, effectiveTargetLang) = resolveDraftDirection(
+            val needsMlKitId = manualDraftTargetLang == null &&
+                !hasGreekAndLatinPair &&
+                TranslationSenseEngine.needsLanguageIdentification(liveText, configuredSource, configuredTarget, alreadyCleaned = true)
+
+            // Paso 1 rápido: si el borrador está en memoria/caché/modismos, renderiza al instante sin esperar al hilo NMT.
+            val (fastSrc, fastTgt) = resolveDraftDirection(
                 text = liveText,
                 manualTarget = manualDraftTargetLang ?: draftTargetLang.takeIf {
                     hasGreekAndLatinPair && TextNormalizer.detectScriptType(liveText) == TextNormalizer.ScriptType.NEUTRAL
                 },
                 configuredSource = configuredSource,
-                configuredTarget = configuredTarget,
-                detectedLang = detectedNonGreek
+                configuredTarget = configuredTarget
             )
-            val effectiveBadge = effectiveTargetLang.uppercase()
-            val preferredTerms = if (isLearningEnabled) {
-                learningStore.promptTerms(effectiveSourceLang, effectiveTargetLang)
+            val instantDraft = if (!needsMlKitId) {
+                pipeline.resolveFast(liveText, fastSrc, fastTgt)
             } else {
-                emptyList()
+                null
             }
-            val hints = TranslationHints(preferredTerms = preferredTerms)
+            if (!instantDraft.isNullOrBlank() && instantDraft != liveText) {
+                publishDraftPreview(
+                    scanEpoch = scanEpoch,
+                    fgOrLiveTarget = fgOrLiveTarget,
+                    liveText = liveText,
+                    liveHint = liveHint,
+                    liveNode = liveNode,
+                    freshRect = freshRect,
+                    translatedDraft = instantDraft,
+                    effectiveSourceLang = fastSrc,
+                    effectiveTargetLang = fastTgt,
+                    eventSource = eventSource,
+                    eventType = eventType,
+                    configuredSource = configuredSource,
+                    configuredTarget = configuredTarget,
+                    isKeyboardTranslatorEnabled = isKeyboardTranslatorEnabled,
+                    isLearningEnabled = isLearningEnabled
+                )
+                return@launch
+            }
 
-            // Por qué: `MLKitTranslationEngine.translate` ya gestiona párrafos multilínea y conserva
-            // las líneas ya escritas en destino; no duplicamos un bucle manual por `\n`.
-            val finalTranslatedDraft = pipeline.translate(liveText, effectiveSourceLang, effectiveTargetLang, hints)
-            if (!finalTranslatedDraft.isNullOrBlank() && finalTranslatedDraft != liveText) {
-                val liveNodePkg = try { liveNode.packageName?.toString() } catch (_: Exception) { null }
-                val fgOrLiveTarget = sessionTracker.resolveForeground().packageName != null ||
-                    sessionTracker.isEnabledTargetPackage(liveNodePkg)
-                postToMain(scanEpoch) {
-                    if (ServiceBridge.isTranslatingActive && fgOrLiveTarget && !isPlaceholderText(liveText, liveHint, liveNode)) {
-                        recordOverlayDrawn(scanEpoch)
-                        lastRenderedDraftSource = liveText
-                        lastRenderedDraftTop = freshRect.top
-                        lastRenderedDraftManualLang = manualDraftTargetLang
-                        diagnostics.setDraftDiag("shown(len=${liveText.length}->${finalTranslatedDraft.length},dir=$effectiveTargetLang,top=${freshRect.top})")
-                        overlayManager.updateDraftOverlay(
-                            inputRect = freshRect,
-                            text = finalTranslatedDraft,
-                            targetLangCode = effectiveBadge,
-                            showReplace = true,
-                            onInsertClicked = {
-                                pendingDraftSession = DraftSession(
-                                    sourceText = liveText,
-                                    machineTranslation = finalTranslatedDraft,
-                                    sourceLang = effectiveSourceLang,
-                                    targetLang = effectiveTargetLang,
-                                    createdAtMillis = SystemClock.uptimeMillis()
-                                )
-                                scope.launch(workerDispatcher) {
-                                    insertTranslatedTextIntoInput(
-                                        text = finalTranslatedDraft,
-                                        fallbackNode = liveNode,
-                                        originalSourceText = liveText,
-                                        fallbackInputRect = freshRect
-                                    )
-                                }
-                            },
-                            onDismissClicked = {
-                                dismissedDraftText = liveText
-                                manualDraftTargetLang = null
-                                overlayManager.removeDraftOverlay()
-                            },
-                            onBadgeClicked = {
-                                manualDraftTargetLang = if (effectiveTargetLang == configuredTarget) {
-                                    configuredSource
-                                } else {
-                                    configuredTarget
-                                }
-                                lastRenderedDraftSource = null
-                                dismissedDraftText = null
-                                typingJob?.cancel()
-                                scope.launch(workerDispatcher) {
-                                    handleOutgoingTyping(
-                                        eventSource = eventSource,
-                                        eventType = eventType,
-                                        configuredSource = configuredSource,
-                                        configuredTarget = configuredTarget,
-                                        isKeyboardTranslatorEnabled = isKeyboardTranslatorEnabled,
-                                        isLearningEnabled = isLearningEnabled
-                                    )
-                                }
-                            }
-                        )
-                    } else {
-                        diagnostics.setDraftDiag("abort_post(act=${ServiceBridge.isTranslatingActive},fg=$fgOrLiveTarget)")
-                        overlayManager.removeDraftOverlay()
-                    }
+            // Paso 2 asíncrono en el pool de traducción: deja libre `workerDispatcher` para eventos UI.
+            val (effectiveSourceLang, effectiveTargetLang, finalTranslatedDraft) = withContext(translationDispatcher) {
+                val detectedNonGreek = if (needsMlKitId) identifyLanguage(liveText) else null
+                val (resolvedSrc, resolvedTgt) = resolveDraftDirection(
+                    text = liveText,
+                    manualTarget = manualDraftTargetLang ?: draftTargetLang.takeIf {
+                        hasGreekAndLatinPair && TextNormalizer.detectScriptType(liveText) == TextNormalizer.ScriptType.NEUTRAL
+                    },
+                    configuredSource = configuredSource,
+                    configuredTarget = configuredTarget,
+                    detectedLang = detectedNonGreek
+                )
+                val preferredTerms = if (isLearningEnabled) {
+                    learningStore.promptTerms(resolvedSrc, resolvedTgt)
+                } else {
+                    emptyList()
                 }
+                val translated = pipeline.translate(
+                    text = liveText,
+                    sourceLang = resolvedSrc,
+                    targetLang = resolvedTgt,
+                    hints = TranslationHints(preferredTerms = preferredTerms)
+                )
+                Triple(resolvedSrc, resolvedTgt, translated)
+            }
+
+            if (!finalTranslatedDraft.isNullOrBlank() && finalTranslatedDraft != liveText) {
+                publishDraftPreview(
+                    scanEpoch = scanEpoch,
+                    fgOrLiveTarget = fgOrLiveTarget,
+                    liveText = liveText,
+                    liveHint = liveHint,
+                    liveNode = liveNode,
+                    freshRect = freshRect,
+                    translatedDraft = finalTranslatedDraft,
+                    effectiveSourceLang = effectiveSourceLang,
+                    effectiveTargetLang = effectiveTargetLang,
+                    eventSource = eventSource,
+                    eventType = eventType,
+                    configuredSource = configuredSource,
+                    configuredTarget = configuredTarget,
+                    isKeyboardTranslatorEnabled = isKeyboardTranslatorEnabled,
+                    isLearningEnabled = isLearningEnabled
+                )
             } else {
                 diagnostics.setDraftDiag("skip_tr(blank=${finalTranslatedDraft.isNullOrBlank()},same=${finalTranslatedDraft == liveText})")
                 postToMain(null) {
                     overlayManager.removeDraftOverlay()
                 }
+            }
+        }
+    }
+
+    private fun publishDraftPreview(
+        scanEpoch: Long,
+        fgOrLiveTarget: Boolean,
+        liveText: String,
+        liveHint: String,
+        liveNode: AccessibilityNodeInfo,
+        freshRect: Rect,
+        translatedDraft: String,
+        effectiveSourceLang: String,
+        effectiveTargetLang: String,
+        eventSource: AccessibilityNodeInfo?,
+        eventType: Int?,
+        configuredSource: String,
+        configuredTarget: String,
+        isKeyboardTranslatorEnabled: Boolean,
+        isLearningEnabled: Boolean
+    ) {
+        val targetBadge = effectiveTargetLang.uppercase()
+        val sourceBadge = effectiveSourceLang.uppercase()
+        postToMain(scanEpoch) {
+            if (ServiceBridge.isTranslatingActive && fgOrLiveTarget && !isPlaceholderText(liveText, liveHint, liveNode)) {
+                recordOverlayDrawn(scanEpoch)
+                lastRenderedDraftSource = liveText
+                lastRenderedDraftTop = freshRect.top
+                lastRenderedDraftManualLang = manualDraftTargetLang
+                diagnostics.setDraftDiag("shown(len=${liveText.length}->${translatedDraft.length},dir=$effectiveSourceLang->$effectiveTargetLang,top=${freshRect.top})")
+                overlayManager.updateDraftOverlay(
+                    inputRect = freshRect,
+                    text = translatedDraft,
+                    targetLangCode = targetBadge,
+                    sourceLangCode = sourceBadge,
+                    showReplace = true,
+                    onInsertClicked = {
+                        pendingDraftSession = DraftSession(
+                            sourceText = liveText,
+                            machineTranslation = translatedDraft,
+                            sourceLang = effectiveSourceLang,
+                            targetLang = effectiveTargetLang,
+                            createdAtMillis = SystemClock.uptimeMillis()
+                        )
+                        scope.launch(workerDispatcher) {
+                            insertTranslatedTextIntoInput(
+                                text = translatedDraft,
+                                fallbackNode = liveNode,
+                                originalSourceText = liveText,
+                                fallbackInputRect = freshRect
+                            )
+                        }
+                    },
+                    onDismissClicked = {
+                        dismissedDraftText = liveText
+                        manualDraftTargetLang = null
+                        overlayManager.removeDraftOverlay()
+                    },
+                    onBadgeClicked = {
+                        manualDraftTargetLang = if (effectiveTargetLang == configuredTarget) {
+                            configuredSource
+                        } else {
+                            configuredTarget
+                        }
+                        lastRenderedDraftSource = null
+                        dismissedDraftText = null
+                        typingJob?.cancel()
+                        scope.launch(workerDispatcher) {
+                            handleOutgoingTyping(
+                                eventSource = eventSource,
+                                eventType = eventType,
+                                configuredSource = configuredSource,
+                                configuredTarget = configuredTarget,
+                                isKeyboardTranslatorEnabled = isKeyboardTranslatorEnabled,
+                                isLearningEnabled = isLearningEnabled
+                            )
+                        }
+                    }
+                )
+            } else {
+                diagnostics.setDraftDiag("abort_post(act=${ServiceBridge.isTranslatingActive},fg=$fgOrLiveTarget)")
+                overlayManager.removeDraftOverlay()
             }
         }
     }

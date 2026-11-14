@@ -54,6 +54,8 @@ class LearningStore private constructor(context: Context) {
         const val MIN_HITS_FOR_AUTO_CORRECTION = 1
 
         private const val MAX_MEMORY_ENTRIES = 3000
+        private const val MAX_CORRECTION_ENTRIES = 1000
+        private const val PRUNE_BATCH_SIZE = 200
 
         // Por qué: Un borrador abandonado durante minutos ya no representa la intención del envío.
         const val DRAFT_SESSION_TTL_MS = 5 * 60 * 1000L
@@ -96,7 +98,9 @@ class LearningStore private constructor(context: Context) {
     )
 
     private val helper = LearningDatabaseHelper(context)
-    private val diskExecutor = Executors.newSingleThreadExecutor()
+    private val diskExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "OverChat-LearningDisk").apply { isDaemon = true }
+    }
     private val lock = Any()
 
     private val memory = HashMap<String, String>()
@@ -361,8 +365,16 @@ class LearningStore private constructor(context: Context) {
                     put("hits", record.hits)
                     put("updated_at", record.updatedAt)
                 }
-                helper.writableDatabase.insertWithOnConflict(
+                val db = helper.writableDatabase
+                db.insertWithOnConflict(
                     LearningDatabaseHelper.TABLE_CORRECTIONS, null, values, SQLiteDatabase.CONFLICT_REPLACE
+                )
+                trimTableToLimit(
+                    db = db,
+                    tableName = LearningDatabaseHelper.TABLE_CORRECTIONS,
+                    keyColumn = "correction_key",
+                    maxEntries = MAX_CORRECTION_ENTRIES,
+                    onKeyRemoved = { correctionKey -> corrections.remove(correctionKey) }
                 )
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to persist correction", e)
@@ -383,22 +395,56 @@ class LearningStore private constructor(context: Context) {
     }
 
     private fun trimMemoryIfNeeded(db: SQLiteDatabase) {
-        val count = android.database.DatabaseUtils.queryNumEntries(db, LearningDatabaseHelper.TABLE_MEMORY)
-        if (count <= MAX_MEMORY_ENTRIES) return
+        trimTableToLimit(
+            db = db,
+            tableName = LearningDatabaseHelper.TABLE_MEMORY,
+            keyColumn = "memory_key",
+            maxEntries = MAX_MEMORY_ENTRIES,
+            onKeyRemoved = { memoryKey -> memory.remove(memoryKey) }
+        )
+    }
 
-        // Por qué: Se eliminan las frases más antiguas (LRU) tanto del disco como del mapa en memoria.
-        val oldestKeys = mutableListOf<String>()
+    private fun trimTableToLimit(
+        db: SQLiteDatabase,
+        tableName: String,
+        keyColumn: String,
+        maxEntries: Int,
+        onKeyRemoved: (String) -> Unit
+    ) {
+        val count = android.database.DatabaseUtils.queryNumEntries(db, tableName)
+        if (count <= maxEntries) return
+
+        val excess = (count - maxEntries).toInt().coerceAtLeast(1)
+        val oldestKeys = ArrayList<String>(excess)
         db.query(
-            LearningDatabaseHelper.TABLE_MEMORY, arrayOf("memory_key"),
-            null, null, null, null, "updated_at ASC", (count - MAX_MEMORY_ENTRIES).toString()
+            tableName,
+            arrayOf(keyColumn),
+            null,
+            null,
+            null,
+            null,
+            "updated_at ASC",
+            excess.toString()
         ).use { cursor ->
             while (cursor.moveToNext()) oldestKeys.add(cursor.getString(0))
         }
-        oldestKeys.forEach { key ->
-            db.delete(LearningDatabaseHelper.TABLE_MEMORY, "memory_key = ?", arrayOf(key))
+        if (oldestKeys.isEmpty()) return
+
+        // Por qué: Elimina lotes en una única transacción WAL para minimizar escrituras flash y tiempo de bloqueo.
+        db.beginTransaction()
+        try {
+            for (start in oldestKeys.indices step PRUNE_BATCH_SIZE) {
+                val end = minOf(start + PRUNE_BATCH_SIZE, oldestKeys.size)
+                val batch = oldestKeys.subList(start, end)
+                val placeholders = batch.joinToString(",") { "?" }
+                db.delete(tableName, "$keyColumn IN ($placeholders)", batch.toTypedArray())
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
         }
         synchronized(lock) {
-            oldestKeys.forEach { memory.remove(it) }
+            oldestKeys.forEach(onKeyRemoved)
         }
     }
 
@@ -455,11 +501,18 @@ class LearningStore private constructor(context: Context) {
 }
 
 private class LearningDatabaseHelper(context: Context) :
-    SQLiteOpenHelper(context, "adaptive_learning.db", null, 1) {
+    SQLiteOpenHelper(context, "adaptive_learning.db", null, DATABASE_VERSION) {
 
     companion object {
+        const val DATABASE_VERSION = 2
         const val TABLE_MEMORY = "translation_memory"
         const val TABLE_CORRECTIONS = "learned_corrections"
+    }
+
+    override fun onConfigure(db: SQLiteDatabase) {
+        super.onConfigure(db)
+        // Por qué: El modo WAL permite lecturas concurrentes y escrituras en segundo plano más rápidas y seguras ante cierres.
+        db.enableWriteAheadLogging()
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -479,9 +532,18 @@ private class LearningDatabaseHelper(context: Context) :
                 "hits INTEGER NOT NULL, " +
                 "updated_at INTEGER NOT NULL)"
         )
+        createUpdatedAtIndexes(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Por qué: Versión inicial del esquema; futuras migraciones se añadirán aquí sin borrar datos.
+        // Por qué: Añadimos índices LRU en actualización incremental v1->v2 sin perder memoria ni correcciones previas.
+        if (oldVersion < 2) {
+            createUpdatedAtIndexes(db)
+        }
+    }
+
+    private fun createUpdatedAtIndexes(db: SQLiteDatabase) {
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_memory_updated_at ON $TABLE_MEMORY(updated_at)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_corrections_updated_at ON $TABLE_CORRECTIONS(updated_at)")
     }
 }

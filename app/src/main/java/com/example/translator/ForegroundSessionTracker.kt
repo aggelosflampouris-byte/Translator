@@ -84,7 +84,7 @@ class ForegroundSessionTracker(
                 AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
             }
             val desiredFeedback = AccessibilityServiceInfo.FEEDBACK_GENERIC
-            val desiredTimeoutMs = 60L
+            val desiredTimeoutMs = if (isActive) 60L else 400L
 
             val packagesMatch = (info.packageNames == null && desiredPackages == null) ||
                 (info.packageNames != null && desiredPackages != null && info.packageNames.contentEquals(desiredPackages))
