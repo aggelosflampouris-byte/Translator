@@ -6,6 +6,15 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
 /**
+ * Estado agregado de cara al usuario para mostrar el estado real en encabezado y botones.
+ */
+enum class SessionDisplayState {
+    OFF,
+    PAUSED,
+    TRANSLATING
+}
+
+/**
  * Snapshot inmutable del estado en tiempo real de OverChat.
  *
  * Por qué: Reemplaza las banderas sueltas y callbacks manuales para que la UI Compose y los servicios
@@ -19,6 +28,13 @@ data class TranslatorRuntimeState(
 ) {
     val isAnyServiceActive: Boolean
         get() = isTranslatingActive || isBubbleRunning || isNotificationActive
+
+    // Por qué: Evita que la interfaz reporte "Translating" cuando solo está visible la esfera en pausa
+    fun displayState(): SessionDisplayState = when {
+        isTranslatingActive -> SessionDisplayState.TRANSLATING
+        isBubbleRunning || isNotificationActive -> SessionDisplayState.PAUSED
+        else -> SessionDisplayState.OFF
+    }
 }
 
 /**

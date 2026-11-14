@@ -138,7 +138,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ensureModelsDownloaded(updated.sourceLanguage, updated.targetLanguage)
     }
 
-    fun setTranslationMode(mode: String) = preferencesRepository.setTranslationMode(mode)
+    fun setTranslationMode(mode: String) {
+        preferencesRepository.setTranslationMode(mode)
+        if (ServiceBridge.isNotificationActive) {
+            TranslationNotificationManager.showNotification(
+                appContext,
+                isTranslating = ServiceBridge.isTranslatingActive
+            )
+        }
+    }
+
     fun setGlossaryEnabled(enabled: Boolean) = preferencesRepository.setGlossaryEnabled(enabled)
     fun setKeyboardTranslatorEnabled(enabled: Boolean) = preferencesRepository.setKeyboardTranslatorEnabled(enabled)
     fun setLearningEnabled(enabled: Boolean) = preferencesRepository.setLearningEnabled(enabled)
@@ -156,16 +165,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun startService() {
         val current = preferences.value
         ensureModelsDownloaded(current.sourceLanguage, current.targetLanguage)
-        val startTranslating = current.controlInterface != AppDefaults.INTERFACE_BUBBLE
-        ServiceBridge.isTranslatingActive = startTranslating
-        ServiceBridge.onTranslationStateChanged?.invoke(startTranslating)
+        // Por qué: Iniciar siempre en estado Translating unifica la expectativa del usuario en los 3 controles
+        ServiceBridge.isTranslatingActive = true
+        ServiceBridge.onTranslationStateChanged?.invoke(true)
         syncActiveControlSurface(current.controlInterface)
         val toastMessage = when (current.controlInterface) {
-            AppDefaults.INTERFACE_NOTIFICATION -> "OverChat active in notification drawer"
-            AppDefaults.INTERFACE_BUBBLE -> "Floating sphere opened"
-            else -> "OverChat active (Quick Settings tile)"
+            AppDefaults.INTERFACE_NOTIFICATION -> "Translating (Notification controls active)"
+            AppDefaults.INTERFACE_BUBBLE -> "Translating (Floating sphere open)"
+            else -> "Translating (Quick Tile controls active)"
         }
         _events.tryEmit(MainUiEvent.ShowToast(toastMessage))
+    }
+
+    fun togglePauseResume() {
+        val next = ServiceBridge.sessionController.toggleTranslating()
+        ServiceBridge.onTranslationStateChanged?.invoke(next)
+        ServiceBridge.onBubbleAppearanceSync?.invoke(next)
+        if (ServiceBridge.isNotificationActive) {
+            TranslationNotificationManager.showNotification(appContext, isTranslating = next)
+        }
+        TranslationTileService.requestSync(appContext)
+        ServiceBridge.notifyUiStateChanged()
+        _events.tryEmit(MainUiEvent.ShowToast(if (next) "Translation active" else "Translation paused"))
     }
 
     fun stopService() {

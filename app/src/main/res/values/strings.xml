@@ -4,21 +4,38 @@
     <string name="accessibility_service_description">Reads text on screen inside your enabled chat apps to display real-time translation overlays.</string>
 
     <string name="status_active">Active</string>
+    <string name="status_translating">Translating</string>
+    <string name="status_paused">Paused</string>
     <string name="status_required">Required</string>
     <string name="action_grant_permissions">Grant Required Permissions Above</string>
     <string name="action_stop_service">Stop OverChat</string>
+    <string name="action_pause">Pause</string>
+    <string name="action_resume">Resume</string>
     <string name="action_start_notification">Start Notification Menu</string>
     <string name="action_start_sphere">Start Floating Sphere</string>
     <string name="action_start_translation">Start Translation</string>
 
-    <string name="notif_title_active">OverChat Active</string>
+    <string name="notif_title_auto_active">OverChat · Auto</string>
+    <string name="notif_title_tap_active">OverChat · Tap Mode</string>
     <string name="notif_title_paused">OverChat Paused</string>
     <string name="notif_subtitle_pair">%1$s to %2$s</string>
-    <string name="notif_action_translate_screen">Translate Screen</string>
+    <string name="notif_action_scan_now">Scan Now</string>
+    <string name="notif_action_scan_all">Scan All</string>
     <string name="notif_action_pause">Pause</string>
     <string name="notif_action_resume">Resume</string>
     <string name="notif_action_stop">Stop</string>
-    <string name="notif_big_text_hint">Use \'Translate Screen\' to translate visible chat messages.</string>
+    <string name="notif_hint_auto">Automatically translates visible chat screens.</string>
+    <string name="notif_hint_tap">Tap any message in chat to translate, or tap Scan All.</string>
+    <string name="notif_hint_paused">Translation is paused. Tap Resume to continue.</string>
+
+    <string name="sphere_first_hint">Tap sphere to pause or resume. Hold for options.</string>
+    <string name="sphere_menu_to_tap">Mode: Tap</string>
+    <string name="sphere_menu_to_auto">Mode: Auto</string>
+    <string name="sphere_menu_settings">Settings</string>
+    <string name="sphere_menu_turn_off">Turn Off</string>
+
+    <string name="settings_title">Settings</string>
+    <string name="draft_switch_lang_desc">Switch translation language</string>
 
     <string name="perm_card_title">System Permissions</string>
     <string name="perm_accessibility_label">Accessibility Service</string>

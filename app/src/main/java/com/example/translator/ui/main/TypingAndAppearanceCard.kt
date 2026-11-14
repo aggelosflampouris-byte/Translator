@@ -1,5 +1,7 @@
 package com.example.translator.ui.main
 
+import android.os.Build
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -12,12 +14,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -30,25 +30,54 @@ import com.example.translator.AppDefaults
 import com.example.translator.TargetAppCatalog
 
 /**
- * Tarjeta de opciones de escritura, aprendizaje local e interfaz de control flotante o en notificación.
+ * Tarjeta principal de controles rápidos, apps compatibles y diccionario personal unificado.
+ *
+ * Por qué: Reemplaza las dos tarjetas anteriores de escritura/aprendizaje/tema para dejar en portada
+ * solo acciones de uso diario con navegación directa hacia los submenús.
  */
 @Composable
-fun TypingAndControlsCard(
-    keyboardTranslatorEnabled: Boolean,
-    learningEnabled: Boolean,
-    learningStats: Pair<Int, Int>,
+fun ControlsAndAppsCard(
     controlInterface: String,
-    autoCheckUpdates: Boolean,
-    idleAutoPauseMinutes: Int,
+    enabledPackages: Set<String>,
+    learningStats: Pair<Int, Int>,
+    glossaryEnabled: Boolean,
+    learningEnabled: Boolean,
     settingsEnabled: Boolean,
-    onKeyboardTranslatorChanged: (Boolean) -> Unit,
-    onLearningChanged: (Boolean) -> Unit,
-    onOpenGlossary: () -> Unit,
-    onRequestResetLearning: () -> Unit,
     onControlInterfaceChanged: (String) -> Unit,
-    onAutoCheckUpdatesChanged: (Boolean) -> Unit,
-    onIdleAutoPauseChanged: (Boolean) -> Unit
+    onRequestAddQuickTile: () -> Unit,
+    onManageApps: () -> Unit,
+    onOpenDictionary: () -> Unit
 ) {
+    val activeCuratedNames = remember(enabledPackages) {
+        TargetAppCatalog.CURATED_PROFILES
+            .filter { profile -> profile.packageNames.any { it in enabledPackages } }
+            .map { it.displayName }
+    }
+    val enabledAppsSummary = remember(activeCuratedNames) {
+        if (activeCuratedNames.isEmpty()) {
+            "No apps selected — tap to choose"
+        } else {
+            activeCuratedNames.joinToString(", ")
+        }
+    }
+    val dictionarySummary = remember(learningStats, glossaryEnabled, learningEnabled) {
+        val totalSaved = learningStats.first + learningStats.second
+        val countText = if (totalSaved == 0) {
+            "No saved fixes yet"
+        } else {
+            val wordLabel = if (learningStats.first == 1) "1 word" else "${learningStats.first} words"
+            val phraseLabel = if (learningStats.second == 1) "1 phrase" else "${learningStats.second} phrases"
+            "$wordLabel · $phraseLabel"
+        }
+        val stateSuffix = when {
+            glossaryEnabled && learningEnabled -> ""
+            !glossaryEnabled && !learningEnabled -> " · Off"
+            glossaryEnabled -> " · Manual only"
+            else -> " · Learning only"
+        }
+        "$countText$stateSuffix"
+    }
+
     OutlinedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
@@ -56,102 +85,8 @@ fun TypingAndControlsCard(
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Text(
-                text = "Typing & Controls",
+                text = "Controls",
                 style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Keyboard Draft Translator",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = "Translates outgoing messages in real-time as you type.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                Spacer(modifier = Modifier.width(10.dp))
-                Switch(
-                    checked = keyboardTranslatorEnabled,
-                    enabled = settingsEnabled,
-                    onCheckedChange = onKeyboardTranslatorChanged
-                )
-            }
-
-            HorizontalDivider(
-                modifier = Modifier.padding(vertical = 10.dp),
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Learn From My Edits",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = "${learningStats.first} learned words · ${learningStats.second} phrases",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                TextButton(
-                    onClick = onOpenGlossary,
-                    enabled = settingsEnabled,
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                ) {
-                    Text(
-                        text = "Manage",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (settingsEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-                    )
-                }
-                if (learningStats.first + learningStats.second > 0) {
-                    TextButton(
-                        onClick = onRequestResetLearning,
-                        enabled = settingsEnabled,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                    ) {
-                        Text(
-                            text = "Reset",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (settingsEnabled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline
-                        )
-                    }
-                }
-                Switch(
-                    checked = learningEnabled,
-                    enabled = settingsEnabled,
-                    onCheckedChange = onLearningChanged
-                )
-            }
-
-            HorizontalDivider(
-                modifier = Modifier.padding(vertical = 10.dp),
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-            )
-
-            Text(
-                text = "Control Interface",
-                style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurface
             )
             Spacer(modifier = Modifier.height(6.dp))
@@ -191,7 +126,7 @@ fun TypingAndControlsCard(
                     enabled = settingsEnabled,
                     label = {
                         Text(
-                            text = "QS Tile",
+                            text = "Quick Tile",
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -200,169 +135,151 @@ fun TypingAndControlsCard(
                 )
             }
 
+            ControlHintRow(
+                controlInterface = controlInterface,
+                settingsEnabled = settingsEnabled,
+                onRequestAddQuickTile = onRequestAddQuickTile
+            )
+
             HorizontalDivider(
                 modifier = Modifier.padding(vertical = 10.dp),
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
             )
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Auto-Check Updates",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = "Checks GitHub releases when app opens.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                Spacer(modifier = Modifier.width(10.dp))
-                Switch(
-                    checked = autoCheckUpdates,
-                    enabled = settingsEnabled,
-                    onCheckedChange = onAutoCheckUpdatesChanged
-                )
+            NavigationSummaryRow(
+                title = "Supported Apps",
+                subtitle = enabledAppsSummary,
+                enabled = settingsEnabled,
+                onClick = onManageApps
+            )
+
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 10.dp),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+            )
+
+            NavigationSummaryRow(
+                title = "Personal Dictionary",
+                subtitle = dictionarySummary,
+                enabled = settingsEnabled,
+                onClick = onOpenDictionary
+            )
+        }
+    }
+}
+
+@Composable
+private fun ControlHintRow(
+    controlInterface: String,
+    settingsEnabled: Boolean,
+    onRequestAddQuickTile: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        val hint = when (controlInterface) {
+            AppDefaults.INTERFACE_NOTIFICATION -> "Pause, resume, or scan from your notification shade."
+            AppDefaults.INTERFACE_BUBBLE -> "Tap floating sphere to pause or resume. Hold for options."
+            else -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                "Toggle OverChat from Quick Settings."
+            } else {
+                "Swipe down twice, tap Edit, and drag OverChat into Quick Settings."
             }
-
-            HorizontalDivider(
-                modifier = Modifier.padding(vertical = 10.dp),
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+        }
+        Text(
+            text = hint,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+        if (controlInterface == AppDefaults.INTERFACE_TILE && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Spacer(modifier = Modifier.width(8.dp))
+            TextButton(
+                onClick = onRequestAddQuickTile,
+                enabled = settingsEnabled,
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Idle Auto-Pause (${AppDefaults.DEFAULT_IDLE_AUTO_PAUSE_MINUTES}m)",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = "Pauses automatically when idle away from chat apps.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                Spacer(modifier = Modifier.width(10.dp))
-                Switch(
-                    checked = idleAutoPauseMinutes > 0,
-                    enabled = settingsEnabled,
-                    onCheckedChange = onIdleAutoPauseChanged
-                )
+                Text("Add Tile", style = MaterialTheme.typography.labelMedium)
             }
         }
     }
 }
 
-/**
- * Diálogo de confirmación para borrar las correcciones y frases aprendidas localmente.
- */
 @Composable
-fun ResetLearningDialog(
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit
+private fun NavigationSummaryRow(
+    title: String,
+    subtitle: String,
+    enabled: Boolean,
+    onClick: () -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Reset learned data?") },
-        text = { Text("All learned words and remembered phrases will be deleted from this phone.") },
-        confirmButton = {
-            TextButton(onClick = onConfirm) {
-                Text("Reset", color = MaterialTheme.colorScheme.error)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = 2.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 10.dp)
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
-    )
+        Text(
+            text = "›",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
 }
 
 /**
- * Tarjeta de selección de aplicaciones compatibles y tema visual de las burbujas traducidas.
+ * Tarjeta reutilizable de tema visual de las burbujas traducidas (mostrada en Ajustes).
  */
 @Composable
-fun SupportedAppsAndThemeCard(
-    enabledPackages: Set<String>,
+fun BubbleThemeCard(
     overlayTheme: String,
     settingsEnabled: Boolean,
-    onManageApps: () -> Unit,
     onOverlayThemeChanged: (String) -> Unit
 ) {
-    val activeCuratedNames = remember(enabledPackages) {
-        TargetAppCatalog.CURATED_PROFILES
-            .filter { profile -> profile.packageNames.any { it in enabledPackages } }
-            .map { it.displayName }
-    }
-    val enabledAppsSummary = remember(enabledPackages, activeCuratedNames) {
-        if (enabledPackages.isEmpty() || activeCuratedNames.isEmpty()) {
-            "No apps selected — tap Manage to enable chat apps."
-        } else {
-            "${activeCuratedNames.joinToString(", ")} (${enabledPackages.size} pkgs)"
-        }
-    }
-
     OutlinedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(end = 8.dp)
-                ) {
-                    Text(
-                        text = "Supported Apps & Theme",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = enabledAppsSummary,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                FilledTonalButton(
-                    onClick = onManageApps,
-                    enabled = settingsEnabled,
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
-                ) {
-                    Text("Manage")
-                }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
             Text(
                 text = "Overlay Bubble Theme",
-                style = MaterialTheme.typography.labelMedium,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Matches dark mode automatically or locks a fixed bubble style.",
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -392,3 +309,27 @@ fun SupportedAppsAndThemeCard(
     }
 }
 
+/**
+ * Diálogo de confirmación para borrar las correcciones y frases aprendidas localmente.
+ */
+@Composable
+fun ResetLearningDialog(
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Reset learned data?") },
+        text = { Text("All learned words and remembered phrases will be deleted from this phone.") },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text("Reset", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}

@@ -1,14 +1,17 @@
 package com.example.translator
 
+import android.app.StatusBarManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.graphics.drawable.Icon
 import android.os.Build
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import android.util.Log
 import android.widget.Toast
 import androidx.annotation.RequiresApi
+import androidx.core.content.ContextCompat
 
 /**
  * Servicio de Mosaico de Ajustes Rápidos (Quick Settings Tile).
@@ -32,6 +35,39 @@ class TranslationTileService : TileService() {
                 } catch (_: Exception) {
                     // Ignora fallos si el OEM restringe actualizaciones del Tile en segundo plano
                 }
+            }
+        }
+
+        // Por qué: Permite añadir el mosaico en Android 13+ sin obligar al usuario a editar manualmente el panel rápido
+        fun requestAddTile(context: Context, onResultMessage: (String) -> Unit) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                onResultMessage("Swipe down twice, tap Edit, and add OverChat")
+                return
+            }
+            val statusBarManager = context.getSystemService(StatusBarManager::class.java)
+            if (statusBarManager == null) {
+                onResultMessage("Open Quick Settings and tap Edit to add OverChat")
+                return
+            }
+            try {
+                statusBarManager.requestAddTileService(
+                    ComponentName(context, TranslationTileService::class.java),
+                    context.getString(R.string.app_name),
+                    Icon.createWithResource(context, R.drawable.ic_translate_sphere),
+                    ContextCompat.getMainExecutor(context)
+                ) { resultCode ->
+                    when (resultCode) {
+                        StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED ->
+                            onResultMessage("Quick Tile added")
+                        StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED ->
+                            onResultMessage("Quick Tile is already added")
+                        else ->
+                            onResultMessage("Add cancelled — you can add OverChat from Quick Settings Edit")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("Translator", "TranslationTileService: requestAddTileService failed", e)
+                onResultMessage("Open Quick Settings and tap Edit to add OverChat")
             }
         }
     }

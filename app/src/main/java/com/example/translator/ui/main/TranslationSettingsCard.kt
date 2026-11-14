@@ -40,7 +40,7 @@ import androidx.compose.ui.unit.dp
 import com.example.translator.AppDefaults
 
 /**
- * Tarjeta principal de configuración de idiomas, modo de activación y glosario aprendido.
+ * Tarjeta principal de configuración de idiomas, modo de activación y traductor de borrador al escribir.
  */
 @Composable
 fun TranslationSettingsCard(
@@ -49,13 +49,13 @@ fun TranslationSettingsCard(
     availableLanguages: List<String>,
     modelStatus: String,
     translationMode: String,
-    glossaryEnabled: Boolean,
+    keyboardTranslatorEnabled: Boolean,
     settingsEnabled: Boolean,
     onSourceSelected: (String) -> Unit,
     onTargetSelected: (String) -> Unit,
     onSwapLanguages: () -> Unit,
     onTranslationModeChanged: (String) -> Unit,
-    onGlossaryChanged: (Boolean) -> Unit
+    onKeyboardTranslatorChanged: (Boolean) -> Unit
 ) {
     OutlinedCard(
         modifier = Modifier.fillMaxWidth(),
@@ -69,7 +69,7 @@ fun TranslationSettingsCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Languages",
+                    text = "Languages & Translation",
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurface
                 )
@@ -82,7 +82,7 @@ fun TranslationSettingsCard(
                     ) {}
                     Spacer(modifier = Modifier.width(5.dp))
                     Text(
-                        text = modelStatus,
+                        text = if (isReady) "Offline ready" else modelStatus,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -125,7 +125,7 @@ fun TranslationSettingsCard(
             )
 
             Text(
-                text = "Chat Message Mode",
+                text = "How to translate",
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurface
             )
@@ -135,12 +135,12 @@ fun TranslationSettingsCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 FilterChip(
-                    selected = translationMode == AppDefaults.MODE_TAP,
-                    onClick = { onTranslationModeChanged(AppDefaults.MODE_TAP) },
+                    selected = translationMode == AppDefaults.MODE_ALL,
+                    onClick = { onTranslationModeChanged(AppDefaults.MODE_ALL) },
                     enabled = settingsEnabled,
                     label = {
                         Text(
-                            text = "Tap Message",
+                            text = "Auto-Translate",
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -148,12 +148,12 @@ fun TranslationSettingsCard(
                     modifier = Modifier.weight(1f)
                 )
                 FilterChip(
-                    selected = translationMode == AppDefaults.MODE_ALL,
-                    onClick = { onTranslationModeChanged(AppDefaults.MODE_ALL) },
+                    selected = translationMode == AppDefaults.MODE_TAP,
+                    onClick = { onTranslationModeChanged(AppDefaults.MODE_TAP) },
                     enabled = settingsEnabled,
                     label = {
                         Text(
-                            text = "Auto-Translate",
+                            text = "Tap Message",
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -177,36 +177,21 @@ fun TranslationSettingsCard(
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
             )
 
-            // Por qué: Refleja exactamente lo que controla KEY_AI_ENABLED (glosario aprendido),
-            // mientras la validación del alfabeto destino se mantiene activa por seguridad.
+            // Por qué: Agrupa la traducción del borrador aquí porque pertenece al comportamiento de traducción
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "Learned Glossary Fixes",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = if (glossaryEnabled) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
-                        ) {
-                            Text(
-                                text = if (glossaryEnabled) "Active" else "Off",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (glossaryEnabled) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
-                    }
+                    Text(
+                        text = "Translate What I Type",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "Applies your saved vocabulary fixes on top of offline translation. Script validation stays active.",
+                        text = "Preview and insert translations as you type a message.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 2,
@@ -215,9 +200,9 @@ fun TranslationSettingsCard(
                 }
                 Spacer(modifier = Modifier.width(10.dp))
                 Switch(
-                    checked = glossaryEnabled,
+                    checked = keyboardTranslatorEnabled,
                     enabled = settingsEnabled,
-                    onCheckedChange = onGlossaryChanged
+                    onCheckedChange = onKeyboardTranslatorChanged
                 )
             }
         }

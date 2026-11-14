@@ -90,7 +90,7 @@ fun TargetAppsScreen(
                     TextButton(
                         onClick = { updateEnabledPackages(TargetAppCatalog.getDefaultEnabledPackages()) }
                     ) {
-                        Text(text = "Defaults", style = MaterialTheme.typography.labelMedium)
+                        Text(text = "Enable All", style = MaterialTheme.typography.labelMedium)
                     }
                 }
             }
@@ -123,11 +123,7 @@ fun TargetAppsScreen(
             }
 
             items(curatedItems, key = { it.profile.id }) { item ->
-                val subtitle = if (item.installedPackage != null) {
-                    "Installed · Chat bubbles"
-                } else {
-                    "Not installed · Chat bubbles"
-                }
+                val subtitle = if (item.installedPackage != null) "Installed" else "Not installed"
 
                 TargetAppToggleRow(
                     title = item.profile.displayName,

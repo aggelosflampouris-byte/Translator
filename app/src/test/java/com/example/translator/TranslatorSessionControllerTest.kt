@@ -33,10 +33,33 @@ class TranslatorSessionControllerTest {
 
         controller.stopAllSurfaces()
         assertFalse(controller.current.isAnyServiceActive)
+        assertEquals(SessionDisplayState.OFF, controller.current.displayState())
         assertTrue(controller.current.isAccessibilityActive)
 
         controller.disconnectAccessibility()
         assertEquals(TranslatorRuntimeState(), controller.runtimeState.first())
+    }
+
+    @Test
+    fun displayState_distinguishesOffPausedAndTranslating() {
+        val controller = TranslatorSessionController()
+        assertEquals(SessionDisplayState.OFF, controller.current.displayState())
+
+        controller.setBubbleRunning(true)
+        assertEquals(SessionDisplayState.PAUSED, controller.current.displayState())
+
+        controller.setTranslatingActive(true)
+        assertEquals(SessionDisplayState.TRANSLATING, controller.current.displayState())
+
+        controller.setTranslatingActive(false)
+        assertEquals(SessionDisplayState.PAUSED, controller.current.displayState())
+
+        controller.setBubbleRunning(false)
+        controller.setNotificationActive(true)
+        assertEquals(SessionDisplayState.PAUSED, controller.current.displayState())
+
+        controller.stopAllSurfaces()
+        assertEquals(SessionDisplayState.OFF, controller.current.displayState())
     }
 }
 

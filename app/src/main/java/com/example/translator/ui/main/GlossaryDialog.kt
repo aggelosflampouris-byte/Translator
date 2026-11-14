@@ -20,6 +20,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -36,19 +37,26 @@ import com.example.translator.LearnedCorrectionEntry
 import com.example.translator.LearnedMemoryEntry
 
 /**
- * Diálogo modal para inspeccionar, añadir o eliminar reglas aprendidas y frases recordadas del glosario.
+ * Diálogo modal unificado para gestionar el diccionario personal: activar/desactivar reglas,
+ * inspeccionar palabras/frases recordadas o reiniciar el historial local.
  *
- * Por qué: Permite corregir errores puntuales sin obligar al usuario a reiniciar todo el aprendizaje local.
+ * Por qué: Reúne ambos interruptores de aprendizaje y la gestión de entradas bajo un único concepto
+ * para eliminar la confusión entre "Glossary" y "Learn From My Edits" en la pantalla principal.
  */
 @Composable
 fun GlossaryDialog(
     sourceLanguage: String,
     targetLanguage: String,
+    glossaryEnabled: Boolean,
+    learningEnabled: Boolean,
     corrections: List<LearnedCorrectionEntry>,
     memories: List<LearnedMemoryEntry>,
+    onGlossaryChanged: (Boolean) -> Unit,
+    onLearningChanged: (Boolean) -> Unit,
     onAddCorrection: (src: String, tgt: String, wrongTerm: String, preferredTerm: String) -> Boolean,
     onDeleteCorrection: (LearnedCorrectionEntry) -> Unit,
     onDeleteMemory: (LearnedMemoryEntry) -> Unit,
+    onRequestResetAll: () -> Unit,
     onDismiss: () -> Unit
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -75,9 +83,20 @@ fun GlossaryDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Manage Glossary") },
+        title = { Text("Personal Dictionary") },
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
+                DictionaryToggleRow(
+                    label = "Apply saved fixes",
+                    checked = glossaryEnabled,
+                    onCheckedChange = onGlossaryChanged
+                )
+                DictionaryToggleRow(
+                    label = "Learn from my edits",
+                    checked = learningEnabled,
+                    onCheckedChange = onLearningChanged
+                )
+                Spacer(modifier = Modifier.height(6.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -113,7 +132,7 @@ fun GlossaryDialog(
                 OutlinedTextField(
                     value = filterQuery,
                     onValueChange = { filterQuery = it },
-                    placeholder = { Text("Search glossary...") },
+                    placeholder = { Text("Search dictionary...") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -131,7 +150,7 @@ fun GlossaryDialog(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "Add custom rule (${ruleSrc.uppercase()} → ${ruleTgt.uppercase()})",
+                                    text = "Add custom rule",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.primary
                                 )
@@ -139,7 +158,10 @@ fun GlossaryDialog(
                                     onClick = { directionOutgoing = !directionOutgoing },
                                     contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
                                 ) {
-                                    Text("Flip", style = MaterialTheme.typography.labelSmall)
+                                    Text(
+                                        text = "⇄ ${ruleSrc.uppercase()} → ${ruleTgt.uppercase()}",
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
                                 }
                             }
                             Row(
@@ -190,7 +212,7 @@ fun GlossaryDialog(
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 260.dp)
+                            .heightIn(max = 200.dp)
                     ) {
                         if (selectedTab == 0) {
                             items(
@@ -221,12 +243,45 @@ fun GlossaryDialog(
                 }
             }
         },
+        dismissButton = {
+            if (corrections.isNotEmpty() || memories.isNotEmpty()) {
+                TextButton(onClick = onRequestResetAll) {
+                    Text("Reset All", color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
         confirmButton = {
             TextButton(onClick = onDismiss) {
                 Text("Done")
             }
         }
     )
+}
+
+@Composable
+private fun DictionaryToggleRow(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange
+        )
+    }
 }
 
 @Composable

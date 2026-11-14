@@ -46,6 +46,8 @@ object AppDefaults {
     // Por qué: Persiste el borde y la altura elegidos por el usuario para la esfera flotante
     const val KEY_SPHERE_EDGE_RIGHT = "sphere_edge_right"
     const val KEY_SPHERE_Y_RATIO = "sphere_y_ratio"
+    // Por qué: Evita repetir el recordatorio inicial de gestos tras el primer uso de la esfera
+    const val KEY_SPHERE_HINT_SHOWN = "sphere_hint_shown"
 
     // Por qué: Conjunto de paquetes de apps de mensajería habilitados dinámicamente para traducción en pantalla
     const val KEY_ENABLED_PACKAGES = "enabled_target_packages"

@@ -4,20 +4,19 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.database.ContentObserver
-import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
 import android.widget.Toast
+import androidx.core.net.toUri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -31,19 +30,18 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,13 +64,16 @@ import com.example.translator.AppDefaults
 import com.example.translator.BuildConfig
 import com.example.translator.ClipboardHelper
 import com.example.translator.R
+import com.example.translator.SessionDisplayState
+import com.example.translator.Settings as SettingsRoute
 import com.example.translator.TargetApps
+import com.example.translator.TranslationTileService
 
 /**
- * Pantalla principal de configuración y activación de OverChat.
+ * Pantalla principal simplificada de configuración diaria y activación de OverChat.
  *
- * Por qué: Observa flujos reactivos desde [MainViewModel] y delega tarjetas, diálogos y
- * gestión de glosario en componentes especializados sin lógica de negocio en la capa Compose.
+ * Por qué: Mantiene únicamente la configuración esencial de uso diario, ocultando permisos
+ * ya concedidos y derivando ajustes avanzados a pantallas dedicadas para evitar sobrecarga visual.
  */
 @Composable
 fun MainScreen(
@@ -90,7 +91,6 @@ fun MainScreen(
 
     var showGlossaryDialog by remember { mutableStateOf(false) }
     var showResetLearningDialog by remember { mutableStateOf(false) }
-    var showDiagnosticsDialog by remember { mutableStateOf(false) }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -98,28 +98,11 @@ fun MainScreen(
         viewModel.onNotificationPermissionResult(granted)
     }
 
-    LaunchedEffect(viewModel) {
-        viewModel.events.collect { event ->
-            when (event) {
-                is MainUiEvent.ShowToast -> {
-                    Toast.makeText(context, event.message, Toast.LENGTH_SHORT).show()
-                }
-                is MainUiEvent.ShowSnackbar -> {
-                    snackbarHostState.showSnackbar(event.message)
-                }
-                is MainUiEvent.ShowInstallPermissionSnackbar -> {
-                    val result = snackbarHostState.showSnackbar(
-                        message = "Allow unknown apps or open in browser to install update",
-                        actionLabel = if (event.htmlUrl != null) "Open Browser" else null,
-                        duration = SnackbarDuration.Long
-                    )
-                    if (result == SnackbarResult.ActionPerformed) {
-                        event.htmlUrl?.let(viewModel::openUpdateInBrowser)
-                    }
-                }
-            }
-        }
-    }
+    MainUiEventsAndUpdateHost(
+        viewModel = viewModel,
+        uiState = uiState,
+        snackbarHostState = snackbarHostState
+    )
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -165,19 +148,32 @@ fun MainScreen(
         )
     }
 
-    uiState.pendingUpdate?.let { info ->
-        AppUpdateDialog(
-            info = info,
-            isDownloading = uiState.isDownloadingUpdate,
-            downloadProgress = uiState.downloadProgress,
-            downloadStatusText = uiState.downloadStatusText,
-            downloadedApkFile = uiState.downloadedApkFile,
-            downloadErrorMessage = uiState.downloadErrorMessage,
-            onDownloadOrRetry = { viewModel.downloadUpdate(info) },
-            onInstall = viewModel::installUpdateFile,
-            onCancelDownload = viewModel::cancelUpdateDownload,
-            onOpenBrowser = { viewModel.openUpdateInBrowser(info.htmlUrl) },
-            onDismiss = viewModel::dismissUpdateDialog
+    if (showGlossaryDialog) {
+        GlossaryDialog(
+            sourceLanguage = prefs.sourceLanguage,
+            targetLanguage = prefs.targetLanguage,
+            glossaryEnabled = prefs.glossaryEnabled,
+            learningEnabled = prefs.learningEnabled,
+            corrections = uiState.glossaryCorrections,
+            memories = uiState.glossaryMemories,
+            onGlossaryChanged = viewModel::setGlossaryEnabled,
+            onLearningChanged = viewModel::setLearningEnabled,
+            onAddCorrection = viewModel::addGlossaryCorrection,
+            onDeleteCorrection = viewModel::deleteGlossaryCorrection,
+            onDeleteMemory = viewModel::deleteGlossaryMemory,
+            onRequestResetAll = { showResetLearningDialog = true },
+            onDismiss = { showGlossaryDialog = false }
+        )
+    }
+
+    if (showResetLearningDialog) {
+        ResetLearningDialog(
+            onConfirm = {
+                viewModel.resetLearning()
+                showResetLearningDialog = false
+                showGlossaryDialog = false
+            },
+            onDismiss = { showResetLearningDialog = false }
         )
     }
 
@@ -185,16 +181,17 @@ fun MainScreen(
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
     val allPermissionsGranted = uiState.isAccessibilityEnabled &&
         (!isNotificationRequired || uiState.isNotificationPermissionGranted)
-    val isServiceActive = runtime.isAnyServiceActive
+    val displayState = runtime.displayState()
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             MainActionBottomBar(
                 allPermissionsGranted = allPermissionsGranted,
-                isServiceActive = isServiceActive,
+                displayState = displayState,
                 controlInterface = prefs.controlInterface,
                 onStart = viewModel::startService,
+                onTogglePauseResume = viewModel::togglePauseResume,
                 onStop = viewModel::stopService
             )
         }
@@ -211,22 +208,32 @@ fun MainScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             MainScreenHeader(
-                isServiceActive = isServiceActive,
+                displayState = displayState,
                 isCheckingForUpdate = uiState.isCheckingForUpdate,
-                onCheckUpdates = { viewModel.checkForUpdates(manual = true) }
+                onCheckUpdates = { viewModel.checkForUpdates(manual = true) },
+                onOpenSettings = { onItemClick(SettingsRoute) }
             )
 
-            if (showDiagnosticsDialog) {
-                ScanDiagnosticsDialog(
-                    sourceLanguage = prefs.sourceLanguage,
-                    targetLanguage = prefs.targetLanguage,
-                    translationMode = prefs.translationMode,
-                    enabledPackages = prefs.enabledPackages,
-                    onCopied = {
-                        showDiagnosticsDialog = false
-                        Toast.makeText(context, "Diagnostics copied", Toast.LENGTH_SHORT).show()
+            // Por qué: Solo muestra la tarjeta de permisos cuando falta alguno por conceder para ahorrar espacio diario
+            if (!allPermissionsGranted) {
+                SystemPermissionsCard(
+                    isAccessibilityEnabled = uiState.isAccessibilityEnabled,
+                    isNotificationRequired = isNotificationRequired,
+                    isNotificationPermissionGranted = uiState.isNotificationPermissionGranted,
+                    allPermissionsGranted = false,
+                    onRequestAccessibilityPermission = {
+                        context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                     },
-                    onDismiss = { showDiagnosticsDialog = false }
+                    onRequestNotificationPermission = {
+                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    },
+                    onOpenAppInfo = {
+                        val intent = Intent(
+                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            "package:${context.packageName}".toUri()
+                        )
+                        context.startActivity(intent)
+                    }
                 )
             }
 
@@ -236,110 +243,44 @@ fun MainScreen(
                 availableLanguages = AppDefaults.AVAILABLE_LANGUAGES,
                 modelStatus = uiState.modelStatus,
                 translationMode = prefs.translationMode,
-                glossaryEnabled = prefs.glossaryEnabled,
+                keyboardTranslatorEnabled = prefs.keyboardTranslatorEnabled,
                 settingsEnabled = true,
                 onSourceSelected = viewModel::setSourceLanguage,
                 onTargetSelected = viewModel::setTargetLanguage,
                 onSwapLanguages = viewModel::swapLanguages,
                 onTranslationModeChanged = viewModel::setTranslationMode,
-                onGlossaryChanged = viewModel::setGlossaryEnabled
+                onKeyboardTranslatorChanged = viewModel::setKeyboardTranslatorEnabled
             )
 
-            TypingAndControlsCard(
-                keyboardTranslatorEnabled = prefs.keyboardTranslatorEnabled,
-                learningEnabled = prefs.learningEnabled,
-                learningStats = uiState.learningStats,
+            ControlsAndAppsCard(
                 controlInterface = prefs.controlInterface,
-                autoCheckUpdates = prefs.autoCheckUpdates,
-                idleAutoPauseMinutes = prefs.idleAutoPauseMinutes,
+                enabledPackages = prefs.enabledPackages,
+                learningStats = uiState.learningStats,
+                glossaryEnabled = prefs.glossaryEnabled,
+                learningEnabled = prefs.learningEnabled,
                 settingsEnabled = true,
-                onKeyboardTranslatorChanged = viewModel::setKeyboardTranslatorEnabled,
-                onLearningChanged = viewModel::setLearningEnabled,
-                onOpenGlossary = {
+                onControlInterfaceChanged = viewModel::setControlInterface,
+                onRequestAddQuickTile = {
+                    TranslationTileService.requestAddTile(context) { message ->
+                        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onManageApps = { onItemClick(TargetApps) },
+                onOpenDictionary = {
                     viewModel.refreshGlossarySnapshot()
                     showGlossaryDialog = true
-                },
-                onRequestResetLearning = { showResetLearningDialog = true },
-                onControlInterfaceChanged = viewModel::setControlInterface,
-                onAutoCheckUpdatesChanged = viewModel::setAutoCheckUpdates,
-                onIdleAutoPauseChanged = viewModel::setIdleAutoPauseEnabled
-            )
-
-            if (showGlossaryDialog) {
-                GlossaryDialog(
-                    sourceLanguage = prefs.sourceLanguage,
-                    targetLanguage = prefs.targetLanguage,
-                    corrections = uiState.glossaryCorrections,
-                    memories = uiState.glossaryMemories,
-                    onAddCorrection = viewModel::addGlossaryCorrection,
-                    onDeleteCorrection = viewModel::deleteGlossaryCorrection,
-                    onDeleteMemory = viewModel::deleteGlossaryMemory,
-                    onDismiss = { showGlossaryDialog = false }
-                )
-            }
-
-            if (showResetLearningDialog) {
-                ResetLearningDialog(
-                    onConfirm = {
-                        viewModel.resetLearning()
-                        showResetLearningDialog = false
-                    },
-                    onDismiss = { showResetLearningDialog = false }
-                )
-            }
-
-            SupportedAppsAndThemeCard(
-                enabledPackages = prefs.enabledPackages,
-                overlayTheme = prefs.overlayTheme,
-                settingsEnabled = true,
-                onManageApps = { onItemClick(TargetApps) },
-                onOverlayThemeChanged = viewModel::setOverlayTheme
-            )
-
-            SystemPermissionsCard(
-                isAccessibilityEnabled = uiState.isAccessibilityEnabled,
-                isNotificationRequired = isNotificationRequired,
-                isNotificationPermissionGranted = uiState.isNotificationPermissionGranted,
-                allPermissionsGranted = allPermissionsGranted,
-                onRequestAccessibilityPermission = {
-                    context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                },
-                onRequestNotificationPermission = {
-                    notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                },
-                onOpenAppInfo = {
-                    val intent = Intent(
-                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                        Uri.parse("package:${context.packageName}")
-                    )
-                    context.startActivity(intent)
                 }
             )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
-            ) {
-                TextButton(
-                    onClick = { showDiagnosticsDialog = true },
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                ) {
-                    Text(
-                        text = stringResource(R.string.perm_diagnostics),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
         }
     }
 }
 
 @Composable
 private fun MainScreenHeader(
-    isServiceActive: Boolean,
+    displayState: SessionDisplayState,
     isCheckingForUpdate: Boolean,
-    onCheckUpdates: () -> Unit
+    onCheckUpdates: () -> Unit,
+    onOpenSettings: () -> Unit
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -365,16 +306,27 @@ private fun MainScreenHeader(
                         style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onBackground
                     )
-                    if (isServiceActive) {
+                    if (displayState != SessionDisplayState.OFF) {
+                        val isTranslating = displayState == SessionDisplayState.TRANSLATING
                         Spacer(modifier = Modifier.width(8.dp))
                         Surface(
                             shape = RoundedCornerShape(6.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer
+                            color = if (isTranslating) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant
+                            }
                         ) {
                             Text(
-                                text = stringResource(R.string.status_active),
+                                text = stringResource(
+                                    if (isTranslating) R.string.status_translating else R.string.status_paused
+                                ),
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                color = if (isTranslating) {
+                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
                         }
@@ -390,17 +342,30 @@ private fun MainScreenHeader(
             }
         }
 
-        Surface(
-            shape = RoundedCornerShape(8.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            modifier = Modifier.clickable(onClick = onCheckUpdates)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
         ) {
-            Text(
-                text = if (isCheckingForUpdate) "Checking..." else "v${BuildConfig.VERSION_NAME}",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-            )
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.clickable(onClick = onCheckUpdates)
+            ) {
+                Text(
+                    text = if (isCheckingForUpdate) "Checking..." else "v${BuildConfig.VERSION_NAME}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                )
+            }
+            IconButton(onClick = onOpenSettings) {
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_settings),
+                    contentDescription = stringResource(R.string.settings_title),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
     }
 }
@@ -408,9 +373,10 @@ private fun MainScreenHeader(
 @Composable
 private fun MainActionBottomBar(
     allPermissionsGranted: Boolean,
-    isServiceActive: Boolean,
+    displayState: SessionDisplayState,
     controlInterface: String,
     onStart: () -> Unit,
+    onTogglePauseResume: () -> Unit,
     onStop: () -> Unit
 ) {
     Surface(
@@ -441,21 +407,46 @@ private fun MainActionBottomBar(
                         )
                     }
                 }
-                isServiceActive -> {
-                    OutlinedButton(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        onClick = onStop
+                displayState != SessionDisplayState.OFF -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Text(
-                            text = stringResource(R.string.action_stop_service),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.error,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        FilledTonalButton(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            onClick = onTogglePauseResume
+                        ) {
+                            Text(
+                                text = stringResource(
+                                    if (displayState == SessionDisplayState.TRANSLATING) {
+                                        R.string.action_pause
+                                    } else {
+                                        R.string.action_resume
+                                    }
+                                ),
+                                style = MaterialTheme.typography.labelLarge,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        OutlinedButton(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            onClick = onStop
+                        ) {
+                            Text(
+                                text = stringResource(R.string.action_stop_service),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.error,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
                 else -> {

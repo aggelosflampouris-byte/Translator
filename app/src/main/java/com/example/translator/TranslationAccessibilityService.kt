@@ -133,6 +133,9 @@ class TranslationAccessibilityService : AccessibilityService() {
                     }
                     coordinator.scheduleContentScan(100L)
                 }
+                if (ServiceBridge.isNotificationActive) {
+                    TranslationNotificationManager.showNotification(this, ServiceBridge.isTranslatingActive)
+                }
             },
             onOverlayThemeChanged = { theme ->
                 overlayManager.setOverlayTheme(theme)
@@ -217,12 +220,7 @@ class TranslationAccessibilityService : AccessibilityService() {
             onSwapLanguages = { swapLanguagesFromSphere() },
             onToggleTranslationMode = { toggleTranslationModeFromSphere() },
             onOpenApp = { openMainAppFromSphere() },
-            onHideBubble = {
-                ServiceBridge.isBubbleRunning = false
-                floatingSphereController.hide()
-                TranslationTileService.requestSync(this)
-                ServiceBridge.notifyUiStateChanged()
-            }
+            onTurnOffBubble = { stopAllFromSphere() }
         )
         learningStore = LearningStore.get(this)
         pipeline = TranslationPipeline(
@@ -1209,6 +1207,17 @@ class TranslationAccessibilityService : AccessibilityService() {
         } catch (e: Exception) {
             Log.w("Translator", "Failed to open MainActivity from floating sphere", e)
         }
+    }
+
+    // Por qué: Evita que ocultar la esfera deje la traducción activa de forma invisible en segundo plano
+    private fun stopAllFromSphere() {
+        ServiceBridge.sessionController.stopAllSurfaces()
+        ServiceBridge.onTranslationStateChanged?.invoke(false)
+        floatingSphereController.hide()
+        TranslationNotificationManager.cancelNotification(this)
+        TranslationTileService.requestSync(this)
+        ServiceBridge.notifyUiStateChanged()
+        Toast.makeText(this, "OverChat stopped", Toast.LENGTH_SHORT).show()
     }
 
     override fun onUnbind(intent: Intent?): Boolean {

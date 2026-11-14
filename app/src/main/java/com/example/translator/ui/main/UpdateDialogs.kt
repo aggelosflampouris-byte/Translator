@@ -1,5 +1,6 @@
 package com.example.translator.ui.main
 
+import android.widget.Toast
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,10 +11,15 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.example.translator.AppUpdater
 import java.io.File
@@ -189,5 +195,59 @@ fun CrashReportDialog(
             }
         }
     )
+}
+
+/**
+ * Conector reutilizable de eventos Toast/Snackbar y diálogo de actualización entre pantallas.
+ *
+ * Por qué: Garantiza que iniciar una búsqueda manual desde Ajustes o Inicio muestre exactamente
+ * los mismos avisos y cuadro de descarga sin duplicar lógica entre pantallas.
+ */
+@Composable
+fun MainUiEventsAndUpdateHost(
+    viewModel: MainViewModel,
+    uiState: MainUiState,
+    snackbarHostState: SnackbarHostState
+) {
+    val context = LocalContext.current
+
+    LaunchedEffect(viewModel) {
+        viewModel.events.collect { event ->
+            when (event) {
+                is MainUiEvent.ShowToast -> {
+                    Toast.makeText(context, event.message, Toast.LENGTH_SHORT).show()
+                }
+                is MainUiEvent.ShowSnackbar -> {
+                    snackbarHostState.showSnackbar(event.message)
+                }
+                is MainUiEvent.ShowInstallPermissionSnackbar -> {
+                    val result = snackbarHostState.showSnackbar(
+                        message = "Allow unknown apps or open in browser to install update",
+                        actionLabel = if (event.htmlUrl != null) "Open Browser" else null,
+                        duration = SnackbarDuration.Long
+                    )
+                    if (result == SnackbarResult.ActionPerformed) {
+                        event.htmlUrl?.let(viewModel::openUpdateInBrowser)
+                    }
+                }
+            }
+        }
+    }
+
+    uiState.pendingUpdate?.let { info ->
+        AppUpdateDialog(
+            info = info,
+            isDownloading = uiState.isDownloadingUpdate,
+            downloadProgress = uiState.downloadProgress,
+            downloadStatusText = uiState.downloadStatusText,
+            downloadedApkFile = uiState.downloadedApkFile,
+            downloadErrorMessage = uiState.downloadErrorMessage,
+            onDownloadOrRetry = { viewModel.downloadUpdate(info) },
+            onInstall = viewModel::installUpdateFile,
+            onCancelDownload = viewModel::cancelUpdateDownload,
+            onOpenBrowser = { viewModel.openUpdateInBrowser(info.htmlUrl) },
+            onDismiss = viewModel::dismissUpdateDialog
+        )
+    }
 }
 

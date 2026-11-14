@@ -19,6 +19,7 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import kotlin.math.abs
 
 /**
@@ -35,8 +36,35 @@ class FloatingSphereOverlayController(
     private val onSwapLanguages: () -> Unit,
     private val onToggleTranslationMode: () -> Unit,
     private val onOpenApp: () -> Unit,
-    private val onHideBubble: () -> Unit
+    private val onTurnOffBubble: () -> Unit
 ) {
+    data class QuickMenuLabels(
+        val pairChip: String,
+        val modeChip: String,
+        val settingsChip: String,
+        val turnOffChip: String
+    )
+
+    companion object {
+        // Por qué: Expone el formato del menú rápido como función pura verificable en pruebas JVM
+        fun formatQuickMenuLabels(
+            src: String,
+            tgt: String,
+            mode: String,
+            tapModeLabel: String = "Mode: Tap",
+            autoModeLabel: String = "Mode: Auto",
+            settingsLabel: String = "Settings",
+            turnOffLabel: String = "Turn Off"
+        ): QuickMenuLabels {
+            val modeLabel = if (mode == AppDefaults.MODE_TAP) tapModeLabel else autoModeLabel
+            return QuickMenuLabels(
+                pairChip = "⇄ ${src.uppercase()} → ${tgt.uppercase()}",
+                modeChip = modeLabel,
+                settingsChip = settingsLabel,
+                turnOffChip = turnOffLabel
+            )
+        }
+    }
     private val mainHandler = Handler(Looper.getMainLooper())
     private val inflater = LayoutInflater.from(context)
 
@@ -100,6 +128,11 @@ class FloatingSphereOverlayController(
             sphereView = view
             sphereParams = params
             applySphereBackground(view, isTranslatingActive)
+            // Por qué: Enseña los gestos de toque corto/largo solo la primera vez que aparece la esfera
+            if (!prefs.getBoolean(AppDefaults.KEY_SPHERE_HINT_SHOWN, false)) {
+                prefs.edit().putBoolean(AppDefaults.KEY_SPHERE_HINT_SHOWN, true).apply()
+                Toast.makeText(context, context.getString(R.string.sphere_first_hint), Toast.LENGTH_LONG).show()
+            }
         } catch (e: Exception) {
             Log.e("Translator", "FloatingSphereOverlayController: failed to add overlay sphere", e)
         }
@@ -282,10 +315,19 @@ class FloatingSphereOverlayController(
             menuContainer.addView(chip)
         }
 
-        addChip("⇄ ${src.uppercase()}/${tgt.uppercase()}", accent = true) { onSwapLanguages() }
-        addChip(if (mode == AppDefaults.MODE_TAP) "Auto" else "Tap") { onToggleTranslationMode() }
-        addChip("App") { onOpenApp() }
-        addChip("Hide") { onHideBubble() }
+        val labels = formatQuickMenuLabels(
+            src = src,
+            tgt = tgt,
+            mode = mode,
+            tapModeLabel = context.getString(R.string.sphere_menu_to_tap),
+            autoModeLabel = context.getString(R.string.sphere_menu_to_auto),
+            settingsLabel = context.getString(R.string.sphere_menu_settings),
+            turnOffLabel = context.getString(R.string.sphere_menu_turn_off)
+        )
+        addChip(labels.pairChip, accent = true) { onSwapLanguages() }
+        addChip(labels.modeChip) { onToggleTranslationMode() }
+        addChip(labels.settingsChip) { onOpenApp() }
+        addChip(labels.turnOffChip) { onTurnOffBubble() }
 
         menuContainer.measure(
             View.MeasureSpec.makeMeasureSpec(bounds.widthPx - (32 * density).toInt(), View.MeasureSpec.AT_MOST),
