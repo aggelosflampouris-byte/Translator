@@ -203,7 +203,7 @@ class NodeCandidateEvaluatorTest {
     }
 
     @Test
-    fun evaluateBottomUp_preservesBothQuotedAndShortReplyWhenParentExpansionCollidesWithSibling() {
+    fun evaluateBottomUp_translatesOnlyReplyAndDropsQuotedMessageAndHeader() {
         val whatsappProfile = TargetAppCatalog.profileForPackage("com.whatsapp")
         val sharedBubbleContainer = WindowRect(130, 740, 910, 1020)
 
@@ -257,7 +257,8 @@ class NodeCandidateEvaluatorTest {
             inChatViewport = true,
             childIndices = listOf(0, 1, 2),
             rowId = 1,
-            parentNodeId = 1
+            parentNodeId = 1,
+            nodeId = 10
         )
 
         val evaluated = NodeCandidateEvaluator.evaluateBottomUp(
@@ -273,15 +274,409 @@ class NodeCandidateEvaluatorTest {
         val filtered = NodeCandidateEvaluator.filterOverlapping(evaluated, density)
         val bounded = NodeCandidateEvaluator.assignMaxBottomBounds(filtered, maxY, density)
 
-        assertEquals(2, bounded.size)
-        val quoteCandidate = bounded.first { it.text.startsWith("Pai aia zic") }
-        val replyCandidate = bounded.first { it.text == "Te pup stefan ms" }
-        assertTrue(quoteCandidate.isQuoted)
+        assertEquals(1, bounded.size)
+        val replyCandidate = bounded.single()
+        assertEquals("Te pup stefan ms", replyCandidate.text)
         assertFalse(replyCandidate.isQuoted)
-        assertEquals(WindowRect(160, 810, 880, 910), quoteCandidate.bounds)
         assertEquals(WindowRect(160, 930, 560, 995), replyCandidate.bounds)
-        assertTrue(quoteCandidate.maxBottomPx <= replyCandidate.bounds.top)
         assertEquals(maxY, replyCandidate.maxBottomPx)
+    }
+
+    @Test
+    fun evaluateBottomUp_dropsGroupHandlesRolesAndQuotesWhileKeepingReplyBodies() {
+        val whatsappProfile = TargetAppCatalog.profileForPackage("com.whatsapp")
+        val nodes = listOf(
+            // Fila 1: contacto guardado sin virgulilla + teléfono + emojis (no debe traducirse el nombre)
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(150, 300, 420, 345),
+                expandedRect = WindowRect(150, 300, 780, 345),
+                directText = "Stefania V",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 10,
+                parentNodeId = 101
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(520, 302, 770, 342),
+                expandedRect = WindowRect(520, 302, 770, 342),
+                directText = "+40 748 782 007",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 10,
+                parentNodeId = 101
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(150, 360, 320, 420),
+                expandedRect = WindowRect(150, 360, 320, 420),
+                directText = "😭😭",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 10,
+                parentNodeId = 100
+            ),
+            // Fila 2: alias en minúsculas + teléfono + subtítulo de rol comunitario "lache" + mensaje real
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(150, 460, 340, 500),
+                expandedRect = WindowRect(150, 460, 780, 500),
+                directText = "misu",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 11,
+                parentNodeId = 111
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(520, 462, 770, 500),
+                expandedRect = WindowRect(520, 462, 770, 500),
+                directText = "+40 770 875 500",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 11,
+                parentNodeId = 111
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(150, 506, 260, 540),
+                expandedRect = WindowRect(150, 506, 260, 540),
+                directText = "lache",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 11,
+                parentNodeId = 110
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(150, 550, 820, 620),
+                expandedRect = WindowRect(150, 550, 820, 620),
+                directText = "mai are sens sa vorbim cu profu?",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 11,
+                parentNodeId = 110
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(710, 624, 810, 650),
+                expandedRect = WindowRect(710, 624, 810, 650),
+                directText = "15:51",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 11,
+                parentNodeId = 110
+            ),
+            // Fila 3: burbuja de respuesta real ("nu nu") sobre cita incrustada ("Ca acum am permisiune")
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(150, 700, 420, 740),
+                expandedRect = WindowRect(150, 700, 760, 740),
+                directText = "Mircea Ciuraru",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 12,
+                parentNodeId = 120,
+                isInsideHeaderContainer = true
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(166, 750, 680, 815),
+                expandedRect = WindowRect(166, 750, 680, 815),
+                directText = "Ca acum am permisiune",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 12,
+                parentNodeId = 121
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(150, 825, 340, 875),
+                expandedRect = WindowRect(150, 825, 340, 875),
+                directText = "nu nu",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 12,
+                parentNodeId = 120
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(580, 878, 670, 905),
+                expandedRect = WindowRect(580, 878, 670, 905),
+                directText = "20:46",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 12,
+                parentNodeId = 120
+            ),
+            // Fila 4: contenedor de cita explícito por viewId + respuesta no traducible (emojis) + TalkBack wrapper
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(166, 960, 680, 1020),
+                expandedRect = WindowRect(166, 960, 680, 1020),
+                directText = "Ea are doar 10",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 13,
+                parentNodeId = 131,
+                isInsideQuoteContainer = true
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(150, 1030, 300, 1090),
+                expandedRect = WindowRect(150, 1030, 300, 1090),
+                directText = "😭😭",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 13,
+                parentNodeId = 130
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(130, 950, 720, 1100),
+                expandedRect = WindowRect(130, 950, 720, 1100),
+                directText = null,
+                descText = "~ Stefania V, Ea are doar 10, 😭😭, 15:52",
+                shortClass = "LinearLayout",
+                isScrollableContainer = false,
+                childCount = 2,
+                inChatViewport = true,
+                childIndices = listOf(12, 13),
+                rowId = 13,
+                parentNodeId = 130
+            )
+        )
+
+        val evaluated = NodeCandidateEvaluator.evaluateBottomUp(
+            rawNodes = nodes,
+            minY = minY,
+            maxY = maxY,
+            screenWidth = screenWidth,
+            density = density,
+            configuredSource = TranslateLanguage.ROMANIAN,
+            configuredTarget = TranslateLanguage.GREEK,
+            profile = whatsappProfile
+        )
+
+        assertEquals(
+            listOf("mai are sens sa vorbim cu profu?", "nu nu"),
+            evaluated.map { it.text }
+        )
+        assertTrue(evaluated.none { it.isQuoted })
+    }
+
+    @Test
+    fun evaluateBottomUp_preservesConsecutiveStandaloneBubblesSharingSameRow() {
+        val whatsappProfile = TargetAppCatalog.profileForPackage("com.whatsapp")
+        val nodes = listOf(
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(150, 420, 460, 460),
+                expandedRect = WindowRect(150, 420, 820, 460),
+                directText = "~ Edysuperedy",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 20,
+                parentNodeId = 201
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(150, 466, 560, 500),
+                expandedRect = WindowRect(150, 466, 560, 500),
+                directText = "Higher Year Representative",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 20,
+                parentNodeId = 201
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(150, 515, 760, 580),
+                expandedRect = WindowRect(150, 515, 800, 595),
+                directText = "Verificati si maine de dimi",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 20,
+                parentNodeId = 202
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(680, 565, 790, 595),
+                expandedRect = WindowRect(680, 565, 790, 595),
+                directText = "00:26",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 20,
+                parentNodeId = 202
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(150, 625, 810, 690),
+                expandedRect = WindowRect(150, 625, 850, 720),
+                directText = "Poate mai dureaza sa se updateze",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 20,
+                parentNodeId = 203
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(560, 690, 840, 720),
+                expandedRect = WindowRect(560, 690, 840, 720),
+                directText = "Τροποποιήθηκε 00:27",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 20,
+                parentNodeId = 203
+            )
+        )
+
+        val evaluated = NodeCandidateEvaluator.evaluateBottomUp(
+            rawNodes = nodes,
+            minY = minY,
+            maxY = maxY,
+            screenWidth = screenWidth,
+            density = density,
+            configuredSource = TranslateLanguage.ROMANIAN,
+            configuredTarget = TranslateLanguage.GREEK,
+            profile = whatsappProfile
+        )
+
+        assertEquals(
+            listOf("Verificati si maine de dimi", "Poate mai dureaza sa se updateze"),
+            evaluated.map { it.text }
+        )
+        assertTrue(evaluated.none { it.isQuoted })
+    }
+
+    @Test
+    fun evaluateBottomUp_dropsSavedNameAboveShortRejectedBodyEvenWhenTimestampIsNearby() {
+        val whatsappProfile = TargetAppCatalog.profileForPackage("com.whatsapp")
+        val nodes = listOf(
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(150, 380, 340, 420),
+                expandedRect = WindowRect(150, 380, 340, 420),
+                directText = "Edward",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 30,
+                parentNodeId = 300
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(150, 426, 460, 462),
+                expandedRect = WindowRect(150, 426, 460, 462),
+                directText = "Too early to ask this",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 30,
+                parentNodeId = 300
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(470, 456, 560, 482),
+                expandedRect = WindowRect(470, 456, 560, 482),
+                directText = "00:26",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 30,
+                parentNodeId = 300
+            )
+        )
+
+        val evaluated = NodeCandidateEvaluator.evaluateBottomUp(
+            rawNodes = nodes,
+            minY = minY,
+            maxY = maxY,
+            screenWidth = screenWidth,
+            density = density,
+            configuredSource = TranslateLanguage.ROMANIAN,
+            configuredTarget = TranslateLanguage.GREEK,
+            profile = whatsappProfile
+        )
+
+        assertTrue(evaluated.isEmpty())
+    }
+
+    @Test
+    fun resourceIdClassifiers_identifyWhatsAppQuoteAndSenderHeaderIds() {
+        assertTrue(NodeCandidateEvaluator.isQuoteContainerResourceId("com.whatsapp:id/quoted_message_holder"))
+        assertTrue(NodeCandidateEvaluator.isQuoteContainerResourceId("com.whatsapp:id/quoted_text"))
+        assertFalse(NodeCandidateEvaluator.isQuoteContainerResourceId("com.whatsapp:id/message_text"))
+
+        assertTrue(NodeCandidateEvaluator.isSenderHeaderResourceId("com.whatsapp:id/name_in_group_tv"))
+        assertTrue(NodeCandidateEvaluator.isSenderHeaderResourceId("com.whatsapp:id/quoted_title"))
+        assertFalse(NodeCandidateEvaluator.isSenderHeaderResourceId("com.whatsapp:id/message_text"))
     }
 
     @Test

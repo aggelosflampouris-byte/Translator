@@ -25,7 +25,12 @@ object TextSanitizer {
     // Por qué: Caracteres de control invisibles, marcas direccionales de chat y carácter de reemplazo Unicode
     // que pueden corromper la tokenización o introducir secuencias invisibles en el texto traducido.
     private val INVISIBLE_AND_CONTROL_REGEX = Regex(
-        """[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u200B\u200C\u200E\u200F\u202A-\u202E\u2060-\u206F\uFEFF\uFFFD]"""
+        """[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u034F\u061C\u180E\u200B\u200C\u200E\u200F\u202A-\u202E\u2060-\u206F\uFEFF\uFFFD]"""
+    )
+
+    // Por qué: Espacios tipográficos Unicode (p. ej. thin/hair/narrow NBSP) usados por WhatsApp entre `~` y el alias.
+    private val UNICODE_SPACE_REGEX = Regex(
+        """[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]"""
     )
 
     // Por qué: Delimitadores de plantilla o etiquetas técnicas que nunca deben aparecer en un mensaje de usuario.
@@ -43,8 +48,7 @@ object TextSanitizer {
     fun sanitizeSpecialCharacters(text: String): String {
         if (text.isEmpty()) return text
         return text
-            .replace('\u00A0', ' ')
-            .replace('\u202F', ' ')
+            .replace(UNICODE_SPACE_REGEX, " ")
             .replace(INVISIBLE_AND_CONTROL_REGEX, "")
             .replace(CONTROL_TAG_REGEX, "")
             .replace(RUNAWAY_SPECIAL_CHAR_REGEX) { match ->

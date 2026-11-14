@@ -11,7 +11,7 @@ object TranslationFilter {
     private val URL_PATH_REGEX = Regex("""^/?[a-zA-Z0-9_\-/%?&=.]+$""")
     private val TIMESTAMP_REGEX = Regex("""^\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?$""", RegexOption.IGNORE_CASE)
     private val CHAT_RELATIVE_TIMESTAMP_REGEX = Regex(
-        """^([a-zA-Zα-ωΑ-ΩάέήίόύώϊϋΐΰăâîșțĂÂÎȘȚ.]+\s+)?(today|yesterday|σήμερα|σημερα|χθες|astăzi|astazi|ieri|mon|tue|wed|thu|fri|sat|sun|δευ|τρι|τετ|πεμ|παρ|σαβ|κυρ|lun|mar|mie|joi|vin|sâm|sam|dum)?\s*(at|στις|στὶς|la)\s+\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?$""",
+        """^(?:(?:\d{1,2}\s+[a-zA-Zα-ωΑ-ΩάέήίόύώϊϋΐΰăâîșțĂÂÎȘȚ.]+\s+)?(?:today|yesterday|σήμερα|σημερα|χθες|astăzi|astazi|ieri|mon|tue|wed|thu|fri|sat|sun|monday|tuesday|wednesday|thursday|friday|saturday|sunday|δευ|τρι|τετ|πεμ|παρ|σαβ|κυρ|δευτέρα|τρίτη|τετάρτη|πέμπτη|παρασκευή|σάββατο|κυριακή|lun|mar|mie|joi|vin|sâm|sam|dum|luni|marți|marti|miercuri|vineri|sâmbătă|sambata|duminică|duminica)[,\s]+)?(at|στις|στὶς|la)\s+\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?$""",
         RegexOption.IGNORE_CASE
     )
     private val LEADING_SENDER_PREFIX_REGEX = Regex(
@@ -118,32 +118,98 @@ object TranslationFilter {
     )
 
     private val STANDALONE_AT_MENTION_REGEX = Regex(
-        """^@[~\p{L}\p{N}_.-]+(?:\s+[~\p{L}\p{N}_.-]+){0,3}$"""
+        """^@[~\p{L}\p{N}_.-]+(?:\s+[~\p{L}\p{N}_.-]+){0,4}$"""
     )
-    private val GROUP_SENDER_TILDE_HANDLE_REGEX = Regex(
-        """^~[\s\u00A0]*[\p{L}\p{N}_.-]+(?:\s+[\p{L}\p{N}_.-]+){0,4}(?:\s*\.{2,3}|\u2026)?$"""
+    private val TRAILING_PHONE_SUFFIX_REGEX = Regex(
+        """(?:\s*[,;|]?\s*\+\d[\d\s\-().]{6,}\d)$"""
     )
+    private val STANDALONE_PHONE_REGEX = Regex(
+        """^\+?\d[\d\s\-().]{6,}\d$"""
+    )
+    private val TIME_HHMM_CONTAINED_REGEX = Regex("""\b\d{1,2}:\d{2}\b""")
+    private val NUMERIC_APPROX_UNIT_REGEX = Regex(
+        """^\d+(?:[.,]\d+)?\s+(?:min|minute|min\.|ore|ora|oră|ani|an|zi|zile|lei|leu|eur|euro|ron|usd|km|m|cm|mm|kg|g|gb|mb|%|s)$""",
+        RegexOption.IGNORE_CASE
+    )
+    private val SENDER_STARTER_WORDS = setOf(
+        "salut", "buna", "bună", "mersi", "multumesc", "mulțumesc", "ce", "nu", "da"
+    )
+    private val WHITESPACE_SPLIT_REGEX = Regex("""\s+""")
 
     /**
-     * Detecta menciones puras (`@~Geala Stefan`) o alias de participante en chats grupales de WhatsApp (`~ stefan`)
-     * para no traducir nombres de remitentes ni encender consultas IPC padre sobre ellos.
+     * Normaliza marcas bidireccionales, espacios Unicode y variantes visuales de virgulilla (`∼˜⁓～`)
+     * para detectar alias de remitente sin perder coincidencias en TalkBack/WhatsApp.
+     */
+    private fun normalizeHandleInspectText(raw: String): String {
+        return TextSanitizer.sanitizeSpecialCharacters(raw)
+            .replace("\u200D", "")
+            .replace('\u02DC', '~')
+            .replace('\u02F7', '~')
+            .replace('\u0303', '~')
+            .replace('\u2053', '~')
+            .replace('\u223C', '~')
+            .replace('\uFF5E', '~')
+            .trim()
+    }
+
+    /**
+     * Indica si el texto representa una marca horaria de mensaje (`00:26`, `Τροποποιήθηκε 00:27`)
+     * para distinguir burbujas independientes frente a citas incrustadas sin marca propia.
+     */
+    fun isTimestampLikeText(text: String): Boolean {
+        val normalized = TextSanitizer.sanitizeSpecialCharacters(text).trim()
+        if (normalized.isEmpty() || !TIME_HHMM_CONTAINED_REGEX.containsMatchIn(normalized)) return false
+        if (normalized.matches(TIMESTAMP_REGEX) ||
+            normalized.matches(CHAT_RELATIVE_TIMESTAMP_REGEX) ||
+            normalized.matches(STANDALONE_STATUS_REGEX)
+        ) {
+            return true
+        }
+        val stripped = cleanMessageText(normalized).trim()
+        return stripped.isEmpty() || MESSAGE_STATUS_TOKENS.contains(stripped.lowercase())
+    }
+
+    /**
+     * Indica si el texto corresponde a un número telefónico aislado en cabeceras grupales (`+40 773 947 253`).
+     */
+    fun isPhoneNumberText(text: String): Boolean {
+        val normalized = normalizeHandleInspectText(text)
+        if (normalized.isEmpty() || normalized.any { it.isLetter() }) return false
+        val digitCount = normalized.count { it.isDigit() }
+        return digitCount in 7..16 && normalized.matches(STANDALONE_PHONE_REGEX)
+    }
+
+    /**
+     * Detecta menciones puras (`@~Geala Stefan`) o alias de participante en chats grupales de WhatsApp (`~ stefan`,
+     * `~ Crypto1706`) para no traducir nombres de remitentes ni encender consultas IPC padre sobre ellos.
      */
     fun isSenderHandleOrMentionOnly(text: String): Boolean {
-        val trimmed = text.trim()
-        if (trimmed.isEmpty() || trimmed.contains('\n')) return false
-        if (trimmed.indexOfAny(charArrayOf('?', '!', ';', ':')) >= 0) return false
-        if (trimmed.matches(STANDALONE_AT_MENTION_REGEX) && trimmed.any { it.isLetter() }) {
+        val normalized = normalizeHandleInspectText(text)
+        if (normalized.isEmpty() || normalized.contains('\n')) return false
+        if (normalized.indexOfAny(charArrayOf('?', '!', ';', ':', ',')) >= 0) return false
+        if (normalized.matches(STANDALONE_AT_MENTION_REGEX) && normalized.any { it.isLetter() }) {
             return true
         }
-        if (trimmed.startsWith('~') && trimmed.matches(GROUP_SENDER_TILDE_HANDLE_REGEX) && trimmed.any { it.isLetter() }) {
-            val withoutTilde = trimmed.removePrefix("~").trim()
-            val firstWord = withoutTilde.substringBefore(' ').lowercase()
-            if (firstWord in setOf("salut", "buna", "bună", "mersi", "multumesc", "mulțumesc", "ce", "nu", "da")) {
+        if (!normalized.startsWith('~')) return false
+
+        val phoneStripped = normalized.replace(TRAILING_PHONE_SUFFIX_REGEX, "").trim()
+        val hadPhoneSuffix = phoneStripped.length < normalized.length
+        val withoutTilde = phoneStripped.trimStart('~').trim()
+        if (withoutTilde.isEmpty() || withoutTilde.length > 48 || !withoutTilde.any { it.isLetter() }) {
+            return false
+        }
+        if (ScriptDetector.containsUrlOrDomain(withoutTilde)) return false
+        if (!hadPhoneSuffix && withoutTilde.matches(NUMERIC_APPROX_UNIT_REGEX)) return false
+
+        val tokens = withoutTilde.split(WHITESPACE_SPLIT_REGEX).filter { it.isNotBlank() }
+        if (tokens.isEmpty() || tokens.size > 6) return false
+        if (!hadPhoneSuffix) {
+            val firstWord = tokens.first().lowercase().trimEnd('.', '…')
+            if (firstWord in SENDER_STARTER_WORDS) {
                 return false
             }
-            return true
         }
-        return false
+        return true
     }
 
     /**
@@ -161,18 +227,21 @@ object TranslationFilter {
 
     private fun isFieldPlausibleForParentExpansion(raw: String?, configuredTarget: String): Boolean {
         if (raw.isNullOrBlank()) return false
-        if (isSenderHandleOrMentionOnly(raw)) return false
+        val normalized = normalizeHandleInspectText(raw)
+        if (normalized.isEmpty() || isPhoneNumberText(normalized) || isSenderHandleOrMentionOnly(normalized)) {
+            return false
+        }
         var hasLetter = false
-        for (i in 0 until raw.length) {
-            if (raw[i].isLetter()) {
+        for (i in 0 until normalized.length) {
+            if (normalized[i].isLetter()) {
                 hasLetter = true
                 break
             }
         }
         if (!hasLetter) return false
         if (configuredTarget == TranslateLanguage.GREEK) {
-            val greekCount = ScriptDetector.countGreek(raw)
-            val latinCount = ScriptDetector.countLatin(raw)
+            val greekCount = ScriptDetector.countGreek(normalized)
+            val latinCount = ScriptDetector.countLatin(normalized)
             // Por qué: En TalkBack puede venir "ΛΕΥΤΕΡΗΣ, Bună"; solo omitimos si no hay cuerpo latino significativo.
             if (greekCount > 0 && latinCount < 2) return false
         }

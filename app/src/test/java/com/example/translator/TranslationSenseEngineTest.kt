@@ -424,6 +424,10 @@ class TranslationSenseEngineTest {
 
         assertTrue(TranslationSenseEngine.isLikelyRowSenderHeader("~ Edysuperedy", TranslateLanguage.ROMANIAN))
         assertTrue(TranslationSenseEngine.isLikelyRowSenderHeader("Higher Year Representative", TranslateLanguage.ROMANIAN))
+        assertTrue(TranslationSenseEngine.isLikelyRowSenderHeader("Crypto1706", TranslateLanguage.ROMANIAN))
+        assertTrue(TranslationSenseEngine.isLikelyRoleSubtitleBelowHeader("lache", TranslateLanguage.ROMANIAN))
+        assertFalse(TranslationSenseEngine.isLikelyRoleSubtitleBelowHeader("nu nu", TranslateLanguage.ROMANIAN))
+        assertFalse(TranslationSenseEngine.isLikelyRowSenderHeader("P10", TranslateLanguage.ROMANIAN))
         assertFalse(TranslationSenseEngine.isLikelyRowSenderHeader("ce e aia", TranslateLanguage.ROMANIAN))
         assertFalse(TranslationSenseEngine.isLikelyRowSenderHeader("Da doar la STB", TranslateLanguage.ROMANIAN))
     }

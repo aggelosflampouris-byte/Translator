@@ -391,17 +391,35 @@ class TranslationFilterTest {
 
     @Test
     fun shouldTranslate_filtersGroupSenderHandlesMentionsAndGreekEditedMarker() {
-        assertFalse(TranslationFilter.shouldTranslate("~ Crypto1706", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN))
-        assertFalse(TranslationFilter.shouldTranslate("~ Edysuperedy +40 763 029 933", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN))
-        assertFalse(TranslationFilter.shouldTranslate("@~Geala Stefan", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN))
+        assertFalse(TranslationFilter.shouldTranslate("~ Crypto1706", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN, deferUnknownLatinToMlKit = true))
+        assertFalse(TranslationFilter.shouldTranslate("~ Edysuperedy +40 763 029 933", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN, deferUnknownLatinToMlKit = true))
+        assertFalse(TranslationFilter.shouldTranslate("~ Edward", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN, deferUnknownLatinToMlKit = true))
+        assertFalse(TranslationFilter.shouldTranslate("~ stefan", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN, deferUnknownLatinToMlKit = true))
+        assertFalse(TranslationFilter.shouldTranslate("~ sonic", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN, deferUnknownLatinToMlKit = true))
+        assertFalse(TranslationFilter.shouldTranslate("~ misu", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN, deferUnknownLatinToMlKit = true))
+        assertFalse(TranslationFilter.shouldTranslate("~ Stefania V", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN, deferUnknownLatinToMlKit = true))
+        // Marcadores Unicode Bidi, espacios finos (\u2009) y virgulilla matemática (∼) de WhatsApp
+        assertFalse(TranslationFilter.shouldTranslate("\u2068∼\u2009Edward\u2069", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN, deferUnknownLatinToMlKit = true))
+        assertFalse(TranslationFilter.shouldTranslate("\u200E˜\u202Fmisu", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN, deferUnknownLatinToMlKit = true))
+        assertFalse(TranslationFilter.shouldTranslate("@~Geala Stefan", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN, deferUnknownLatinToMlKit = true))
         assertFalse(TranslationFilter.shouldTranslate("Τροποποιήθηκε", TranslateLanguage.ENGLISH, TranslateLanguage.ROMANIAN))
         assertFalse(TranslationFilter.shouldTranslate("Τροποποιήθηκε 20:47", TranslateLanguage.ENGLISH, TranslateLanguage.ROMANIAN))
+
+        assertTrue(TranslationFilter.isTimestampLikeText("00:26"))
+        assertTrue(TranslationFilter.isTimestampLikeText("Τροποποιήθηκε 00:27"))
+        assertTrue(TranslationFilter.isTimestampLikeText("edited 20:47"))
+        assertFalse(TranslationFilter.isTimestampLikeText("Poate mai dureaza"))
+        assertFalse(TranslationFilter.isTimestampLikeText("Revin la 20:47"))
+        assertTrue(TranslationFilter.isPhoneNumberText("+40 773 947 253"))
+        assertFalse(TranslationFilter.isPhoneNumberText("Ea are doar 10"))
 
         assertEquals(
             "Pai aia zic, nu ma chinui azi, de maine incolo",
             TranslationFilter.cleanMessageText("Pai aia zic, nu ma chinui azi, de maine incolo Τροποποιήθηκε 20:47")
         )
         assertFalse(TranslationFilter.hasPlausibleLetterCandidate("~ stefan", null, TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.hasPlausibleLetterCandidate("\u2068∼\u2009sonic\u2069", null, TranslateLanguage.GREEK))
+        assertFalse(TranslationFilter.hasPlausibleLetterCandidate("+40 773 947 253", null, TranslateLanguage.GREEK))
         assertFalse(TranslationFilter.hasPlausibleLetterCandidate("@~Geala Stefan", null, TranslateLanguage.GREEK))
         assertTrue(TranslationFilter.hasPlausibleLetterCandidate("Te pup stefan ms", null, TranslateLanguage.GREEK))
     }

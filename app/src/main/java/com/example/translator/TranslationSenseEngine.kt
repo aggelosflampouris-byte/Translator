@@ -90,7 +90,12 @@ object TranslationSenseEngine {
     )
 
     private val WORD_SPLIT_REGEX = Regex("""[^a-zăâîșțşţ]+""")
-    private val TITLE_CASE_NAME_TOKEN_REGEX = Regex("""^[A-ZĂÂÎȘȚ][a-zăâîșț.-]*\.{0,3}$""")
+    private val TITLE_CASE_NAME_TOKEN_REGEX = Regex(
+        """^[A-ZĂÂÎȘȚ](?:[a-zăâîșț.-]*\.{0,3}|(?=(?:.*[a-zăâîșț]){2})[a-zăâîșț0-9._'-]{2,24}\.{0,3})$"""
+    )
+    private val NON_ROLE_SUBTITLE_ENGLISH_WORDS = setOf(
+        "yes", "no", "ok", "okay", "sorry", "thanks", "thank", "please", "hello", "hi", "bye"
+    )
     private val IDIOM_PUNCT_REGEX = Regex("""[;?!,.¡¿]+""")
     private val WHITESPACE_REGEX = Regex("""\s+""")
     private val BIRTHDAY_GREEK_REGEX = Regex("""(Ευτυχισμένα|Χαρούμενα)\s+γενέθλια""", RegexOption.IGNORE_CASE)
@@ -240,10 +245,10 @@ object TranslationSenseEngine {
 
     /**
      * Identifica cabeceras cortas de remitente o insignias de rol ("Higher Year Representative",
-     * "Stan Raluca") que aparecen encima del mensaje real dentro de la misma fila grupal.
+     * "Stan Raluca", `~ misu`, `Crypto1706`) que aparecen encima del mensaje real dentro de la misma fila grupal.
      */
     fun isLikelyRowSenderHeader(text: String, sourceLang: String): Boolean {
-        val trimmed = text.trim()
+        val trimmed = TextSanitizer.sanitizeSpecialCharacters(text).trim()
         if (trimmed.isEmpty() || trimmed.length > 48 || trimmed.contains('\n')) return false
         if (TranslationFilter.isSenderHandleOrMentionOnly(trimmed)) return true
         if (trimmed.indexOfAny(charArrayOf('?', '!', ';', ':', ',')) >= 0) return false
@@ -251,6 +256,25 @@ object TranslationSenseEngine {
         if (tokens.isEmpty() || tokens.size > 4) return false
         if (!tokens.all { it.matches(TITLE_CASE_NAME_TOKEN_REGEX) }) return false
 
+        return !containsSpecificSourceWords(trimmed, sourceLang)
+    }
+
+    /**
+     * Identifica subtítulos breves de rol o etiqueta de miembro comunitario (`lache`, `Higher Year Representative`)
+     * ubicados justo debajo de una cabecera verificada y encima del cuerpo real del mensaje.
+     */
+    fun isLikelyRoleSubtitleBelowHeader(text: String, sourceLang: String): Boolean {
+        val trimmed = TextSanitizer.sanitizeSpecialCharacters(text).trim()
+        if (trimmed.isEmpty() || trimmed.length > 36 || trimmed.contains('\n')) return false
+        if (trimmed.indexOfAny(charArrayOf('?', '!', ';', ':', ',')) >= 0) return false
+        if (ScriptDetector.containsUrlOrDomain(trimmed)) return false
+        val tokens = trimmed.split(WHITESPACE_REGEX).filter { it.isNotBlank() }
+        if (tokens.isEmpty() || tokens.size > 4) return false
+        if (tokens.any { it.lowercase() in NON_ROLE_SUBTITLE_ENGLISH_WORDS }) return false
+        return !containsSpecificSourceWords(trimmed, sourceLang)
+    }
+
+    private fun containsSpecificSourceWords(trimmed: String, sourceLang: String): Boolean {
         val normalizedWords = TextNormalizer.normalizeRomanianCedillas(trimmed)
             .lowercase()
             .split(WORD_SPLIT_REGEX)
@@ -259,9 +283,9 @@ object TranslationSenseEngine {
             val specificRo = normalizedWords.count {
                 COMMON_ROMANIAN_WORDS.contains(it) && !AMBIGUOUS_ROMANCE_OR_ENGLISH_TOKENS.contains(it)
             }
-            if (specificRo > 0) return false
+            if (specificRo > 0) return true
         }
-        return true
+        return false
     }
 
     private data class ScriptFacts(
