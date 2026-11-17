@@ -121,7 +121,7 @@ object TranslationFilter {
         """^@[~\p{L}\p{N}_.-]+(?:\s+[~\p{L}\p{N}_.-]+){0,4}$"""
     )
     private val TRAILING_PHONE_SUFFIX_REGEX = Regex(
-        """(?:\s*[,;|]?\s*\+\d[\d\s\-().]{6,}\d)$"""
+        """(?:\s*[,;|:\n]?\s*\+\d[\d\s\-().]{6,}\d)+$"""
     )
     private val STANDALONE_PHONE_REGEX = Regex(
         """^\+?\d[\d\s\-().]{6,}\d$"""
@@ -140,7 +140,7 @@ object TranslationFilter {
      * Normaliza marcas bidireccionales, espacios Unicode y variantes visuales de virgulilla (`∼˜⁓～`)
      * para detectar alias de remitente sin perder coincidencias en TalkBack/WhatsApp.
      */
-    private fun normalizeHandleInspectText(raw: String): String {
+    internal fun normalizeHandleInspectText(raw: String): String {
         return TextSanitizer.sanitizeSpecialCharacters(raw)
             .replace("\u200D", "")
             .replace('\u02DC', '~')
@@ -185,16 +185,18 @@ object TranslationFilter {
      */
     fun isSenderHandleOrMentionOnly(text: String): Boolean {
         val normalized = normalizeHandleInspectText(text)
-        if (normalized.isEmpty() || normalized.contains('\n')) return false
-        if (normalized.indexOfAny(charArrayOf('?', '!', ';', ':', ',')) >= 0) return false
-        if (normalized.matches(STANDALONE_AT_MENTION_REGEX) && normalized.any { it.isLetter() }) {
+        if (normalized.isEmpty()) return false
+        val phoneRemoved = normalized.replace(TRAILING_PHONE_SUFFIX_REGEX, "").trim()
+        val hadPhoneSuffix = phoneRemoved.length < normalized.length
+        val handlePart = phoneRemoved.trimEnd(',', ':', ' ').trim()
+        if (handlePart.isEmpty() || handlePart.contains('\n')) return false
+        if (handlePart.indexOfAny(charArrayOf('?', '!', ';', ':', ',')) >= 0) return false
+        if (handlePart.matches(STANDALONE_AT_MENTION_REGEX) && handlePart.any { it.isLetter() }) {
             return true
         }
-        if (!normalized.startsWith('~')) return false
+        if (!handlePart.startsWith('~')) return false
 
-        val phoneStripped = normalized.replace(TRAILING_PHONE_SUFFIX_REGEX, "").trim()
-        val hadPhoneSuffix = phoneStripped.length < normalized.length
-        val withoutTilde = phoneStripped.trimStart('~').trim()
+        val withoutTilde = handlePart.trimStart('~').trim()
         if (withoutTilde.isEmpty() || withoutTilde.length > 48 || !withoutTilde.any { it.isLetter() }) {
             return false
         }
@@ -352,7 +354,7 @@ object TranslationFilter {
         return null
     }
 
-    private fun stripTrailingEnvelopeMetadata(text: String): String {
+    internal fun stripTrailingEnvelopeMetadata(text: String): String {
         val sanitized = TextSanitizer.sanitizeSpecialCharacters(text).trim()
         // Por qué: Si el nodo completo es únicamente un separador de fecha/hora (ej. "ΤΕΤ ΣΤΙΣ 6:02 Μ.Μ."),
         // se descarta por completo antes de recortar la hora final para no dejar fragmentos sueltos ("ΤΕΤ ΣΤΙΣ").

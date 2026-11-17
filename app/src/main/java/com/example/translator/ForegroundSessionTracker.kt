@@ -70,6 +70,7 @@ class ForegroundSessionTracker(
             }
             val desiredFlags = AccessibilityServiceInfo.DEFAULT or
                 AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
                 if (isActive) AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS else 0
             // Por qué: Mientras la traducción está pausada, solo observamos cambios de ventana
             // para evitar ráfagas Binder de scrolling/teclado en otras aplicaciones.

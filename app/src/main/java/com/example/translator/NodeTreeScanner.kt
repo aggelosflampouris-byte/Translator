@@ -33,7 +33,11 @@ data class CollectedNodeSnapshot(
     val parentNodeId: Int = 0,
     val nodeId: Int = 0,
     val isInsideQuoteContainer: Boolean = false,
-    val isInsideHeaderContainer: Boolean = false
+    val isInsideHeaderContainer: Boolean = false,
+    val viewIdName: String? = null,
+    val subContainerNodeId: Int = 0,
+    val isMainMessageBodyViewId: Boolean = false,
+    val isMediaPlaceholder: Boolean = false
 )
 
 data class EvaluatedCandidate(
@@ -44,7 +48,8 @@ data class EvaluatedCandidate(
     val parentNodeId: Int = 0,
     val nodeId: Int = 0,
     val isQuoted: Boolean = false,
-    val maxBottomPx: Int = Int.MAX_VALUE
+    val maxBottomPx: Int = Int.MAX_VALUE,
+    val minReplyTopPx: Int = Int.MIN_VALUE
 )
 
 /**
@@ -123,243 +128,11 @@ class ScanStats {
  */
 object NodeCandidateEvaluator {
 
-    private val REPLY_WRAPPER_DESC_MARKERS = listOf(
-        "απάντησ", "απαντησ", "replied to", "răspuns", "raspuns", "reply to"
-    )
-    private val QUOTE_CONTAINER_ID_KEYWORDS = listOf(
-        "quoted", "quote_container", "quote_holder", "quote_box",
-        "reply_preview", "reply_quote", "replied_message"
-    )
-    private val SENDER_HEADER_ID_KEYWORDS = listOf(
-        "name_in_group", "push_name", "pushname", "sender_name",
-        "message_author", "author_name", "contact_name", "sender_phone",
-        "quoted_title", "quoted_name", "quoted_author",
-        "group_role", "member_role", "sender_role", "push_name_subtitle"
-    )
+    internal fun isQuoteContainerResourceId(viewIdName: String?): Boolean =
+        MessageStructureRecognizer.isQuoteContainerResourceId(viewIdName)
 
-    internal fun isQuoteContainerResourceId(viewIdName: String?): Boolean {
-        val shortId = viewIdName?.substringAfterLast('/')?.lowercase().orEmpty()
-        if (shortId.isEmpty()) return false
-        return QUOTE_CONTAINER_ID_KEYWORDS.any { shortId.contains(it) }
-    }
-
-    internal fun isSenderHeaderResourceId(viewIdName: String?): Boolean {
-        val shortId = viewIdName?.substringAfterLast('/')?.lowercase().orEmpty()
-        if (shortId.isEmpty()) return false
-        return SENDER_HEADER_ID_KEYWORDS.any { shortId.contains(it) }
-    }
-
-    private class RowStructuralIndex(
-        val rawNodes: List<CollectedNodeSnapshot>,
-        private val effectiveNodeIds: IntArray,
-        private val bestTexts: Array<String>,
-        private val isLeafCarrier: BooleanArray,
-        private val isTimestamp: BooleanArray,
-        private val isPhone: BooleanArray,
-        private val parentIdxOfNode: IntArray
-    ) {
-        fun effectiveId(idx: Int): Int = effectiveNodeIds[idx]
-
-        fun indexOfNodeId(nodeId: Int): Int {
-            if (nodeId == 0) return -1
-            for (idx in effectiveNodeIds.indices) {
-                if (effectiveNodeIds[idx] == nodeId) return idx
-            }
-            return -1
-        }
-
-        fun hasPhoneSiblingInBand(nodeIdx: Int, density: Float): Boolean {
-            val item = rawNodes[nodeIdx]
-            val bandTolPx = (14 * density).toInt()
-            for (j in rawNodes.indices) {
-                if (j == nodeIdx || !isLeafCarrier[j] || !isPhone[j]) continue
-                val peer = rawNodes[j]
-                val sameRowOrParent = (item.rowId > 0 && peer.rowId == item.rowId) ||
-                    (item.parentNodeId != 0 && peer.parentNodeId == item.parentNodeId)
-                if (!sameRowOrParent) continue
-                val minBottom = min(item.rawRect.bottom, peer.rawRect.bottom)
-                val maxTop = maxOf(item.rawRect.top, peer.rawRect.top)
-                val verticalOverlap = minBottom - maxTop
-                val closeTop = abs(item.rawRect.top - peer.rawRect.top) <= bandTolPx
-                if (closeTop || verticalOverlap > 0) return true
-            }
-            return false
-        }
-
-        fun hasTimestampForNodeBefore(
-            cand: EvaluatedCandidate,
-            nextCand: EvaluatedCandidate?,
-            density: Float
-        ): Boolean {
-            if (cand.rowId <= 0) return false
-            val topSlop = (6 * density).toInt()
-            val bottomSlop = (22 * density).toInt()
-            val nextSlop = (6 * density).toInt()
-            // Por qué: Aunque el mensaje inferior haya sido filtrado (ej. emojis o inglés), su cota superior
-            // sigue delimitando que el reloj pertenece a ese mensaje inferior y no a la cabecera/cita previa.
-            val nextOrLowerTop = nextCand?.rawBounds?.top ?: findFirstLowerBodyLeaf(cand, density)?.rawRect?.top
-            for (i in rawNodes.indices) {
-                if (!isLeafCarrier[i] || !isTimestamp[i]) continue
-                val ts = rawNodes[i]
-                if (ts.rowId != cand.rowId) continue
-                val alignsWithCand = ts.rawRect.top >= cand.rawBounds.top - topSlop &&
-                    ts.rawRect.bottom <= cand.rawBounds.bottom + bottomSlop
-                if (!alignsWithCand) continue
-                if (nextOrLowerTop == null || ts.rawRect.bottom <= nextOrLowerTop + nextSlop) {
-                    return true
-                }
-            }
-            return false
-        }
-
-        fun findFirstLowerBodyLeaf(cand: EvaluatedCandidate, density: Float): CollectedNodeSnapshot? {
-            if (cand.rowId <= 0) return null
-            val stepPx = (10 * density).toInt()
-            val selfIdx = indexOfNodeId(cand.nodeId)
-            var best: CollectedNodeSnapshot? = null
-            for (i in rawNodes.indices) {
-                if (i == selfIdx || !isLeafCarrier[i] || isTimestamp[i] || isPhone[i]) continue
-                val other = rawNodes[i]
-                if (other.rowId != cand.rowId) continue
-                if (other.rawRect.top < cand.rawBounds.top + stepPx) continue
-                if (other.rawRect.top < cand.rawBounds.bottom - (4 * density).toInt()) continue
-                if (best == null || other.rawRect.top < best.rawRect.top) {
-                    best = other
-                }
-            }
-            return best
-        }
-
-        fun hasAnyLowerLeafInRow(cand: EvaluatedCandidate, density: Float): Boolean =
-            findFirstLowerBodyLeaf(cand, density) != null
-
-        fun hasHeaderLeafDirectlyAbove(cand: EvaluatedCandidate, configuredSource: String, density: Float): Boolean {
-            if (cand.rowId <= 0) return false
-            val maxGapPx = (16 * density).toInt()
-            val minGapPx = -(6 * density).toInt()
-            val selfIdx = indexOfNodeId(cand.nodeId)
-            for (i in rawNodes.indices) {
-                if (i == selfIdx || !isLeafCarrier[i] || isTimestamp[i] || isPhone[i]) continue
-                val upper = rawNodes[i]
-                if (upper.rowId != cand.rowId) continue
-                val gap = cand.rawBounds.top - upper.rawRect.bottom
-                if (gap !in minGapPx..maxGapPx) continue
-                val upperText = bestTexts[i]
-                val isHeader = upper.isInsideHeaderContainer ||
-                    hasPhoneSiblingInBand(i, density) ||
-                    TranslationFilter.isSenderHandleOrMentionOnly(upperText) ||
-                    TranslationSenseEngine.isLikelyRowSenderHeader(upperText, configuredSource)
-                if (isHeader) return true
-            }
-            return false
-        }
-
-        fun rowHasReplyWrapperDesc(rowId: Int): Boolean {
-            if (rowId <= 0) return false
-            for (i in rawNodes.indices) {
-                val n = rawNodes[i]
-                if (n.rowId != rowId) continue
-                val desc = n.descText?.lowercase() ?: continue
-                if (REPLY_WRAPPER_DESC_MARKERS.any { desc.contains(it) }) return true
-            }
-            return false
-        }
-
-        fun hasHeaderInsideParentContainer(parentNodeId: Int, beforeTop: Int): Boolean {
-            if (parentNodeId == 0) return false
-            for (i in rawNodes.indices) {
-                if (!isLeafCarrier[i] || isTimestamp[i]) continue
-                val n = rawNodes[i]
-                if (n.parentNodeId != parentNodeId || n.rawRect.top > beforeTop) continue
-                if (n.isInsideHeaderContainer ||
-                    isPhone[i] ||
-                    TranslationFilter.isSenderHandleOrMentionOnly(bestTexts[i])
-                ) {
-                    return true
-                }
-            }
-            return false
-        }
-
-        fun shareEnclosingBubbleWrapper(nodeAId: Int, nodeBId: Int): Boolean {
-            val idxA = indexOfNodeId(nodeAId)
-            val idxB = indexOfNodeId(nodeBId)
-            if (idxA >= 0 && idxB >= 0) {
-                // Por qué: Un TalkBack/ViewGroup común que envuelve ambos elementos (p. ej. wrapper del mensaje)
-                // confirma que pertenecen a una sola burbuja de respuesta y no a dos burbujas separadas.
-                val ancA = collectAncestorIndices(idxA)
-                val ancB = collectAncestorIndices(idxB)
-                for (a in ancA) {
-                    if (a in ancB) {
-                        val node = rawNodes[a]
-                        if (!node.isScrollableContainer && !node.descText.isNullOrBlank()) return true
-                    }
-                }
-            }
-            return false
-        }
-
-        fun rowHasTimestampOnlyNearBottom(rowId: Int, bottomMinTop: Int): Boolean {
-            if (rowId <= 0) return false
-            var sawAny = false
-            for (i in rawNodes.indices) {
-                if (!isLeafCarrier[i] || !isTimestamp[i]) continue
-                val ts = rawNodes[i]
-                if (ts.rowId != rowId) continue
-                sawAny = true
-                if (ts.rawRect.top < bottomMinTop) return false
-            }
-            return sawAny
-        }
-
-        private fun collectAncestorIndices(startIdx: Int): Set<Int> {
-            val set = LinkedHashSet<Int>(4)
-            var p = parentIdxOfNode[startIdx]
-            var steps = 0
-            while (p >= 0 && steps < 6) {
-                if (!set.add(p)) break
-                p = parentIdxOfNode[p]
-                steps++
-            }
-            return set
-        }
-
-        companion object {
-            fun build(rawNodes: List<CollectedNodeSnapshot>): RowStructuralIndex {
-                val n = rawNodes.size
-                val effectiveIds = IntArray(n)
-                val bestTexts = Array(n) { "" }
-                val isLeafCarrier = BooleanArray(n)
-                val isTimestamp = BooleanArray(n)
-                val isPhone = BooleanArray(n)
-                val parentIdxOfNode = IntArray(n) { -1 }
-
-                for (i in 0 until n) {
-                    val item = rawNodes[i]
-                    effectiveIds[i] = if (item.nodeId != 0) item.nodeId else (i + 1)
-                    val txt = TextSanitizer.sanitizeSpecialCharacters(item.directText ?: item.descText ?: "").trim()
-                    bestTexts[i] = txt
-                    isLeafCarrier[i] = !item.directText.isNullOrBlank() || item.childIndices.isEmpty()
-                    isTimestamp[i] = isLeafCarrier[i] && TranslationFilter.isTimestampLikeText(txt)
-                    isPhone[i] = isLeafCarrier[i] && TranslationFilter.isPhoneNumberText(txt)
-                    for (childIdx in item.childIndices) {
-                        if (childIdx in 0 until n) {
-                            parentIdxOfNode[childIdx] = i
-                        }
-                    }
-                }
-                return RowStructuralIndex(
-                    rawNodes = rawNodes,
-                    effectiveNodeIds = effectiveIds,
-                    bestTexts = bestTexts,
-                    isLeafCarrier = isLeafCarrier,
-                    isTimestamp = isTimestamp,
-                    isPhone = isPhone,
-                    parentIdxOfNode = parentIdxOfNode
-                )
-            }
-        }
-    }
+    internal fun isSenderHeaderResourceId(viewIdName: String?): Boolean =
+        MessageStructureRecognizer.isSenderHeaderResourceId(viewIdName)
 
     fun evaluateBottomUp(
         rawNodes: List<CollectedNodeSnapshot>,
@@ -373,7 +146,7 @@ object NodeCandidateEvaluator {
         stats: ScanStats? = null
     ): List<EvaluatedCandidate> {
         if (rawNodes.isEmpty()) return emptyList()
-        val rowIndex = RowStructuralIndex.build(rawNodes)
+        val analysis = MessageStructureRecognizer.analyzeRawNodes(rawNodes, configuredSource, density)
         val outList = mutableListOf<EvaluatedCandidate>()
         val subtreeMaxAccepted = IntArray(rawNodes.size)
         val subtreeAcceptedCounts = IntArray(rawNodes.size)
@@ -396,11 +169,14 @@ object NodeCandidateEvaluator {
                 }
             }
             val itemHasLeafBody = !item.directText.isNullOrBlank() ||
+                item.isMediaPlaceholder ||
                 (item.childIndices.isEmpty() && !item.descText.isNullOrBlank())
             subtreeHasContentLeaf[i] = hasChildContent ||
                 itemHasLeafBody ||
                 item.isInsideQuoteContainer ||
                 item.isInsideHeaderContainer
+
+            if (item.isMediaPlaceholder) continue
 
             if (maxChildTextLen > 0) {
                 val outerLen = maxOf(item.directText?.length ?: 0, item.descText?.length ?: 0)
@@ -417,29 +193,33 @@ object NodeCandidateEvaluator {
                     continue
                 }
             } else if (hasChildContent && item.directText.isNullOrBlank()) {
-                // Por qué: Si un contenedor solo agrupa nodos ya inspeccionados (p. ej. cabecera + emojis o cita + emoji),
+                // Por qué: Si un contenedor solo agrupa nodos ya inspeccionados (p. ej. cabecera + emojis o cita + multimedia),
                 // su contentDescription TalkBack concatenaría remitente/cita y nunca debe reemplazar a sus hijos.
                 continue
             }
 
-            if (item.isInsideQuoteContainer || item.isInsideHeaderContainer) {
+            val role = analysis.roles[i]
+            if (role == MessageComponentRole.SENDER_NAME ||
+                role == MessageComponentRole.REPLIED_SENDER_NAME ||
+                role == MessageComponentRole.REPLIED_MESSAGE
+            ) {
                 stats?.let {
                     it.skippedFilter++
-                    it.recordFilterRejection(if (item.isInsideQuoteContainer) "quo" else "hdr")
-                }
-                continue
-            }
-            if (rowIndex.hasPhoneSiblingInBand(i, density)) {
-                stats?.let {
-                    it.skippedFilter++
-                    it.recordFilterRejection("snd")
+                    val tag = when {
+                        role == MessageComponentRole.REPLIED_MESSAGE -> "quo"
+                        item.isInsideHeaderContainer -> "hdr"
+                        else -> "snd"
+                    }
+                    it.recordFilterRejection(tag)
                 }
                 continue
             }
 
+            val effectiveId = if (item.nodeId != 0) item.nodeId else (i + 1)
             val acceptedLen = evaluateCandidateNode(
                 item = item,
-                effectiveNodeId = rowIndex.effectiveId(i),
+                effectiveNodeId = effectiveId,
+                minReplyTopPx = analysis.minReplyTopByNodeIndex[i],
                 minY = minY,
                 maxY = maxY,
                 screenWidth = screenWidth,
@@ -455,168 +235,87 @@ object NodeCandidateEvaluator {
         }
         return resolveSiblingExpansionsAndReplyStructure(
             candidates = outList,
-            rowIndex = rowIndex,
+            rawNodes = rawNodes,
+            analysis = analysis,
             minY = minY,
             maxY = maxY,
             screenWidth = screenWidth,
             density = density,
-            configuredSource = configuredSource,
             profile = profile
         )
     }
 
     /**
-     * Evita que una expansión al contenedor padre invada hermanos dentro de la misma fila grupal,
-     * descarta cabeceras/roles de remitente y suprime citas incrustadas para traducir únicamente la respuesta.
+     * Evita que una expansión al contenedor padre invada hermanos, cabeceras o citas en la misma fila,
+     * asegurando que la burbuja traducida se limite estrictamente al área de la respuesta real.
      */
     private fun resolveSiblingExpansionsAndReplyStructure(
         candidates: List<EvaluatedCandidate>,
-        rowIndex: RowStructuralIndex,
+        rawNodes: List<CollectedNodeSnapshot>,
+        analysis: NodeStructureAnalysis,
         minY: Int,
         maxY: Int,
         screenWidth: Int,
         density: Float,
-        configuredSource: String,
         profile: ChatAppProfile
     ): List<EvaluatedCandidate> {
         if (candidates.isEmpty()) return emptyList()
 
-        // 1. Degrada bounds expandidos si invaden el rawBounds de otro candidato (ej. cita vs respuesta corta)
+        val minReplyGapPx = (2 * density).toInt()
         val nonInvading = ArrayList<EvaluatedCandidate>(candidates.size)
         for (idx in candidates.indices) {
             val cand = candidates[idx]
-            if (cand.bounds == cand.rawBounds) {
-                nonInvading.add(cand)
-                continue
-            }
-            var collidesWithSibling = false
-            for (otherIdx in candidates.indices) {
-                if (otherIdx == idx) continue
-                val otherRaw = candidates[otherIdx].rawBounds
-                val sameOrUnknownRow = cand.rowId == 0 || candidates[otherIdx].rowId == 0 || cand.rowId == candidates[otherIdx].rowId
-                if (!sameOrUnknownRow) continue
-                if (overlapRatioOfSmaller(cand.bounds, otherRaw) > 0.10f) {
-                    collidesWithSibling = true
-                    break
+            var adjustedBounds = cand.bounds
+
+            if (adjustedBounds != cand.rawBounds) {
+                var collidesWithSibling = false
+                for (otherIdx in candidates.indices) {
+                    if (otherIdx == idx) continue
+                    val sameOrUnknownRow = cand.rowId == 0 || candidates[otherIdx].rowId == 0 || cand.rowId == candidates[otherIdx].rowId
+                    if (sameOrUnknownRow && overlapRatioOfSmaller(adjustedBounds, candidates[otherIdx].rawBounds) > 0.10f) {
+                        collidesWithSibling = true
+                        break
+                    }
+                }
+                if (!collidesWithSibling) {
+                    for (rawIdx in rawNodes.indices) {
+                        val role = analysis.roles[rawIdx]
+                        if (role != MessageComponentRole.SENDER_NAME &&
+                            role != MessageComponentRole.REPLIED_SENDER_NAME &&
+                            role != MessageComponentRole.REPLIED_MESSAGE
+                        ) {
+                            continue
+                        }
+                        val rawNode = rawNodes[rawIdx]
+                        val sameOrUnknownRow = cand.rowId == 0 || rawNode.rowId == 0 || cand.rowId == rawNode.rowId
+                        if (!sameOrUnknownRow || rawNode.rawRect == cand.rawBounds) continue
+                        if (overlapRatioOfSmaller(adjustedBounds, rawNode.rawRect) > 0.10f) {
+                            collidesWithSibling = true
+                            break
+                        }
+                    }
+                }
+                if (collidesWithSibling) {
+                    val tight = clampRectToViewport(cand.rawBounds, minY, maxY)
+                    if (TranslationSenseEngine.isMessageBubble(tight.left, tight.right, screenWidth, profile.alignmentMode) &&
+                        tight.width > (22 * density).toInt() &&
+                        tight.height > (14 * density).toInt()
+                    ) {
+                        adjustedBounds = tight
+                    }
                 }
             }
-            if (!collidesWithSibling) {
-                nonInvading.add(cand)
-            } else {
-                val tight = clampRectToViewport(cand.rawBounds, minY, maxY)
-                if (TranslationSenseEngine.isMessageBubble(tight.left, tight.right, screenWidth, profile.alignmentMode) &&
-                    tight.width > (22 * density).toInt() &&
-                    tight.height > (14 * density).toInt()
-                ) {
-                    nonInvading.add(cand.copy(bounds = tight))
-                } else {
-                    nonInvading.add(cand)
+
+            if (cand.minReplyTopPx != Int.MIN_VALUE && cand.rawBounds.top >= cand.minReplyTopPx) {
+                val flooredTop = maxOf(adjustedBounds.top, cand.minReplyTopPx + minReplyGapPx)
+                if (flooredTop > adjustedBounds.top && flooredTop < adjustedBounds.bottom - (12 * density).toInt()) {
+                    adjustedBounds = adjustedBounds.copy(top = flooredTop)
                 }
             }
+
+            nonInvading.add(if (adjustedBounds == cand.bounds) cand else cand.copy(bounds = adjustedBounds))
         }
-
-        // 2. Dentro de cada fila de chat (rowId > 0), descarta cabeceras/roles de remitente y suprime citas previas
-        val kept = ArrayList<EvaluatedCandidate>(nonInvading.size)
-        val byRow = nonInvading.groupBy { it.rowId }
-        for ((rowId, group) in byRow) {
-            if (rowId <= 0) {
-                kept.addAll(group)
-                continue
-            }
-            val sortedRow = group.sortedWith(compareBy<EvaluatedCandidate> { it.bounds.top }.thenBy { it.bounds.left })
-            val withoutHeaders = stripRowHeadersAndRoleSubtitles(sortedRow, rowIndex, configuredSource, density)
-            val replyOnly = stripEmbeddedReplyQuotes(withoutHeaders, rowIndex, density)
-            kept.addAll(replyOnly)
-        }
-        return kept
-    }
-
-    private fun stripRowHeadersAndRoleSubtitles(
-        sortedRow: List<EvaluatedCandidate>,
-        rowIndex: RowStructuralIndex,
-        configuredSource: String,
-        density: Float
-    ): List<EvaluatedCandidate> {
-        val result = ArrayList<EvaluatedCandidate>(sortedRow.size)
-        var lastDroppedHeaderBottom: Int? = null
-        val maxRoleGapPx = (16 * density).toInt()
-
-        for (i in sortedRow.indices) {
-            val cand = sortedRow[i]
-            val nextCand = sortedRow.getOrNull(i + 1)
-            val hasOwnTimestamp = rowIndex.hasTimestampForNodeBefore(cand, nextCand, density)
-            val hasLowerContent = i < sortedRow.lastIndex || rowIndex.hasAnyLowerLeafInRow(cand, density)
-
-            if (!hasOwnTimestamp && hasLowerContent &&
-                TranslationSenseEngine.isLikelyRowSenderHeader(cand.text, configuredSource)
-            ) {
-                lastDroppedHeaderBottom = cand.rawBounds.bottom
-                continue
-            }
-
-            val headerAboveInRow = (lastDroppedHeaderBottom != null && cand.rawBounds.top - lastDroppedHeaderBottom <= maxRoleGapPx) ||
-                rowIndex.hasHeaderLeafDirectlyAbove(cand, configuredSource, density)
-            if (!hasOwnTimestamp && hasLowerContent && headerAboveInRow &&
-                TranslationSenseEngine.isLikelyRoleSubtitleBelowHeader(cand.text, configuredSource)
-            ) {
-                lastDroppedHeaderBottom = cand.rawBounds.bottom
-                continue
-            }
-
-            result.add(cand)
-        }
-        return result
-    }
-
-    private fun stripEmbeddedReplyQuotes(
-        candidates: List<EvaluatedCandidate>,
-        rowIndex: RowStructuralIndex,
-        density: Float
-    ): List<EvaluatedCandidate> {
-        if (candidates.isEmpty()) return emptyList()
-        val result = ArrayList<EvaluatedCandidate>(candidates.size)
-        val quoteIndentPx = (2 * density).toInt()
-        val maxQuoteOverlapPx = (14 * density).toInt()
-        val maxQuoteGapPx = (42 * density).toInt()
-
-        for (i in candidates.indices) {
-            val item = candidates[i]
-            val nextCand = candidates.getOrNull(i + 1)
-            if (rowIndex.hasTimestampForNodeBefore(item, nextCand, density)) {
-                result.add(item)
-                continue
-            }
-            val lowerRawLeaf = if (nextCand == null) rowIndex.findFirstLowerBodyLeaf(item, density) else null
-            val lowerBounds = nextCand?.bounds ?: lowerRawLeaf?.rawRect
-            val lowerRawBounds = nextCand?.rawBounds ?: lowerRawLeaf?.rawRect
-            val lowerParentId = nextCand?.parentNodeId ?: lowerRawLeaf?.parentNodeId ?: 0
-            val lowerNodeId = nextCand?.nodeId ?: lowerRawLeaf?.nodeId ?: 0
-
-            if (lowerBounds == null || lowerRawBounds == null) {
-                result.add(item)
-                continue
-            }
-            val sitsAboveLower = item.bounds.bottom <= lowerBounds.top + maxQuoteOverlapPx &&
-                (lowerBounds.top - item.bounds.bottom) <= maxQuoteGapPx
-            if (!sitsAboveLower) {
-                result.add(item)
-                continue
-            }
-
-            val isIndented = item.rawBounds.left >= lowerRawBounds.left + quoteIndentPx ||
-                item.bounds.left >= lowerBounds.left + quoteIndentPx
-            val differentSubContainer = item.parentNodeId != 0 && lowerParentId != 0 && item.parentNodeId != lowerParentId
-            val hasQuoteContainerCue = rowIndex.rowHasReplyWrapperDesc(item.rowId) ||
-                rowIndex.hasHeaderInsideParentContainer(item.parentNodeId, item.rawBounds.bottom) ||
-                rowIndex.shareEnclosingBubbleWrapper(item.nodeId, lowerNodeId) ||
-                rowIndex.rowHasTimestampOnlyNearBottom(item.rowId, lowerRawBounds.top - (6 * density).toInt())
-
-            val isEmbeddedQuote = isIndented || (differentSubContainer && hasQuoteContainerCue)
-            if (!isEmbeddedQuote) {
-                result.add(item)
-            }
-        }
-        return result
+        return nonInvading
     }
 
     private fun clampRectToViewport(rect: WindowRect, minY: Int, maxY: Int): WindowRect {
@@ -678,24 +377,20 @@ object NodeCandidateEvaluator {
         deferUnknownLatinToMlKit: Boolean
     ): SelectedCandidateText? {
         var chosenRaw = directText ?: descText ?: return null
-        var cleanText = TranslationFilter.cleanMessageText(chosenRaw).trim()
-        var rejectReason = TranslationFilter.filterRejectionReason(
-            text = cleanText,
-            configuredTarget = configuredTarget,
+        var (cleanText, rejectReason) = extractCandidateFromRawField(
+            raw = chosenRaw,
             configuredSource = configuredSource,
-            deferUnknownLatinToMlKit = deferUnknownLatinToMlKit,
-            alreadyCleaned = true
+            configuredTarget = configuredTarget,
+            deferUnknownLatinToMlKit = deferUnknownLatinToMlKit
         )
         var usedDirectText = directText != null
 
         if (rejectReason != null && rejectReason != "snd" && directText != null && descText != null && descText != directText) {
-            val altClean = TranslationFilter.cleanMessageText(descText).trim()
-            val altReject = TranslationFilter.filterRejectionReason(
-                text = altClean,
-                configuredTarget = configuredTarget,
+            val (altClean, altReject) = extractCandidateFromRawField(
+                raw = descText,
                 configuredSource = configuredSource,
-                deferUnknownLatinToMlKit = deferUnknownLatinToMlKit,
-                alreadyCleaned = true
+                configuredTarget = configuredTarget,
+                deferUnknownLatinToMlKit = deferUnknownLatinToMlKit
             )
             if (altReject == null) {
                 chosenRaw = descText
@@ -713,9 +408,35 @@ object NodeCandidateEvaluator {
         )
     }
 
+    private fun extractCandidateFromRawField(
+        raw: String,
+        configuredSource: String,
+        configuredTarget: String,
+        deferUnknownLatinToMlKit: Boolean
+    ): Pair<String, String?> {
+        val anatomy = MessageStructureRecognizer.recognizeTextAnatomy(raw, configuredSource)
+        val candidate = if (anatomy.replyingText.isNullOrBlank()) {
+            if (!anatomy.senderName.isNullOrBlank() || !anatomy.repliedMessage.isNullOrBlank()) {
+                return "" to "snd"
+            }
+            TranslationFilter.cleanMessageText(raw).trim()
+        } else {
+            anatomy.replyingText.trim()
+        }
+        val rejectReason = TranslationFilter.filterRejectionReason(
+            text = candidate,
+            configuredTarget = configuredTarget,
+            configuredSource = configuredSource,
+            deferUnknownLatinToMlKit = deferUnknownLatinToMlKit,
+            alreadyCleaned = true
+        )
+        return candidate to rejectReason
+    }
+
     private fun evaluateCandidateNode(
         item: CollectedNodeSnapshot,
         effectiveNodeId: Int,
+        minReplyTopPx: Int,
         minY: Int,
         maxY: Int,
         screenWidth: Int,
@@ -788,7 +509,8 @@ object NodeCandidateEvaluator {
                     rawBounds = clampedRaw,
                     rowId = item.rowId,
                     parentNodeId = item.parentNodeId,
-                    nodeId = effectiveNodeId
+                    nodeId = effectiveNodeId,
+                    minReplyTopPx = minReplyTopPx
                 )
             )
             stats?.let {
@@ -952,6 +674,7 @@ class NodeTreeScanner(
                 outRawNodes = rawNodes,
                 currentRowId = 1,
                 currentParentNodeId = 0,
+                currentRowDepth = 1,
                 rowGen = intArrayOf(1),
                 visitGen = intArrayOf(1)
             )
@@ -1080,6 +803,8 @@ class NodeTreeScanner(
         currentParentNodeId: Int = 0,
         insideQuoteContainer: Boolean = false,
         insideHeaderContainer: Boolean = false,
+        currentSubContainerId: Int = 0,
+        currentRowDepth: Int = 0,
         rowGen: IntArray = IntArray(1),
         visitGen: IntArray = intArrayOf(1),
         depth: Int = 0
@@ -1101,8 +826,9 @@ class NodeTreeScanner(
         val viewIdName = try { node.viewIdResourceName } catch (_: Exception) { null }
         val isHeadingNode = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
             try { node.isHeading } catch (_: Exception) { false }
-        val nodeInQuote = insideQuoteContainer || NodeCandidateEvaluator.isQuoteContainerResourceId(viewIdName)
-        val nodeInHeader = insideHeaderContainer || isHeadingNode || NodeCandidateEvaluator.isSenderHeaderResourceId(viewIdName)
+        val nodeInQuote = insideQuoteContainer || MessageStructureRecognizer.isQuoteContainerResourceId(viewIdName)
+        val nodeInHeader = insideHeaderContainer || isHeadingNode || MessageStructureRecognizer.isSenderHeaderResourceId(viewIdName)
+        val isMainBodyViewId = !nodeInQuote && !nodeInHeader && MessageStructureRecognizer.isMainMessageBodyResourceId(viewIdName)
 
         val isScrollableContainer = AccessibilityNodeSafeOps.isScrollableOrToolbarClass(node, className)
         val isPagerOrToolbar = className.contains("ViewPager", ignoreCase = true) ||
@@ -1130,6 +856,16 @@ class NodeTreeScanner(
 
         var mergedChildIndices: MutableList<Int>? = null
         val chCount = try { node.childCount } catch (_: Exception) { 0 }
+        val childSubContainerId = when {
+            isChatListContainer -> 0
+            currentRowId > 0 && currentRowDepth in 1..3 && chCount > 0 -> myNodeId
+            else -> currentSubContainerId
+        }
+        val nextRowDepth = when {
+            isChatListContainer -> 1
+            currentRowId > 0 -> currentRowDepth + 1
+            else -> 0
+        }
         for (i in 0 until chCount) {
             val child = AccessibilityNodeSafeOps.safeChild(node, i) ?: continue
             val childRowId = if (isChatListContainer) ++rowGen[0] else currentRowId
@@ -1148,6 +884,8 @@ class NodeTreeScanner(
                 currentParentNodeId = myNodeId,
                 insideQuoteContainer = nodeInQuote,
                 insideHeaderContainer = nodeInHeader,
+                currentSubContainerId = childSubContainerId,
+                currentRowDepth = nextRowDepth,
                 rowGen = rowGen,
                 visitGen = visitGen,
                 depth = depth + 1
@@ -1163,6 +901,50 @@ class NodeTreeScanner(
 
         if (AccessibilityNodeSafeOps.isIgnoredWidgetClass(className)) {
             stats.skippedWidget++
+            val isMediaCandidate = currentRowId > 0 && !nodeInQuote && !nodeInHeader &&
+                (className.contains("Image", ignoreCase = true) || className.contains("SeekBar", ignoreCase = true))
+            if (isMediaCandidate) {
+                val mediaRect = Rect()
+                val gotMediaBounds = try {
+                    node.getBoundsInScreen(mediaRect)
+                    true
+                } catch (_: Exception) {
+                    false
+                }
+                if (gotMediaBounds &&
+                    mediaRect.left >= (screenWidth * 0.14f).toInt() &&
+                    mediaRect.right > (screenWidth * 0.22f).toInt() &&
+                    mediaRect.width() >= (36 * density).toInt() &&
+                    mediaRect.height() >= (28 * density).toInt() &&
+                    mediaRect.bottom > minY &&
+                    mediaRect.top < maxY
+                ) {
+                    val mediaWindowRect = WindowRect(mediaRect.left, mediaRect.top, mediaRect.right, mediaRect.bottom)
+                    val mediaIndex = outRawNodes.size
+                    outRawNodes.add(
+                        CollectedNodeSnapshot(
+                            rawRect = mediaWindowRect,
+                            expandedRect = mediaWindowRect,
+                            directText = null,
+                            descText = null,
+                            shortClass = className.substringAfterLast('.'),
+                            isScrollableContainer = false,
+                            childCount = chCount,
+                            inChatViewport = true,
+                            childIndices = collectedChildren,
+                            rowId = currentRowId,
+                            parentNodeId = currentParentNodeId,
+                            nodeId = myNodeId,
+                            isInsideQuoteContainer = nodeInQuote,
+                            isInsideHeaderContainer = nodeInHeader,
+                            viewIdName = viewIdName,
+                            subContainerNodeId = currentSubContainerId,
+                            isMediaPlaceholder = true
+                        )
+                    )
+                    return if (collectedChildren.isEmpty()) listOf(mediaIndex) else collectedChildren + mediaIndex
+                }
+            }
             return collectedChildren
         }
         val directText = try { node.text?.toString()?.takeIf { it.isNotBlank() } } catch (_: Exception) { null }
@@ -1215,7 +997,10 @@ class NodeTreeScanner(
                 parentNodeId = currentParentNodeId,
                 nodeId = myNodeId,
                 isInsideQuoteContainer = nodeInQuote,
-                isInsideHeaderContainer = nodeInHeader
+                isInsideHeaderContainer = nodeInHeader,
+                viewIdName = viewIdName,
+                subContainerNodeId = currentSubContainerId,
+                isMainMessageBodyViewId = isMainBodyViewId
             )
         )
         return listOf(newIndex)

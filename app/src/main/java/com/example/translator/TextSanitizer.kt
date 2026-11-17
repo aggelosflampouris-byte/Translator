@@ -25,7 +25,7 @@ object TextSanitizer {
     // Por qué: Caracteres de control invisibles, marcas direccionales de chat y carácter de reemplazo Unicode
     // que pueden corromper la tokenización o introducir secuencias invisibles en el texto traducido.
     private val INVISIBLE_AND_CONTROL_REGEX = Regex(
-        """[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u034F\u061C\u180E\u200B\u200C\u200E\u200F\u202A-\u202E\u2060-\u206F\uFEFF\uFFFD]"""
+        """[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u034F\u061C\u180E\u200B\u200C\u200E\u200F\u202A-\u202E\u2060-\u206F\uFEFF\uFFFC\uFFFD]"""
     )
 
     // Por qué: Espacios tipográficos Unicode (p. ej. thin/hair/narrow NBSP) usados por WhatsApp entre `~` y el alias.
