@@ -32,7 +32,8 @@ data class RecognizedMessageAnatomy(
 internal data class NodeStructureAnalysis(
     val roles: Array<MessageComponentRole>,
     val minReplyTopByNodeIndex: IntArray,
-    val rowAnatomies: List<RecognizedMessageAnatomy>
+    val rowAnatomies: List<RecognizedMessageAnatomy>,
+    val repliedMessageByNodeIndex: Array<String?>
 )
 
 /**
@@ -306,8 +307,9 @@ object MessageStructureRecognizer {
         val n = rawNodes.size
         val roles = Array(n) { MessageComponentRole.REPLYING_TEXT }
         val minReplyTops = IntArray(n) { Int.MIN_VALUE }
+        val repliedMessagesByNode = arrayOfNulls<String>(n)
         if (n == 0) {
-            return NodeStructureAnalysis(roles, minReplyTops, emptyList())
+            return NodeStructureAnalysis(roles, minReplyTops, emptyList(), repliedMessagesByNode)
         }
 
         val texts = Array(n) { "" }
@@ -389,11 +391,14 @@ object MessageStructureRecognizer {
                     outRoles = roles,
                     outMinReplyTops = minReplyTops
                 )
+                if (anatomy.replyingNodeIndex >= 0 && !anatomy.repliedMessage.isNullOrBlank()) {
+                    repliedMessagesByNode[anatomy.replyingNodeIndex] = anatomy.repliedMessage
+                }
                 anatomies.add(anatomy)
             }
         }
 
-        return NodeStructureAnalysis(roles, minReplyTops, anatomies)
+        return NodeStructureAnalysis(roles, minReplyTops, anatomies, repliedMessagesByNode)
     }
 
     private fun findPhoneSiblingInRowOrParent(

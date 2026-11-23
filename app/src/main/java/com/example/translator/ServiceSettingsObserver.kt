@@ -34,6 +34,8 @@ class ServiceSettingsObserver(
         private set
     @Volatile var idleAutoPauseMinutes: Int = AppDefaults.DEFAULT_IDLE_AUTO_PAUSE_MINUTES
         private set
+    @Volatile var preferSystemTranslator: Boolean = false
+        private set
 
     private var registeredPrefs: SharedPreferences? = null
 
@@ -74,6 +76,10 @@ class ServiceSettingsObserver(
                 idleAutoPauseMinutes = prefs.getInt(key, AppDefaults.DEFAULT_IDLE_AUTO_PAUSE_MINUTES)
                 onIdleAutoPauseChanged(idleAutoPauseMinutes)
             }
+            AppDefaults.KEY_PREFER_SYSTEM_TRANSLATOR -> {
+                preferSystemTranslator = prefs.getBoolean(key, false)
+                onLearningOrGlossaryChanged()
+            }
         }
     }
 
@@ -94,6 +100,7 @@ class ServiceSettingsObserver(
             AppDefaults.KEY_IDLE_AUTO_PAUSE_MINUTES,
             AppDefaults.DEFAULT_IDLE_AUTO_PAUSE_MINUTES
         )
+        preferSystemTranslator = prefs.getBoolean(AppDefaults.KEY_PREFER_SYSTEM_TRANSLATOR, false)
         prefs.registerOnSharedPreferenceChangeListener(listener)
         registeredPrefs = prefs
         return TargetAppCatalog.getEnabledPackages(prefs, context.packageName)

@@ -113,6 +113,19 @@ object TranslationSenseEngine {
     private val RO_PRIETENUL_MEU_NAME_REGEX = Regex("""\bprietenul\s+meu\s+([A-Z][a-zA-Z]+)""", RegexOption.IGNORE_CASE)
     private val RO_PRIETENUL_MEU_REGEX = Regex("""\bprietenul\s+meu\b""", RegexOption.IGNORE_CASE)
     private val TRAILING_DOT_OR_SEMI_REGEX = Regex("""[;.]+$""")
+    private val ALPHA_NUM_CODE_REGEX = Regex("""(?i)\b[a-z]\d+\b""")
+    private val PIVOT_FATA_VERSO_REGEX = Regex("""(?iu)\bfață[\s-]+verso\b""")
+    private val PIVOT_VIZA_FLOTANT_REGEX = Regex("""(?iu)\bviza\s+de\s+flotant\b""")
+    private val PIVOT_VERB_FIZIC_REGEX = Regex("""(?iu)\b(mergem|mergeți|se\s+duc|ducem|venim|depunem|predăm|duceți)\s+fizic\b""")
+    private val PIVOT_BONUL_CONTEXT_REGEX = Regex("""(?iu)\b(stb|cartel|bilet|secretariat|cerere|abonament)""")
+    private val PIVOT_BONUL_REGEX = Regex("""(?iu)\bbonul\b""")
+    private val PIVOT_MEDIEI_BAC_REGEX = Regex("""(?iu)\bmediei\s+de\s+la\s+bac\b""")
+    private val PIVOT_MEDIA_BAC_REGEX = Regex("""(?iu)\bmedia\s+de\s+la\s+bac\b""")
+    private val PIVOT_ADMINA_REGEX = Regex("""(?iu)\badmina\b""")
+    private val PIVOT_DOBITOCI_REGEX = Regex("""(?iu)\bdobitoci\b""")
+    private val RO_PANA_WEEKDAY_REGEX = Regex("""(?i)\bpana\s+(luni|marti|miercuri|joi|vineri|sambata|duminica)\b""")
+    private val EL_APO_WEEKDAY_REGEX = Regex("""(?iu)\bαπό\s+(την?\s+)?(Δευτέρα|Τρίτη|Τετάρτη|Πέμπτη|Παρασκευή|Σάββατο|Κυριακή)\b""")
+    private val EL_PRYTIDA_REGEX = Regex("""(?iu)\bΠρυτίδα\b""")
 
     // Por qué: Tabla declarativa de expresiones breves exactas (≤ 4 palabras) para evitar cadenas de if frágiles
     private data class IdiomRule(
@@ -306,7 +319,9 @@ object TranslationSenseEngine {
         val greekLetters = ScriptDetector.countGreek(clean)
         val latinLetters = ScriptDetector.countLatin(clean)
         val cedillaNormalized = TextNormalizer.normalizeRomanianCedillas(clean)
-        val words = cedillaNormalized.lowercase().split(WORD_SPLIT_REGEX).filter { it.isNotBlank() }
+        // Por qué: Evita que códigos alfanuméricos como "p10" aporten fragmentos de una sola letra ("p") al conteo léxico.
+        val wordsInput = cedillaNormalized.replace(ALPHA_NUM_CODE_REGEX, " ")
+        val words = wordsInput.lowercase().split(WORD_SPLIT_REGEX).filter { it.isNotBlank() }
 
         var englishTokenCount = 0
         var exclusiveEnglishTokenCount = 0
@@ -414,9 +429,23 @@ object TranslationSenseEngine {
                 return true
             }
 
+            val isIdentifiedAsThirdLang = identifiedLang != null &&
+                identifiedLang != "und" &&
+                identifiedLang != TranslateLanguage.ROMANIAN &&
+                identifiedLang != "ron" &&
+                identifiedLang != TranslateLanguage.ENGLISH &&
+                identifiedLang != "eng"
+
             if (conversationMatchesSource &&
                 identifiedLang != targetLang &&
-                (facts.specificRomanianTokens > 0 || (facts.wordCount in 1..4 && facts.exclusiveEnglishTokenCount == 0 && facts.latinLetters >= 2))
+                (facts.specificRomanianTokens > 0 || (
+                    facts.exclusiveEnglishTokenCount == 0 &&
+                        facts.latinLetters >= 2 &&
+                        (
+                            (facts.romanianTokenCount >= 2 && facts.wordCount in 1..7) ||
+                                (!isIdentifiedAsThirdLang && facts.wordCount in 1..4)
+                            )
+                    ))
             ) {
                 return true
             }
@@ -522,6 +551,44 @@ object TranslationSenseEngine {
     }
 
     /**
+     * Reescribe expresiones rumanas ambiguas o modismos campus antes de ML Kit NMT para evitar
+     * corrupciones debidas al pivote interno inglés (`ro -> en -> el`).
+     */
+    fun applyPreTranslationPivotDisambiguation(
+        normalizedText: String,
+        sourceLang: String,
+        targetLang: String
+    ): String {
+        if (sourceLang != TranslateLanguage.ROMANIAN || targetLang != TranslateLanguage.GREEK) {
+            return normalizedText
+        }
+        var result = normalizedText
+        result = PIVOT_FATA_VERSO_REGEX.replace(result) { matchPreserveFirstCap(it.value, "pe ambele fețe") }
+        result = PIVOT_VIZA_FLOTANT_REGEX.replace(result) { matchPreserveFirstCap(it.value, "viza de reședință temporară") }
+        result = PIVOT_VERB_FIZIC_REGEX.replace(result) { "${it.groupValues[1]} în persoană" }
+        if (PIVOT_BONUL_CONTEXT_REGEX.containsMatchIn(result)) {
+            result = PIVOT_BONUL_REGEX.replace(result) { matchPreserveFirstCap(it.value, "chitanța") }
+        }
+        result = PIVOT_MEDIEI_BAC_REGEX.replace(result) { matchPreserveFirstCap(it.value, "notei medii de la bacalaureat") }
+        result = PIVOT_MEDIA_BAC_REGEX.replace(result) { matchPreserveFirstCap(it.value, "nota medie de la bacalaureat") }
+        result = PIVOT_ADMINA_REGEX.replace(result) { matchPreserveFirstCap(it.value, "administratoarea") }
+        result = PIVOT_DOBITOCI_REGEX.replace(result) { matchPreserveFirstCap(it.value, "proști") }
+        // Por qué: ML Kit suele interpretar "O să <verbo>" con mayúscula inicial como artículo griego "Ο " + imperativo.
+        if (result.startsWith("O să ")) {
+            result = "o să " + result.removePrefix("O să ")
+        }
+        return result
+    }
+
+    private fun matchPreserveFirstCap(original: String, replacement: String): String {
+        return if (original.firstOrNull()?.isUpperCase() == true) {
+            replacement.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+        } else {
+            replacement
+        }
+    }
+
+    /**
      * Post-processing grammar adjustments that never discard the NMT sentence.
      */
     fun applyPostTranslationSenseLogic(
@@ -540,6 +607,16 @@ object TranslationSenseEngine {
                 result = result.replace(NEW_YEAR_GREEK_REGEX, "και ευτυχισμένο το νέο έτος")
             }
 
+            // Por qué: Corrige inversiones de sentido y alucinaciones frecuentes del pivote ro -> en -> el.
+            if (origNorm.contains("rectorat")) {
+                result = result.replace(EL_PRYTIDA_REGEX, "Πρυτανεία")
+            }
+            if (RO_PANA_WEEKDAY_REGEX.containsMatchIn(origNorm) && !origNorm.contains("de la") && !origNorm.contains("din ")) {
+                result = result.replace(EL_APO_WEEKDAY_REGEX) { match ->
+                    "μέχρι ${match.groupValues[1]}${match.groupValues[2]}"
+                }
+            }
+
             // Por qué: Elimina el artículo nominativo "ο" delante de nombres propios en vocativo tras coma
             result = result.replace(GREEK_NOM_ARTICLE_COMMA_REGEX, ", $1")
             result = result.replace(GREEK_NOM_ARTICLE_START_REGEX, "$1,")
@@ -556,6 +633,10 @@ object TranslationSenseEngine {
             // Por qué: En griego las preguntas se cierran con ';'
             if (origNorm.endsWith("?") && result.endsWith("?")) {
                 result = result.substring(0, result.length - 1) + ";"
+            }
+
+            if (originalText.trim().firstOrNull()?.isUpperCase() == true && result.firstOrNull()?.isLowerCase() == true) {
+                result = result.replaceFirstChar { it.titlecase() }
             }
 
             return result

@@ -15,6 +15,7 @@ import com.example.translator.LearnedCorrectionEntry
 import com.example.translator.LearnedMemoryEntry
 import com.example.translator.LearningStore
 import com.example.translator.ServiceBridge
+import com.example.translator.SystemOnDeviceTranslationEngine
 import com.example.translator.TranslationNotificationManager
 import com.example.translator.TranslationPipeline
 import com.example.translator.TranslationTileService
@@ -24,6 +25,7 @@ import com.example.translator.TranslatorPreferencesRepository
 import com.example.translator.TranslatorRuntimeState
 import java.io.File
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,6 +35,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Estado observable de la pantalla principal desacoplado de detalles de Compose.
@@ -40,6 +43,7 @@ import kotlinx.coroutines.launch
 data class MainUiState(
     val isAccessibilityEnabled: Boolean = false,
     val isNotificationPermissionGranted: Boolean = true,
+    val isSystemTranslatorAvailable: Boolean = false,
     val modelStatus: String = "Checking language models...",
     val learningStats: Pair<Int, Int> = 0 to 0,
     val glossaryCorrections: List<LearnedCorrectionEntry> = emptyList(),
@@ -154,6 +158,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setAutoCheckUpdates(enabled: Boolean) = preferencesRepository.setAutoCheckUpdates(enabled)
     fun setIdleAutoPauseEnabled(enabled: Boolean) = preferencesRepository.setIdleAutoPauseEnabled(enabled)
     fun setOverlayTheme(theme: String) = preferencesRepository.setOverlayTheme(theme)
+    fun setPreferSystemTranslator(enabled: Boolean) = preferencesRepository.setPreferSystemTranslator(enabled)
 
     fun setControlInterface(selected: String) {
         preferencesRepository.setControlInterface(selected)
@@ -345,6 +350,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun ensureModelsDownloaded(source: String, target: String) {
         _uiState.update { it.copy(modelStatus = "Downloading language models...") }
+        viewModelScope.launch {
+            val sysAvailable = withContext(Dispatchers.IO) {
+                SystemOnDeviceTranslationEngine.isPairOnDevice(appContext, source, target)
+            }
+            _uiState.update { it.copy(isSystemTranslatorAvailable = sysAvailable) }
+        }
         TranslationPipeline.ensureModelsDownloaded(
             source = source,
             target = target,

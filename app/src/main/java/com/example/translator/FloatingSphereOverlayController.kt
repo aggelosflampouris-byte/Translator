@@ -1,5 +1,6 @@
 package com.example.translator
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
 import android.graphics.PixelFormat
@@ -171,6 +172,7 @@ class FloatingSphereOverlayController(
         )
     }
 
+    @SuppressLint("ClickableViewAccessibility")
     private fun attachTouchInteractions(
         view: View,
         params: WindowManager.LayoutParams,
@@ -226,6 +228,7 @@ class FloatingSphereOverlayController(
                 MotionEvent.ACTION_UP -> {
                     mainHandler.removeCallbacks(longPressRunnable)
                     if (!isDragging && !longPressTriggered) {
+                        view.performClick()
                         if (quickMenuView != null) {
                             dismissQuickMenu()
                         } else {

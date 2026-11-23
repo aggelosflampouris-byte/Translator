@@ -88,5 +88,30 @@ class TranslationPipelineTest {
         assertNull(result)
         assertEquals(0, stored.size)
     }
+
+    @Test
+    fun secondaryOnDeviceEngine_usedWhenEnabledAndFallsBackToMlKitOnNull() = runTest {
+        val primary = FakeEngine { "Κύρια απάντηση" }
+        val secondaryHit = FakeEngine { "Συστημική απάντηση" }
+        val secondaryMiss = FakeEngine { null }
+
+        val pipelineWithHit = TranslationPipeline(
+            engine = primary,
+            secondaryOnDeviceEngine = secondaryHit,
+            preferSecondaryOnDeviceEngine = { true }
+        )
+        assertEquals("Συστημική απάντηση", pipelineWithHit.translate("Salut prietene", "ro", "el"))
+        assertEquals(1, secondaryHit.calls)
+        assertEquals(0, primary.calls)
+
+        val pipelineWithFallback = TranslationPipeline(
+            engine = primary,
+            secondaryOnDeviceEngine = secondaryMiss,
+            preferSecondaryOnDeviceEngine = { true }
+        )
+        assertEquals("Κύρια απάντηση", pipelineWithFallback.translate("Alt mesaj", "ro", "el"))
+        assertEquals(1, secondaryMiss.calls)
+        assertEquals(1, primary.calls)
+    }
 }
 

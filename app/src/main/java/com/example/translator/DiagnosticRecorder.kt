@@ -34,6 +34,8 @@ class DiagnosticRecorder {
     @Volatile var lastResolveReason: String = "init"
     @Volatile var lastTraceUpdateMs: Long = 0L
 
+    @Volatile var systemTranslatorStatus: String = "na"
+
     private data class ScanStatsSnapshot(
         val fgPkg: String,
         val profileId: String,
@@ -279,12 +281,17 @@ class DiagnosticRecorder {
     fun flushToServiceBridge() {
         updateProbeDebug()
         ServiceBridge.lastDraftDebug = latestDraftDiag
+        val sysTrSuffix = if (systemTranslatorStatus != "na") {
+            " sysTr=$systemTranslatorStatus"
+        } else {
+            ""
+        }
         ServiceBridge.lastRuntimeTrace =
             "$lastTraceTag | c=$connectCount s=$stateChangeCount l=$scanLoopTicks(alive=$lastTraceLoopAlive) e=$eventCount " +
             "svcPkgs=$lastTraceSvcPkgsCount scr=$lastTraceScrolling($acceptedScrollCount/$ignoredScrollCount:$lastScrollDiag) " +
             "fg=${lastTraceFg ?: "null"} root=$lastRootOrigin($lastRootExtractDiag,src=$lastTraceMeaningfulSrc/$lastTraceNullSrc) " +
             "res=$lastResolveReason tgtEvt=${lastTraceTgtEvt ?: "none"} lastEvt=${lastEventPkg ?: "none"}($lastEventType) " +
-            "seen=[${formatSeenPackages()}] ext=[$lastExternalWindowsSummary]"
+            "seen=[${formatSeenPackages()}] ext=[$lastExternalWindowsSummary]$sysTrSuffix"
 
         synchronized(perAppScanDiagMap) {
             ServiceBridge.lastPerAppScanDebug = perAppScanDiagMap.entries.joinToString(" || ") { (k, latest) ->
@@ -341,6 +348,7 @@ class DiagnosticRecorder {
         synchronized(srcProbeHistory) {
             srcProbeHistory.clear()
         }
+        systemTranslatorStatus = "na"
         synchronized(seenExternalPackages) {
             seenExternalPackages.clear()
         }

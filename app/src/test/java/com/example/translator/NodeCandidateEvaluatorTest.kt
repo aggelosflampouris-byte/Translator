@@ -724,5 +724,99 @@ class NodeCandidateEvaluatorTest {
         assertEquals("Pai aia zic, nu ma chinui azi, de maine incolo", evaluated.single().text)
         assertFalse(evaluated.single().isQuoted)
     }
+
+    @Test
+    fun assignMaxBottomBounds_clampsLongBubbleAboveNextSenderHeaderAndPopulatesRepliedContext() {
+        val whatsappProfile = TargetAppCatalog.profileForPackage("com.whatsapp")
+        val rawNodes = listOf(
+            // Fila 1: mensaje largo (~ Daria)
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(150, 300, 880, 560),
+                expandedRect = WindowRect(150, 300, 880, 560),
+                directText = "Pentru bursa de performanta trebuie sa completam ceva?",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 1,
+                parentNodeId = 10,
+                nodeId = 101
+            ),
+            // Fila 2: cabecera del siguiente remitente (~ Edward) + cita + respuesta
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(150, 620, 440, 660),
+                expandedRect = WindowRect(150, 620, 760, 660),
+                directText = "~ Edward",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 2,
+                parentNodeId = 21,
+                nodeId = 201
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(162, 675, 760, 735),
+                expandedRect = WindowRect(162, 675, 760, 735),
+                directText = "Unde depunem cererea?",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 2,
+                parentNodeId = 22,
+                nodeId = 202,
+                isInsideQuoteContainer = true
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(150, 750, 860, 840),
+                expandedRect = WindowRect(150, 750, 860, 840),
+                directText = "O sa completați un acord la secretariat",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 2,
+                parentNodeId = 20,
+                nodeId = 203
+            )
+        )
+
+        val evaluated = NodeCandidateEvaluator.evaluateBottomUp(
+            rawNodes = rawNodes,
+            minY = minY,
+            maxY = maxY,
+            screenWidth = screenWidth,
+            density = density,
+            configuredSource = TranslateLanguage.ROMANIAN,
+            configuredTarget = TranslateLanguage.GREEK,
+            profile = whatsappProfile
+        )
+        val barriers = NodeCandidateEvaluator.collectHeaderAndQuoteBarriers(
+            rawNodes = rawNodes,
+            configuredSource = TranslateLanguage.ROMANIAN,
+            density = density
+        )
+        val bounded = NodeCandidateEvaluator.assignMaxBottomBounds(
+            candidates = evaluated,
+            maxY = maxY,
+            density = density,
+            suppressedBarriers = barriers
+        )
+
+        assertEquals(2, bounded.size)
+        val dariaBubble = bounded[0]
+        val edwardReply = bounded[1]
+        assertTrue(dariaBubble.maxBottomPx <= 620)
+        assertEquals("Unde depunem cererea?", edwardReply.repliedMessageContext)
+    }
 }
 

@@ -489,4 +489,103 @@ class TranslationSenseEngineTest {
             )
         )
     }
+
+    @Test
+    fun pivotDisambiguationAndShortReplyEligibility_improveRomanianToGreekAccuracy() {
+        assertTrue(
+            TranslationSenseEngine.isEligibleSourceText(
+                "la p10 e de la 8-15",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
+                identifiedLang = "es",
+                conversationMatchesSource = true
+            )
+        )
+
+        assertEquals(
+            "pe ambele fețe",
+            TranslationSenseEngine.applyPreTranslationPivotDisambiguation("față-verso", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK)
+        )
+        assertEquals(
+            "viza de reședință temporară",
+            TranslationSenseEngine.applyPreTranslationPivotDisambiguation("viza de flotant", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK)
+        )
+        assertEquals(
+            "mergem în persoană",
+            TranslationSenseEngine.applyPreTranslationPivotDisambiguation("mergem fizic", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK)
+        )
+        assertEquals(
+            "chitanța de la STB",
+            TranslationSenseEngine.applyPreTranslationPivotDisambiguation("bonul de la STB", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK)
+        )
+        assertEquals(
+            "notei medii de la bacalaureat",
+            TranslationSenseEngine.applyPreTranslationPivotDisambiguation("mediei de la BAC", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK)
+        )
+        assertEquals(
+            "îl duceți la administratoarea până vineri",
+            TranslationSenseEngine.applyPreTranslationPivotDisambiguation("îl duceți la admina până vineri", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK)
+        )
+        assertEquals(
+            "o să completați",
+            TranslationSenseEngine.applyPreTranslationPivotDisambiguation("O să completați", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK)
+        )
+
+        assertEquals(
+            "μέχρι την Παρασκευή",
+            TranslationSenseEngine.applyPostTranslationSenseLogic(
+                "îl duceți până vineri",
+                "από την Παρασκευή",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK
+            )
+        )
+        assertEquals(
+            "στην Πρυτανεία",
+            TranslationSenseEngine.applyPostTranslationSenseLogic(
+                "la rectorat",
+                "στην Πρυτίδα",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK
+            )
+        )
+        assertEquals(
+            "Ολοκληρώστε",
+            TranslationSenseEngine.applyPostTranslationSenseLogic(
+                "O să completați",
+                "ολοκληρώστε",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK
+            )
+        )
+
+        // Regresión: un mensaje corto en otro idioma identificado con confianza ("de"/"en") no debe forzarse como rumano
+        assertFalse(
+            TranslationSenseEngine.isEligibleSourceText(
+                "genau",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
+                identifiedLang = "de",
+                conversationMatchesSource = true
+            )
+        )
+        assertFalse(
+            TranslationSenseEngine.isEligibleSourceText(
+                "Too early to ask this",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
+                identifiedLang = "en",
+                conversationMatchesSource = true
+            )
+        )
+        assertTrue(
+            TranslationSenseEngine.isEligibleSourceText(
+                "regele",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
+                identifiedLang = null,
+                conversationMatchesSource = true
+            )
+        )
+    }
 }

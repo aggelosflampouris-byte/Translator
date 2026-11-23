@@ -1,5 +1,6 @@
 package com.example.translator
 
+import android.annotation.SuppressLint
 import android.app.StatusBarManager
 import android.content.ComponentName
 import android.content.Context
@@ -97,6 +98,7 @@ class TranslationTileService : TileService() {
                     startActivityAndCollapse(pendingIntent)
                 } else {
                     @Suppress("DEPRECATION")
+                    @SuppressLint("StartActivityAndCollapseDeprecated")
                     startActivityAndCollapse(intent)
                 }
             } catch (e: Exception) {

@@ -19,6 +19,9 @@ object AppDefaults {
     // Por qué: Bandera para activar o desactivar la aplicación del glosario aprendido y validación contextual
     const val KEY_AI_ENABLED = "ai_translation_enabled"
 
+    // Por qué: Permite usar el traductor integrado de Android 12+ cuando el fabricante incluye el par en el dispositivo.
+    const val KEY_PREFER_SYSTEM_TRANSLATOR = "prefer_system_translator"
+
     // Por qué: Límite máximo de términos aprendidos incluidos como preferencia por solicitud.
     const val MAX_PREFERRED_TERMS = 8
 

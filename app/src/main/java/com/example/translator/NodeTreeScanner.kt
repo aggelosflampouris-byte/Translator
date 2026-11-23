@@ -10,7 +10,8 @@ data class MessageCandidate(
     val text: String,
     val bounds: Rect,
     val isQuoted: Boolean = false,
-    val maxBottomPx: Int = Int.MAX_VALUE
+    val maxBottomPx: Int = Int.MAX_VALUE,
+    val repliedMessageContext: String? = null
 )
 
 /**
@@ -49,7 +50,8 @@ data class EvaluatedCandidate(
     val nodeId: Int = 0,
     val isQuoted: Boolean = false,
     val maxBottomPx: Int = Int.MAX_VALUE,
-    val minReplyTopPx: Int = Int.MIN_VALUE
+    val minReplyTopPx: Int = Int.MIN_VALUE,
+    val repliedMessageContext: String? = null
 )
 
 /**
@@ -134,7 +136,7 @@ object NodeCandidateEvaluator {
     internal fun isSenderHeaderResourceId(viewIdName: String?): Boolean =
         MessageStructureRecognizer.isSenderHeaderResourceId(viewIdName)
 
-    fun evaluateBottomUp(
+    internal fun evaluateBottomUp(
         rawNodes: List<CollectedNodeSnapshot>,
         minY: Int,
         maxY: Int,
@@ -143,10 +145,12 @@ object NodeCandidateEvaluator {
         configuredSource: String,
         configuredTarget: String,
         profile: ChatAppProfile,
-        stats: ScanStats? = null
+        stats: ScanStats? = null,
+        precomputedAnalysis: NodeStructureAnalysis? = null
     ): List<EvaluatedCandidate> {
         if (rawNodes.isEmpty()) return emptyList()
-        val analysis = MessageStructureRecognizer.analyzeRawNodes(rawNodes, configuredSource, density)
+        val analysis = precomputedAnalysis
+            ?: MessageStructureRecognizer.analyzeRawNodes(rawNodes, configuredSource, density)
         val outList = mutableListOf<EvaluatedCandidate>()
         val subtreeMaxAccepted = IntArray(rawNodes.size)
         val subtreeAcceptedCounts = IntArray(rawNodes.size)
@@ -220,6 +224,7 @@ object NodeCandidateEvaluator {
                 item = item,
                 effectiveNodeId = effectiveId,
                 minReplyTopPx = analysis.minReplyTopByNodeIndex[i],
+                repliedMessageContext = analysis.repliedMessageByNodeIndex[i],
                 minY = minY,
                 maxY = maxY,
                 screenWidth = screenWidth,
@@ -341,7 +346,34 @@ object NodeCandidateEvaluator {
         return if (minArea > 0L) intersectArea.toFloat() / minArea.toFloat() else 0f
     }
 
-    fun assignMaxBottomBounds(candidates: List<EvaluatedCandidate>, maxY: Int, density: Float): List<EvaluatedCandidate> {
+    internal fun collectHeaderAndQuoteBarriers(
+        rawNodes: List<CollectedNodeSnapshot>,
+        configuredSource: String,
+        density: Float,
+        precomputedAnalysis: NodeStructureAnalysis? = null
+    ): List<Pair<Int, WindowRect>> {
+        if (rawNodes.isEmpty()) return emptyList()
+        val analysis = precomputedAnalysis
+            ?: MessageStructureRecognizer.analyzeRawNodes(rawNodes, configuredSource, density)
+        val barriers = ArrayList<Pair<Int, WindowRect>>()
+        for (i in rawNodes.indices) {
+            val role = analysis.roles[i]
+            if (role == MessageComponentRole.SENDER_NAME ||
+                role == MessageComponentRole.REPLIED_SENDER_NAME ||
+                role == MessageComponentRole.REPLIED_MESSAGE
+            ) {
+                barriers.add(rawNodes[i].rowId to rawNodes[i].rawRect)
+            }
+        }
+        return barriers
+    }
+
+    fun assignMaxBottomBounds(
+        candidates: List<EvaluatedCandidate>,
+        maxY: Int,
+        density: Float,
+        suppressedBarriers: List<Pair<Int, WindowRect>> = emptyList()
+    ): List<EvaluatedCandidate> {
         if (candidates.isEmpty()) return emptyList()
         val sorted = candidates.sortedWith(compareBy<EvaluatedCandidate> { it.bounds.top }.thenBy { it.bounds.left })
         val gapPx = (3 * density).toInt()
@@ -349,13 +381,24 @@ object NodeCandidateEvaluator {
         val verticalStepPx = (14 * density).toInt()
         return sorted.mapIndexed { idx, curr ->
             var limit = maxY
+            val minClampedHeight = curr.bounds.top + (20 * density).toInt()
             for (nextIdx in (idx + 1) until sorted.size) {
                 val next = sorted[nextIdx]
                 if (next.bounds.top < curr.bounds.top + verticalStepPx) continue
                 val horizOverlap = min(curr.bounds.right, next.bounds.right) > maxOf(curr.bounds.left, next.bounds.left) - horizSlopPx
                 if (horizOverlap) {
-                    limit = min(limit, (next.bounds.top - gapPx).coerceAtLeast(curr.bounds.top + (20 * density).toInt()))
+                    limit = min(limit, (next.bounds.top - gapPx).coerceAtLeast(minClampedHeight))
                     break
+                }
+            }
+            // Por qué: Aunque la cabecera o cita del mensaje siguiente no se traduzca, delimita el borde
+            // inferior para evitar que una burbuja alta tape el nombre del remitente posterior.
+            for ((barrierRowId, barrierRect) in suppressedBarriers) {
+                val differentRow = barrierRowId == 0 || curr.rowId == 0 || barrierRowId != curr.rowId
+                if (!differentRow || barrierRect.top < curr.bounds.top + verticalStepPx) continue
+                val horizOverlap = min(curr.bounds.right, barrierRect.right) > maxOf(curr.bounds.left, barrierRect.left) - horizSlopPx
+                if (horizOverlap) {
+                    limit = min(limit, (barrierRect.top - gapPx).coerceAtLeast(minClampedHeight))
                 }
             }
             curr.copy(maxBottomPx = limit)
@@ -437,6 +480,7 @@ object NodeCandidateEvaluator {
         item: CollectedNodeSnapshot,
         effectiveNodeId: Int,
         minReplyTopPx: Int,
+        repliedMessageContext: String?,
         minY: Int,
         maxY: Int,
         screenWidth: Int,
@@ -510,7 +554,8 @@ object NodeCandidateEvaluator {
                     rowId = item.rowId,
                     parentNodeId = item.parentNodeId,
                     nodeId = effectiveNodeId,
-                    minReplyTopPx = minReplyTopPx
+                    minReplyTopPx = minReplyTopPx,
+                    repliedMessageContext = repliedMessageContext
                 )
             )
             stats?.let {
@@ -614,6 +659,11 @@ class NodeTreeScanner(
         )
         if (rawNodes.isEmpty()) return emptyList()
 
+        val structureAnalysis = MessageStructureRecognizer.analyzeRawNodes(
+            rawNodes = rawNodes,
+            configuredSource = configuredSource,
+            density = displayBounds.density
+        )
         val evaluated = NodeCandidateEvaluator.evaluateBottomUp(
             rawNodes = rawNodes,
             minY = minY,
@@ -623,18 +673,26 @@ class NodeTreeScanner(
             configuredSource = configuredSource,
             configuredTarget = configuredTarget,
             profile = profile,
-            stats = stats
+            stats = stats,
+            precomputedAnalysis = structureAnalysis
         )
 
         val filtered = NodeCandidateEvaluator.filterOverlapping(evaluated, displayBounds.density)
+        val barriers = NodeCandidateEvaluator.collectHeaderAndQuoteBarriers(
+            rawNodes = rawNodes,
+            configuredSource = configuredSource,
+            density = displayBounds.density,
+            precomputedAnalysis = structureAnalysis
+        )
         return NodeCandidateEvaluator
-            .assignMaxBottomBounds(filtered, maxY, displayBounds.density)
+            .assignMaxBottomBounds(filtered, maxY, displayBounds.density, barriers)
             .map {
                 MessageCandidate(
                     text = it.text,
                     bounds = Rect(it.bounds.left, it.bounds.top, it.bounds.right, it.bounds.bottom),
                     isQuoted = it.isQuoted,
-                    maxBottomPx = it.maxBottomPx
+                    maxBottomPx = it.maxBottomPx,
+                    repliedMessageContext = it.repliedMessageContext
                 )
             }
     }
@@ -695,7 +753,11 @@ class NodeTreeScanner(
                     .lastOrNull()
                 if (winning != null) {
                     val b = winning.bounds
-                    return MessageCandidate(winning.text, Rect(b.left, b.top, b.right, b.bottom))
+                    return MessageCandidate(
+                        text = winning.text,
+                        bounds = Rect(b.left, b.top, b.right, b.bottom),
+                        repliedMessageContext = winning.repliedMessageContext
+                    )
                 }
                 return null
             }

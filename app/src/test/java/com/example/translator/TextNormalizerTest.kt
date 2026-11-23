@@ -116,4 +116,84 @@ class TextNormalizerTest {
             TextNormalizer.normalizeRomanianChatForTranslation("Durează 10 ms și 5 pt cu VR și GT")
         )
     }
+
+    @Test
+    fun normalizeRomanianChatForTranslation_handlesGroupChatCliticsAcronymsAndFataContext() {
+        assertEquals(
+            "Poza/scan față-verso cu cartela",
+            TextNormalizer.normalizeRomanianChatForTranslation("Poza/scan fata verso cu cartela")
+        )
+        assertEquals(
+            "de ce cer și spatele/fața",
+            TextNormalizer.normalizeRomanianChatForTranslation("de ce cer si spatele/fata")
+        )
+        assertEquals(
+            "De ce nu avem și noi stand de votat aici la rectorat",
+            TextNormalizer.normalizeRomanianChatForTranslation("De ce n avem si noi stand de votat aici la rectorat")
+        )
+        assertEquals(
+            "El așa s-a lăudat, dacă ne-a mințit ghinion pentru noi",
+            TextNormalizer.normalizeRomanianChatForTranslation("El asa s a lăudat, dacă ne a mințit ghinion pt noi")
+        )
+        assertEquals(
+            "Edi e șef de cămin la P10 anul ăsta?",
+            TextNormalizer.normalizeRomanianChatForTranslation("Edi e sef de camin la p10 anu asta?")
+        )
+        assertEquals(
+            "îl duceți la admina până vineri",
+            TextNormalizer.normalizeRomanianChatForTranslation("il duceti la admina pana vineri")
+        )
+        assertEquals(
+            "Că acum am permisiune",
+            TextNormalizer.normalizeRomanianChatForTranslation("Ca acum am permisiune")
+        )
+        assertEquals(
+            "O să completați un acord. Asta când o să se afișeze listele",
+            TextNormalizer.normalizeRomanianChatForTranslation("O sa completati un acord. Asta cand or sa se afiseze listele")
+        )
+        assertEquals(
+            "Bună",
+            TextNormalizer.normalizeRomanianChatForTranslation("Bunaa")
+        )
+        assertEquals(
+            "La ACS știu că se duc fizic",
+            TextNormalizer.normalizeRomanianChatForTranslation("La acs stiu ca se duc fizic")
+        )
+        assertEquals(
+            "Capitolul II din IL",
+            TextNormalizer.restoreRomanianDiacritics("Capitolul II din IL")
+        )
+        assertEquals(
+            "He's a student and it's a book",
+            TextNormalizer.normalizeRomanianChatForTranslation("He's a student and it's a book")
+        )
+
+        val detached = TextNormalizer.detachLeadingMentions("@~Edward vi pe la noi sa îți dam contractul?")
+        assertEquals("@~Edward ", detached.prefix)
+        assertEquals(
+            "vii pe la noi să îți dăm contractul?",
+            TextNormalizer.normalizeRomanianChatForTranslation(detached.body)
+        )
+
+        val multiWordPush = TextNormalizer.detachLeadingMentions("@~Vlad Chintoiu poza fata verso")
+        assertEquals("@~Vlad Chintoiu ", multiWordPush.prefix)
+        assertEquals("poza fata verso", multiWordPush.body)
+
+        val unicodePush = TextNormalizer.detachLeadingMentions("@~Ștefan ne vedem maine")
+        assertEquals("@~Ștefan ", unicodePush.prefix)
+        assertEquals("ne vedem maine", unicodePush.body)
+
+        val initialPush = TextNormalizer.detachLeadingMentions("@~Stefania V ai vazut?")
+        assertEquals("@~Stefania V ", initialPush.prefix)
+        assertEquals("ai vazut?", initialPush.body)
+
+        val starterGuard = TextNormalizer.detachLeadingMentions("@~Edward Ce faci azi?")
+        assertEquals("@~Edward ", starterGuard.prefix)
+        assertEquals("Ce faci azi?", starterGuard.body)
+
+        assertEquals(
+            "Și durează 500 ms sau 12 pt",
+            TextNormalizer.normalizeRomanianChatForTranslation("Si durează 500 ms sau 12 pt")
+        )
+    }
 }

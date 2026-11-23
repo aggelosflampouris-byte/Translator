@@ -129,6 +129,13 @@ fun SettingsScreen(
                 onOverlayThemeChanged = viewModel::setOverlayTheme
             )
 
+            if (uiState.isSystemTranslatorAvailable) {
+                SystemTranslatorCard(
+                    preferSystemTranslator = prefs.preferSystemTranslator,
+                    onToggle = viewModel::setPreferSystemTranslator
+                )
+            }
+
             OutlinedCard(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(14.dp),
@@ -308,6 +315,33 @@ private fun SettingsActionRow(
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+@Composable
+private fun SystemTranslatorCard(
+    preferSystemTranslator: Boolean,
+    onToggle: (Boolean) -> Unit
+) {
+    OutlinedCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Text(
+                text = stringResource(R.string.settings_system_translator_title),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            SettingsSwitchRow(
+                title = stringResource(R.string.settings_system_translator_switch),
+                subtitle = stringResource(R.string.settings_system_translator_subtitle),
+                checked = preferSystemTranslator,
+                onCheckedChange = onToggle
+            )
+        }
     }
 }
 

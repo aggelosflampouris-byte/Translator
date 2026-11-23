@@ -68,6 +68,7 @@ class TranslationAccessibilityService : AccessibilityService() {
     private lateinit var draftController: DraftTranslationController
     private lateinit var settingsObserver: ServiceSettingsObserver
     private lateinit var powerMonitor: ScreenPowerMonitor
+    private var systemTranslatorEngine: SystemOnDeviceTranslationEngine? = null
 
     private val languageIdentifier = LanguageIdentification.getClient()
     private val callGuard = TranslationCallGuard.shared
@@ -184,8 +185,18 @@ class TranslationAccessibilityService : AccessibilityService() {
         serviceScope.launch(Dispatchers.Default) {
             TranslationPipeline.preloadModels(this@TranslationAccessibilityService)
         }
+        probeSystemTranslatorAsync()
         coordinator.markScreenDirty()
         coordinator.scheduleContentScan(100L)
+    }
+
+    private fun probeSystemTranslatorAsync() {
+        val src = configuredSource
+        val tgt = configuredTarget
+        serviceScope.launch(Dispatchers.IO) {
+            diagnostics.systemTranslatorStatus =
+                SystemOnDeviceTranslationEngine.probeSummary(this@TranslationAccessibilityService, src, tgt)
+        }
     }
 
     private fun cacheKey(sourceLang: String, targetLang: String, text: String): String {
@@ -241,15 +252,19 @@ class TranslationAccessibilityService : AccessibilityService() {
             onTurnOffBubble = { stopAllFromSphere() }
         )
         learningStore = LearningStore.get(this)
+        diagnostics = DiagnosticRecorder()
+        val sysEngine = SystemOnDeviceTranslationEngine(this)
+        systemTranslatorEngine = sysEngine
         pipeline = TranslationPipeline(
             engine = MLKitTranslationEngine(),
             isGlossaryAndValidationEnabled = { isGlossaryAndValidationEnabled },
             memoryLookup = { src, tgt, txt -> if (isLearningEnabled) learningStore.lookupMemory(src, tgt, txt) else null },
             cacheLookup = ::getCachedTranslation,
             cacheStore = ::putCachedTranslation,
-            learnedCorrectionsApplier = { src, tgt, txt -> if (isLearningEnabled) learningStore.applyConfirmedCorrections(src, tgt, txt) else txt }
+            learnedCorrectionsApplier = { src, tgt, txt -> if (isLearningEnabled) learningStore.applyConfirmedCorrections(src, tgt, txt) else txt },
+            secondaryOnDeviceEngine = sysEngine,
+            preferSecondaryOnDeviceEngine = { settingsObserver.preferSystemTranslator }
         )
-        diagnostics = DiagnosticRecorder()
         sessionTracker = ForegroundSessionTracker(this, diagnostics)
         treeScanner = NodeTreeScanner { pkg -> sessionTracker.isEnabledTargetPackage(pkg) }
         coordinator = TranslationScanCoordinator(
@@ -295,6 +310,7 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         sessionTracker.enabledTargetPackages = initSettingsAndPowerMonitors()
         overlayManager.setOverlayTheme(settingsObserver.overlayTheme)
+        probeSystemTranslatorAsync()
 
         ServiceBridge.isAccessibilityActive = true
         diagnostics.connectCount++
@@ -928,98 +944,33 @@ class TranslationAccessibilityService : AccessibilityService() {
             // Por qué: Ejecuta detección de idioma y NMT en el pool paralelo acotado para no frenar el hilo Binder.
             serviceScope.launch(translationDispatcher + batchSupervisor) {
                 try {
-                    val detectedLang = if (
-                        TranslationSenseEngine.needsLanguageIdentification(cleanText, msgSource, msgTarget, alreadyCleaned = true)
-                    ) {
-                        identifyLanguageAsync(cleanText)
-                    } else {
-                        null
-                    }
-                    val isEligible = TranslationSenseEngine.isEligibleSourceText(
-                        text = cleanText,
-                        sourceLang = msgSource,
-                        targetLang = msgTarget,
-                        identifiedLang = detectedLang,
-                        conversationMatchesSource = conversationMatchesSource
+                    val isEligible = checkCandidateEligibility(
+                        cleanText = cleanText,
+                        msgSource = msgSource,
+                        msgTarget = msgTarget,
+                        conversationMatchesSource = conversationMatchesSource,
+                        fgPkg = fgPkg,
+                        generation = generation,
+                        batchId = batchId,
+                        overlayEpoch = overlayEpoch,
+                        slotsForText = slotsForText
                     )
-                    if (!isEligible) {
-                        diagnostics.appendTreeScanDiag("mlkit=ineligible(det=$detectedLang,len=${cleanText.length})")
-                        diagnostics.recordPerAppDiag(fgPkg, "mlkitNo($detectedLang,len=${cleanText.length})")
-                        postToMain(overlayEpoch) {
-                            if (generation == coordinator.scanGeneration.get() && batchId == activeBatchId.get()) {
-                                for (slot in slotsForText) {
-                                    overlayManager.removeBubbleForSlot(slot.bounds, cleanText)
-                                }
-                            }
-                        }
-                        return@launch
-                    }
+                    if (!isEligible) return@launch
 
-                    val translated = pipeline.translate(cleanText, msgSource, msgTarget, hints)
-                    if (translated.isNullOrBlank()) {
-                        diagnostics.appendTreeScanDiag("mlkit=null_output")
-                        postToMain(overlayEpoch) {
-                            if (generation == coordinator.scanGeneration.get() && batchId == activeBatchId.get()) {
-                                for (slot in slotsForText) {
-                                    overlayManager.removeBubbleForSlot(slot.bounds, cleanText)
-                                }
-                            }
-                        }
-                        return@launch
-                    }
-
-                    val timeSinceScroll = SystemClock.uptimeMillis() - coordinator.lastScrollTimestampMs
-                    if (generation != coordinator.scanGeneration.get() || batchId != activeBatchId.get()) {
-                        diagnostics.appendTreeScanDiag("pendGen")
-                        if (generation != coordinator.scanGeneration.get() && rescheduledOnGenMismatch.compareAndSet(false, true)) {
-                            val remainingQuiet = if (coordinator.isScreenScrolling) {
-                                ScanTimingPolicy.SCROLL_SETTLE_DELAY_MS
-                            } else {
-                                (ScanTimingPolicy.SCROLL_QUIET_THRESHOLD_MS + 20L - timeSinceScroll).coerceAtLeast(80L)
-                            }
-                            coordinator.scheduleContentScan(remainingQuiet)
-                        }
-                        return@launch
-                    }
-
-                    val liveFg = sessionTracker.state.lastForegroundTargetPackage != null ||
-                        sessionTracker.resolveForeground().packageName != null
-                    if (coordinator.isScreenScrolling ||
-                        timeSinceScroll < ScanTimingPolicy.SCROLL_QUIET_THRESHOLD_MS ||
-                        !liveFg ||
-                        !ServiceBridge.isTranslatingActive
-                    ) {
-                        diagnostics.appendTreeScanDiag("pendAbort(scr=${coordinator.isScreenScrolling},t=$timeSinceScroll,fg=$liveFg,act=${ServiceBridge.isTranslatingActive})")
-                        diagnostics.recordPerAppDiag(fgPkg, "pendAbort(scr=${coordinator.isScreenScrolling},t=$timeSinceScroll,fg=$liveFg)")
-                        return@launch
-                    }
-
-                    postToMain(overlayEpoch) {
-                        val genOk = generation == coordinator.scanGeneration.get()
-                        val batchOk = batchId == activeBatchId.get()
-                        val fgOkPost = sessionTracker.state.lastForegroundTargetPackage != null
-                        if (genOk && batchOk && ServiceBridge.isTranslatingActive && fgOkPost && !coordinator.isScreenScrolling) {
-                            coordinator.recordOverlayDrawn(overlayEpoch)
-                            for (slot in slotsForText) {
-                                overlayManager.addOrUpdateOverlay(
-                                    item = OverlayManager.OverlayRenderItem(
-                                        rect = slot.bounds,
-                                        sourceText = cleanText,
-                                        translatedText = translated,
-                                        isQuoted = slot.isQuoted,
-                                        maxBottomPx = slot.maxBottomPx
-                                    ),
-                                    profile = activeProfile,
-                                    scanId = batchId
-                                )
-                            }
-                            val firstRect = slotsForText.first().bounds
-                            diagnostics.appendTreeScanDiag("overlay=ok(cnt=${slotsForText.size},rect=${firstRect.left},${firstRect.top}-${firstRect.right},${firstRect.bottom})")
-                            diagnostics.recordPerAppDiag(fgPkg, "ov=${dedupedCandidates.size}(r=${diagnostics.lastRootOrigin})")
-                        } else {
-                            diagnostics.appendTreeScanDiag("postAbort(gen=$genOk,bat=$batchOk,act=${ServiceBridge.isTranslatingActive},fg=$fgOkPost,scr=${coordinator.isScreenScrolling})")
-                        }
-                    }
+                    translateSingleAndDeliver(
+                        cleanText = cleanText,
+                        slotsForText = slotsForText,
+                        msgSource = msgSource,
+                        msgTarget = msgTarget,
+                        hints = hints,
+                        activeProfile = activeProfile,
+                        dedupedCount = dedupedCandidates.size,
+                        fgPkg = fgPkg,
+                        generation = generation,
+                        batchId = batchId,
+                        overlayEpoch = overlayEpoch,
+                        rescheduledOnGenMismatch = rescheduledOnGenMismatch
+                    )
                 } finally {
                     inFlightKeys.remove(flightKey)
                 }
@@ -1027,6 +978,152 @@ class TranslationAccessibilityService : AccessibilityService() {
         }
 
         return ScanOutcome.TRANSLATED_OR_EMPTY
+    }
+
+    private suspend fun checkCandidateEligibility(
+        cleanText: String,
+        msgSource: String,
+        msgTarget: String,
+        conversationMatchesSource: Boolean,
+        fgPkg: String,
+        generation: Long,
+        batchId: Long,
+        overlayEpoch: Long,
+        slotsForText: List<MessageCandidate>
+    ): Boolean {
+        val detectedLang = if (
+            TranslationSenseEngine.needsLanguageIdentification(cleanText, msgSource, msgTarget, alreadyCleaned = true)
+        ) {
+            identifyLanguageAsync(cleanText)
+        } else {
+            null
+        }
+        val isEligible = TranslationSenseEngine.isEligibleSourceText(
+            text = cleanText,
+            sourceLang = msgSource,
+            targetLang = msgTarget,
+            identifiedLang = detectedLang,
+            conversationMatchesSource = conversationMatchesSource
+        )
+        if (!isEligible) {
+            diagnostics.appendTreeScanDiag("mlkit=ineligible(det=$detectedLang,len=${cleanText.length})")
+            diagnostics.recordPerAppDiag(fgPkg, "mlkitNo($detectedLang,len=${cleanText.length})")
+            postToMain(overlayEpoch) {
+                if (generation == coordinator.scanGeneration.get() && batchId == activeBatchId.get()) {
+                    for (slot in slotsForText) {
+                        overlayManager.removeBubbleForSlot(slot.bounds, cleanText)
+                    }
+                }
+            }
+            return false
+        }
+        return true
+    }
+
+    private suspend fun translateSingleAndDeliver(
+        cleanText: String,
+        slotsForText: List<MessageCandidate>,
+        msgSource: String,
+        msgTarget: String,
+        hints: TranslationHints,
+        activeProfile: ChatAppProfile,
+        dedupedCount: Int,
+        fgPkg: String,
+        generation: Long,
+        batchId: Long,
+        overlayEpoch: Long,
+        rescheduledOnGenMismatch: AtomicBoolean
+    ) {
+        val translated = pipeline.translate(cleanText, msgSource, msgTarget, hints)
+        if (translated.isNullOrBlank()) {
+            diagnostics.appendTreeScanDiag("mlkit=null_output")
+            postToMain(overlayEpoch) {
+                if (generation == coordinator.scanGeneration.get() && batchId == activeBatchId.get()) {
+                    for (slot in slotsForText) {
+                        overlayManager.removeBubbleForSlot(slot.bounds, cleanText)
+                    }
+                }
+            }
+            return
+        }
+        deliverTranslatedSlots(
+            cleanText = cleanText,
+            translated = translated,
+            slotsForText = slotsForText,
+            activeProfile = activeProfile,
+            dedupedCount = dedupedCount,
+            fgPkg = fgPkg,
+            generation = generation,
+            batchId = batchId,
+            overlayEpoch = overlayEpoch,
+            rescheduledOnGenMismatch = rescheduledOnGenMismatch
+        )
+    }
+
+    private fun deliverTranslatedSlots(
+        cleanText: String,
+        translated: String,
+        slotsForText: List<MessageCandidate>,
+        activeProfile: ChatAppProfile,
+        dedupedCount: Int,
+        fgPkg: String,
+        generation: Long,
+        batchId: Long,
+        overlayEpoch: Long,
+        rescheduledOnGenMismatch: AtomicBoolean
+    ) {
+        val timeSinceScroll = SystemClock.uptimeMillis() - coordinator.lastScrollTimestampMs
+        if (generation != coordinator.scanGeneration.get() || batchId != activeBatchId.get()) {
+            diagnostics.appendTreeScanDiag("pendGen")
+            if (generation != coordinator.scanGeneration.get() && rescheduledOnGenMismatch.compareAndSet(false, true)) {
+                val remainingQuiet = if (coordinator.isScreenScrolling) {
+                    ScanTimingPolicy.SCROLL_SETTLE_DELAY_MS
+                } else {
+                    (ScanTimingPolicy.SCROLL_QUIET_THRESHOLD_MS + 20L - timeSinceScroll).coerceAtLeast(80L)
+                }
+                coordinator.scheduleContentScan(remainingQuiet)
+            }
+            return
+        }
+
+        val liveFg = sessionTracker.state.lastForegroundTargetPackage != null ||
+            sessionTracker.resolveForeground().packageName != null
+        if (coordinator.isScreenScrolling ||
+            timeSinceScroll < ScanTimingPolicy.SCROLL_QUIET_THRESHOLD_MS ||
+            !liveFg ||
+            !ServiceBridge.isTranslatingActive
+        ) {
+            diagnostics.appendTreeScanDiag("pendAbort(scr=${coordinator.isScreenScrolling},t=$timeSinceScroll,fg=$liveFg,act=${ServiceBridge.isTranslatingActive})")
+            diagnostics.recordPerAppDiag(fgPkg, "pendAbort(scr=${coordinator.isScreenScrolling},t=$timeSinceScroll,fg=$liveFg)")
+            return
+        }
+
+        postToMain(overlayEpoch) {
+            val genOk = generation == coordinator.scanGeneration.get()
+            val batchOk = batchId == activeBatchId.get()
+            val fgOkPost = sessionTracker.state.lastForegroundTargetPackage != null
+            if (genOk && batchOk && ServiceBridge.isTranslatingActive && fgOkPost && !coordinator.isScreenScrolling) {
+                coordinator.recordOverlayDrawn(overlayEpoch)
+                for (slot in slotsForText) {
+                    overlayManager.addOrUpdateOverlay(
+                        item = OverlayManager.OverlayRenderItem(
+                            rect = slot.bounds,
+                            sourceText = cleanText,
+                            translatedText = translated,
+                            isQuoted = slot.isQuoted,
+                            maxBottomPx = slot.maxBottomPx
+                        ),
+                        profile = activeProfile,
+                        scanId = batchId
+                    )
+                }
+                val firstRect = slotsForText.first().bounds
+                diagnostics.appendTreeScanDiag("overlay=ok(cnt=${slotsForText.size},rect=${firstRect.left},${firstRect.top}-${firstRect.right},${firstRect.bottom})")
+                diagnostics.recordPerAppDiag(fgPkg, "ov=$dedupedCount(r=${diagnostics.lastRootOrigin})")
+            } else {
+                diagnostics.appendTreeScanDiag("postAbort(gen=$genOk,bat=$batchOk,act=${ServiceBridge.isTranslatingActive},fg=$fgOkPost,scr=${coordinator.isScreenScrolling})")
+            }
+        }
     }
 
     private fun handleMessageClicked(sourceNode: AccessibilityNodeInfo?) {
@@ -1173,6 +1270,8 @@ class TranslationAccessibilityService : AccessibilityService() {
         } catch (_: Exception) {
             // Ignorar error de cierre de ML Kit
         }
+        systemTranslatorEngine?.releaseAll()
+        systemTranslatorEngine = null
         TranslatorPool.releaseAll()
         synchronized(translationCache) { translationCache.evictAll() }
     }

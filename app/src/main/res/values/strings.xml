@@ -36,6 +36,9 @@
     <string name="sphere_menu_turn_off">Turn Off</string>
 
     <string name="settings_title">Settings</string>
+    <string name="settings_system_translator_title">System Translation</string>
+    <string name="settings_system_translator_switch">Prefer Android System Engine</string>
+    <string name="settings_system_translator_subtitle">Uses your device\'s built-in offline language pack with ML Kit fallback.</string>
     <string name="draft_switch_lang_desc">Switch translation language</string>
     <string name="draft_action_replace">Replace</string>
     <string name="draft_action_undo">Undo</string>

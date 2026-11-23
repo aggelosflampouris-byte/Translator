@@ -62,8 +62,23 @@ object TextNormalizer {
         "strada" to "stradă",
         "baiat" to "băiat",
         "baieti" to "băieți",
-        "fata" to "fată",
         "toti" to "toți",
+        "cat" to "cât",
+        "cati" to "câți",
+        "cate" to "câte",
+        "camin" to "cămin",
+        "sef" to "șef",
+        "sefa" to "șefa",
+        "acorda" to "acordă",
+        "performanta" to "performanță",
+        "completam" to "completăm",
+        "completati" to "completați",
+        "afiseze" to "afișeze",
+        "duceti" to "duceți",
+        "dam" to "dăm",
+        "lasa" to "lasă",
+        "baza" to "bază",
+        "semestru" to "semestrul",
         "bineinteles" to "bineînțeles",
         "inteles" to "înțeles",
         "impreuna" to "împreună",
@@ -139,9 +154,31 @@ object TextNormalizer {
         "npc" to "n-ai pentru ce"
     )
     private val RO_CONTEXT_MARKER_REGEX = Regex(
-        """(?iu)\b(și|si|să|în|îți|îmi|își|așa|nu|da|eu|tu|noi|voi|ce|cine|când|unde|cum|dacă|care|doar|sau|pentru|trebuie|cred|poți|vrei|faci|făcut|cineva|mulțumesc|mersi|pup|rămas|prins|chinui|abonamente|legitimația|ștampilate)\b"""
+        """(?iu)\b(și|si|să|în|îți|îmi|își|așa|nu|da|eu|tu|el|ea|noi|voi|ce|cine|când|unde|cum|dacă|care|doar|sau|pentru|trebuie|cred|poți|vrei|faci|făcut|cineva|mulțumesc|mersi|pup|rămas|prins|chinui|abonamente|legitimația|ștampilate|lăudat|mințit|rectorat|secretariat|cămin|cartela|cererea|bonul|bursa|dosar|permisiune|contractul|bună|salut)\b"""
     )
+    private val ELONGATED_WORD_RULES: List<Pair<Regex, String>> = listOf(
+        Regex("""(?iu)\bbun[aă]{2,}\b""") to "bună",
+        Regex("""(?iu)\bda{3,}\b""") to "da",
+        Regex("""(?iu)\bnu{3,}\b""") to "nu",
+        Regex("""(?iu)\bmultu{2,}\b""") to "mulțumesc",
+        Regex("""(?iu)\bsalu{2,}t+\b""") to "salut",
+        Regex("""(?iu)\bmersi{2,}\b""") to "mersi",
+        Regex("""(?iu)\bha{2,}i\b""") to "hai"
+    )
+    private val FATA_VERSO_REGEX = Regex("""(?iu)\bfata[\s/-]+verso\b""")
+    private val SPATELE_FATA_REGEX = Regex("""(?iu)\b(spatele)\s*/\s*(fata)\b""")
+    private val FATA_SPATE_REGEX = Regex("""(?iu)\b(fata)\s*/\s*(spate)\b""")
+    private val PREP_FATA_REGEX = Regex("""(?iu)\b(in|în|pe)\s+fata\b""")
+    private val FATA_DE_REGEX = Regex("""(?iu)\b(fata)\s+de\b""")
+    private val NEG_N_VERB_REGEX = Regex("""(?iu)(?<![\p{L}'’-])\b(n)\s+(avem|am|ai|are|au|ați|ati)\b""")
+    private val NEG_N_O_SA_REGEX = Regex("""(?iu)(?<![\p{L}'’-])\b(n)\s+o\s+(să|sa)\b""")
+    private val CLITIC_SA_SAU_REGEX = Regex("""(?iu)(?<![\p{L}'’-])\b(s)\s+(a|au)\s+(?=\p{L}{2,})""")
+    private val CLITIC_PRON_AUX_UNCONDITIONAL_REGEX = Regex("""(?iu)(?<![\p{L}'’-])\b(ne|mi|ti|ți)\s+(am|ai|a|au|ați|ati)\s+(?=\p{L}{2,})""")
+    private val CLITIC_INTR_DINTR_REGEX = Regex("""(?iu)(?<![\p{L}'’-])\b(intr|într|dintr)\s+(un|o)\b""")
+    private val CLITIC_SINGLE_PRON_AUX_REGEX = Regex("""(?iu)(?<![\p{L}'’-])\b(m|te|l|v|le)\s+(am|ai|a|au|ați|ati)\s+(?=\p{L}{2,})""")
+    private val CLITIC_SA_NU_PRON_REGEX = Regex("""(?iu)(?<![\p{L}'’-])\b(sa|să|nu)\s+(l|i|mi|ti|ți)\s+(?=\p{L}{2,})""")
     private val PHRASE_O_SA_REGEX = Regex("""(?iu)\bo\s+sa\b""")
+    private val PHRASE_OR_SA_REGEX = Regex("""(?iu)(?<![\p{L}'’-])\b(or)\s+(să|sa)\b""")
     private val PHRASE_NU_SA_MA_REGEX = Regex("""(?iu)\b(nu|sa|să)\s+ma\b""")
     private val PHRASE_AUX_SA_REGEX = Regex("""(?iu)\b(trebuie|vreau|vrea|vrei|poti|poți|poate|am|ai|are|avem|aveti|aveți|hai|haide|stai|sta|mergi|duci)\s+sa\b""")
     private val PHRASE_SA_DIE_REGEX = Regex("""\b([Ss][aă])\s+die\b""")
@@ -154,9 +191,71 @@ object TextNormalizer {
     private val PHRASE_VERB_CA_REGEX = Regex(
         """(?iu)\b(cred|zic|zice|spune|spun|stiu|știu|pare|parcă|gândesc|banuiesc|bănuiesc|vad|văd|auzit|aflat|scrie|pentru|fiindcă|deși|măcar)\s+ca\b"""
     )
-    private val PHRASE_CA_CLAUSE_REGEX = Regex("""(?iu)\bca\s+(nu|doar|numai|deja|e|este|sunt|am|ai|a|au|o|va|mai|poate|trebuie)\b""")
+    private val PHRASE_CA_CLAUSE_REGEX = Regex(
+        """(?iu)\bca\s+(nu|doar|numai|deja|e|este|sunt|am|ai|a|au|o|va|mai|poate|trebuie|acum|mâine|maine|azi|aici|acolo|eu|tu|el|ea|noi|voi|ei|ele|oricum|dacă|daca|după|dupa|pentru|fără|fara|tot|toți|toti)\b"""
+    )
+    private val PHRASE_VI_MOVEMENT_REGEX = Regex("""(?iu)(?<![\p{L}'’-])\b(vi)\s+(pe\s+la|la|cu|azi|mâine|maine|acum|aici|și|si)\b""")
     private val PHRASE_ANU_NUM_REGEX = Regex("""(?iu)\banu\s+(\d+)\b""")
-    private val DIGIT_BEFORE_UNIT_REGEX = Regex("""\d\s*$""")
+    private val PHRASE_ANU_DEMO_REGEX = Regex("""(?iu)\b(anu)\s+(asta|ăsta|trecut|viitor)\b""")
+    private val RO_CAMPUS_ACRONYM_REGEX = Regex("""(?i)(?<!\p{L})(acs|stb|fils|upb|bac)(?!\p{L})""")
+    private val RO_BUILDING_CODE_REGEX = Regex("""(?i)(?<!\p{L})p(\d{1,2})(?!\p{L})""")
+    private val SINGLE_LEADING_MENTION_REGEX = Regex("""^(@~?[\p{L}\p{N}_.-]+)([ \t]+)""")
+    private val NEXT_TOKEN_REGEX = Regex("""^([^\s]+)[ \t]+""")
+    private val SURNAME_OR_INITIAL_REGEX = Regex("""^(?:\p{Lu}\.?|\p{Lu}[\p{Ll}]{1,24})$""")
+    private val MENTION_SENTENCE_STARTERS = setOf(
+        "ce", "cum", "cand", "când", "unde", "care", "cine", "de", "nu", "da",
+        "sa", "să", "si", "și", "la", "pe", "cu", "in", "în", "pentru",
+        "poate", "daca", "dacă", "vezi", "hai", "buna", "bună", "salut",
+        "multumesc", "mulțumesc", "mersi", "am", "ai", "are", "avem", "este",
+        "sunt", "trebuie", "stii", "știi", "vii", "vino", "what", "when",
+        "where", "why", "how", "can", "do", "did", "is", "no", "yes", "please", "thanks"
+    )
+
+    data class DetachedLeadingMentions(
+        val prefix: String,
+        val body: String
+    )
+
+    /**
+     * Separa menciones iniciales (`@~Edward `, `@~Vlad Chintoiu `) antes de invocar la traducción
+     * para evitar que el token opaco PUA contamine la primera palabra o se traduzcan apellidos.
+     */
+    fun detachLeadingMentions(text: String): DetachedLeadingMentions {
+        var cursor = 0
+        while (cursor < text.length) {
+            val slice = text.substring(cursor)
+            val mentionMatch = SINGLE_LEADING_MENTION_REGEX.find(slice) ?: break
+            val token = mentionMatch.groupValues[1]
+            var nextCursor = cursor + mentionMatch.range.last + 1
+
+            // Por qué: Las menciones push de WhatsApp suelen incluir nombre y apellido (`@~Vlad Chintoiu `),
+            // pero solo absorbemos una segunda palabra capitalizada si no es inicio de frase ni única palabra.
+            if (token.startsWith("@~") && nextCursor < text.length) {
+                val afterMention = text.substring(nextCursor)
+                val secondMatch = NEXT_TOKEN_REGEX.find(afterMention)
+                if (secondMatch != null) {
+                    val secondToken = secondMatch.groupValues[1]
+                    val remainingStart = nextCursor + secondMatch.range.last + 1
+                    val hasBodyAfter = remainingStart < text.length && text.substring(remainingStart).any { !it.isWhitespace() }
+                    if (hasBodyAfter &&
+                        SURNAME_OR_INITIAL_REGEX.matches(secondToken) &&
+                        !MENTION_SENTENCE_STARTERS.contains(secondToken.lowercase())
+                    ) {
+                        nextCursor = remainingStart
+                    }
+                }
+            }
+            cursor = nextCursor
+        }
+        return if (cursor == 0) {
+            DetachedLeadingMentions("", text)
+        } else {
+            DetachedLeadingMentions(
+                prefix = text.substring(0, cursor),
+                body = text.substring(cursor)
+            )
+        }
+    }
 
     private val MULTI_WORD_DIACRITIC_RULES: List<Pair<Regex, String>> = listOf(
         "noapte buna" to "noapte bună",
@@ -192,7 +291,12 @@ object TextNormalizer {
         // saludos fijos ("bună seara", "bună dimineața") prevalezcan sobre formas indefinidas ("seară").
         result = WORD_BOUNDARY_REGEX.replace(result) { match ->
             val word = match.value
-            val replacement = ROMANIAN_DIACRITICS_MAP[word.lowercase()]
+            val lower = word.lowercase()
+            val replacement = when {
+                (lower == "il" || lower == "ii") && word != word.uppercase() -> if (lower == "il") "îl" else "îi"
+                (lower == "il" || lower == "ii") -> null
+                else -> ROMANIAN_DIACRITICS_MAP[lower]
+            }
             if (replacement != null) {
                 matchCasing(word, replacement)
             } else {
@@ -211,15 +315,45 @@ object TextNormalizer {
 
     /**
      * Prepara texto informal de chat grupal rumano antes de enviarlo a ML Kit NMT:
-     * restaura diacríticos léxicos y de frase, corrige erratas frecuentes (`sa die` -> `să fie`,
-     * `sa intrii` -> `să intri`) y expande abreviaturas en minúsculas (`vr`, `gt`, `cnv`, `fc`, `ms`, `pt`)
-     * preservando intactas las siglas en mayúsculas (`VR`, `GT`, `FC`, `LA`).
+     * colapsa alargamientos expresivos, restaura clíticos/negaciones sin guion y diacríticos de frase,
+     * y expande abreviaturas preservando siglas (`VR`, `GT`, `FC`, `LA`, `ACS`, `STB`, `P10`).
      */
     fun normalizeRomanianChatForTranslation(text: String): String {
         if (text.isBlank()) return text
-        var result = restoreRomanianDiacritics(text)
+        var result = normalizeRomanianCedillas(text)
+
+        for ((pattern, canonical) in ELONGATED_WORD_RULES) {
+            result = pattern.replace(result) { matchCasing(it.value, canonical) }
+        }
+
+        // Por qué: Resuelve "față"/"fața" por contexto antes del diccionario léxico para no confundir "față-verso" con "fată".
+        result = FATA_VERSO_REGEX.replace(result) { matchCasing(it.value.take(4), "față") + "-verso" }
+        result = SPATELE_FATA_REGEX.replace(result) { "${it.groupValues[1]}/${matchCasing(it.groupValues[2], "fața")}" }
+        result = FATA_SPATE_REGEX.replace(result) { "${matchCasing(it.groupValues[1], "față")}/spate" }
+        result = PREP_FATA_REGEX.replace(result) { "${it.groupValues[1]} față" }
+        result = FATA_DE_REGEX.replace(result) { "${matchCasing(it.groupValues[1], "față")} de" }
+
+        result = restoreRomanianDiacritics(result)
+
+        result = NEG_N_VERB_REGEX.replace(result) { match ->
+            val neg = matchCasing(match.groupValues[1], "nu")
+            val verb = if (match.groupValues[2].lowercase() == "ati") "ați" else match.groupValues[2]
+            "$neg $verb"
+        }
+        result = NEG_N_O_SA_REGEX.replace(result) { "${matchCasing(it.groupValues[1], "nu")} o să" }
+        result = CLITIC_SA_SAU_REGEX.replace(result) { "${it.groupValues[1]}-${it.groupValues[2]} " }
+        result = CLITIC_PRON_AUX_UNCONDITIONAL_REGEX.replace(result) { match ->
+            val pron = if (match.groupValues[1].lowercase() == "ti") matchCasing(match.groupValues[1], "ți") else match.groupValues[1]
+            val aux = if (match.groupValues[2].lowercase() == "ati") "ați" else match.groupValues[2]
+            "$pron-$aux "
+        }
+        result = CLITIC_INTR_DINTR_REGEX.replace(result) { match ->
+            val prefix = if (match.groupValues[1].lowercase() == "intr") matchCasing(match.groupValues[1], "într") else match.groupValues[1]
+            "$prefix-${match.groupValues[2]}"
+        }
 
         result = PHRASE_O_SA_REGEX.replace(result) { "${matchCasing(it.value.take(1), "o")} să" }
+        result = PHRASE_OR_SA_REGEX.replace(result) { "${matchCasing(it.groupValues[1].take(1), "o")} să" }
         result = PHRASE_NU_SA_MA_REGEX.replace(result) { match ->
             val first = match.groupValues[1]
             val fixedFirst = if (first.lowercase() == "sa") matchCasing(first, "să") else first
@@ -247,28 +381,54 @@ object TextNormalizer {
             val ca = match.value.substringBefore(' ')
             "${matchCasing(ca, "că")} ${match.groupValues[1]}"
         }
+        result = PHRASE_VI_MOVEMENT_REGEX.replace(result) { match ->
+            "${matchCasing(match.groupValues[1], "vii")} ${match.groupValues[2]}"
+        }
         result = PHRASE_ANU_NUM_REGEX.replace(result) { match ->
             val anu = match.value.substringBefore(' ')
             "${matchCasing(anu, "anul")} ${match.groupValues[1]}"
         }
+        result = PHRASE_ANU_DEMO_REGEX.replace(result) { match ->
+            val anu = match.groupValues[1]
+            val second = if (match.groupValues[2].lowercase() == "asta") matchCasing(match.groupValues[2], "ăsta") else match.groupValues[2]
+            "${matchCasing(anu, "anul")} $second"
+        }
 
         val hasRoContext = ScriptDetector.hasRomanianDiacritics(result) || RO_CONTEXT_MARKER_REGEX.containsMatchIn(result)
         if (hasRoContext) {
+            result = CLITIC_SINGLE_PRON_AUX_REGEX.replace(result) { match ->
+                val aux = if (match.groupValues[2].lowercase() == "ati") "ați" else match.groupValues[2]
+                "${match.groupValues[1]}-$aux "
+            }
+            result = CLITIC_SA_NU_PRON_REGEX.replace(result) { match ->
+                val conj = if (match.groupValues[1].lowercase() == "sa") matchCasing(match.groupValues[1], "să") else match.groupValues[1]
+                val pron = if (match.groupValues[2].lowercase() == "ti") matchCasing(match.groupValues[2], "ți") else match.groupValues[2]
+                "$conj-$pron "
+            }
             result = WORD_BOUNDARY_REGEX.replace(result) { match ->
                 val word = match.value
                 // Por qué: Solo expande abreviaturas de chat cuando van en minúsculas para no alterar siglas como VR, GT, FC o MS.
                 if (word.any { it.isUpperCase() }) return@replace word
-                val preceding = result.substring(0, match.range.first)
                 val expanded = when (word) {
-                    "ms", "mș" -> if (DIGIT_BEFORE_UNIT_REGEX.containsMatchIn(preceding)) null else "mulțumesc"
-                    "pt" -> if (DIGIT_BEFORE_UNIT_REGEX.containsMatchIn(preceding)) null else "pentru"
+                    "ms", "mș" -> if (hasPrecedingDigit(result, match.range.first)) null else "mulțumesc"
+                    "pt" -> if (hasPrecedingDigit(result, match.range.first)) null else "pentru"
                     else -> LOWERCASE_CHAT_ABBR_WORDS[word]
                 }
                 expanded ?: word
             }
+            result = RO_CAMPUS_ACRONYM_REGEX.replace(result) { it.groupValues[1].uppercase() }
+            result = RO_BUILDING_CODE_REGEX.replace(result) { "P${it.groupValues[1]}" }
         }
 
         return result
+    }
+
+    private fun hasPrecedingDigit(text: String, startIndex: Int): Boolean {
+        var idx = startIndex - 1
+        while (idx >= 0 && text[idx].isWhitespace()) {
+            idx--
+        }
+        return idx >= 0 && text[idx].isDigit()
     }
 
     private fun matchCasing(original: String, replacement: String): String {
@@ -287,7 +447,7 @@ object TextNormalizer {
     // Por qué: Protege emojis compuestos, @menciones y #hashtags para que ningún motor neuronal
     // traduzca ni corrompa identificadores o secuencias de símbolos especiales.
     private val EMOJI_PATTERN: Pattern = Pattern.compile(
-        """(@~?[A-Za-z0-9_.]+|#[\p{L}\p{N}_]+|[\x{1F300}-\x{1FAFF}\x{2600}-\x{26FF}\x{2700}-\x{27BF}\x{1F1E6}-\x{1F1FF}\x{1F600}-\x{1F64F}\x{1F680}-\x{1F6FF}\uFE0F\u200D]+)"""
+        """(@~?[\p{L}\p{N}_.]+|#[\p{L}\p{N}_]+|[\x{1F300}-\x{1FAFF}\x{2600}-\x{26FF}\x{2700}-\x{27BF}\x{1F1E6}-\x{1F1FF}\x{1F600}-\x{1F64F}\x{1F680}-\x{1F6FF}\uFE0F\u200D]+)"""
     )
 
     data class ProtectedResult(

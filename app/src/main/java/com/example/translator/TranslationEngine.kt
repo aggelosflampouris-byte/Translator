@@ -158,7 +158,9 @@ class TranslationPipeline(
     private val memoryLookup: (sourceLang: String, targetLang: String, text: String) -> String? = { _, _, _ -> null },
     private val cacheLookup: (sourceLang: String, targetLang: String, text: String) -> String? = { _, _, _ -> null },
     private val cacheStore: (sourceLang: String, targetLang: String, text: String, translation: String) -> Unit = { _, _, _, _ -> },
-    private val learnedCorrectionsApplier: (sourceLang: String, targetLang: String, text: String) -> String = { _, _, t -> t }
+    private val learnedCorrectionsApplier: (sourceLang: String, targetLang: String, text: String) -> String = { _, _, t -> t },
+    private val secondaryOnDeviceEngine: TranslationEngine? = null,
+    private val preferSecondaryOnDeviceEngine: () -> Boolean = { false }
 ) {
 
     companion object {
@@ -263,18 +265,58 @@ class TranslationPipeline(
 
         resolveFastClean(cleanInput, sourceLang, targetLang)?.let { return it }
 
-        val normalized = if (sourceLang == TranslateLanguage.ROMANIAN) {
-            TextNormalizer.normalizeRomanianChatForTranslation(cleanInput)
+        val detached = TextNormalizer.detachLeadingMentions(cleanInput)
+        val bodyInput = detached.body.trim()
+        if (bodyInput.isBlank() || !bodyInput.any { it.isLetter() }) return null
+
+        var normalized = if (sourceLang == TranslateLanguage.ROMANIAN) {
+            TextNormalizer.normalizeRomanianChatForTranslation(bodyInput)
         } else {
-            cleanInput
+            bodyInput
         }
+        if (isGlossaryAndValidationEnabled()) {
+            normalized = TranslationSenseEngine.applyPreTranslationPivotDisambiguation(
+                normalizedText = normalized,
+                sourceLang = sourceLang,
+                targetLang = targetLang
+            )
+        }
+
         val protected = TextNormalizer.protectEmojis(normalized)
-        val raw = engine.translate(protected.text, sourceLang, targetLang, hints) ?: return null
+        val raw = if (preferSecondaryOnDeviceEngine() && secondaryOnDeviceEngine != null) {
+            secondaryOnDeviceEngine.translate(protected.text, sourceLang, targetLang, hints)
+                ?: engine.translate(protected.text, sourceLang, targetLang, hints)
+        } else {
+            engine.translate(protected.text, sourceLang, targetLang, hints)
+        } ?: return null
         val restored = TextNormalizer.restoreEmojis(raw, protected.tokens)
-        val unwrapped = TextSanitizer.stripWrappingQuotes(restored, cleanInput)
+
+        return finalizeAndCacheTranslation(
+            rawOutput = restored,
+            cleanBodyForValidation = bodyInput,
+            sourceTextForPostLogic = normalized,
+            sourceLang = sourceLang,
+            targetLang = targetLang,
+            hints = hints,
+            cacheKeyText = cleanInput,
+            leadingPrefix = detached.prefix
+        )
+    }
+
+    private fun finalizeAndCacheTranslation(
+        rawOutput: String,
+        cleanBodyForValidation: String,
+        sourceTextForPostLogic: String,
+        sourceLang: String,
+        targetLang: String,
+        hints: TranslationHints,
+        cacheKeyText: String,
+        leadingPrefix: String
+    ): String? {
+        val unwrapped = TextSanitizer.stripWrappingQuotes(rawOutput, cleanBodyForValidation)
 
         val senseAdjusted = TranslationSenseEngine.applyPostTranslationSenseLogic(
-            originalText = normalized,
+            originalText = sourceTextForPostLogic,
             translatedText = unwrapped,
             sourceLang = sourceLang,
             targetLang = targetLang
@@ -292,11 +334,16 @@ class TranslationPipeline(
             senseAdjusted
         }
 
-        if (!isValidTranslation(withGlossary, cleanInput, targetLang)) {
+        if (!isValidTranslation(withGlossary, cleanBodyForValidation, targetLang)) {
             return null
         }
 
-        cacheStore(sourceLang, targetLang, cleanInput, withGlossary)
-        return withGlossary
+        val finalOutput = if (leadingPrefix.isNotEmpty()) {
+            "$leadingPrefix${withGlossary.trimStart()}"
+        } else {
+            withGlossary
+        }
+        cacheStore(sourceLang, targetLang, cacheKeyText, finalOutput)
+        return finalOutput
     }
 }

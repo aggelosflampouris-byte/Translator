@@ -1,5 +1,6 @@
 package com.example.translator
 
+import android.annotation.SuppressLint
 import android.app.Application
 import android.content.Context
 import android.content.Intent
@@ -38,6 +39,7 @@ class TranslatorApplication : Application() {
         }
     }
 
+    @SuppressLint("ApplySharedPref")
     private fun recordCrash(throwable: Throwable): CrashLoopPolicy.Decision {
         val prefs = getSharedPreferences(CRASH_PREFS, Context.MODE_PRIVATE)
         val now = System.currentTimeMillis()
@@ -66,9 +68,15 @@ class TranslatorApplication : Application() {
         }
     }
 
-    // Por qué: Elimina una sola vez cualquier archivo .gguf/.tmp residual (~1.3 GB) de versiones anteriores
+    // Por qué: Elimina una sola vez archivos .gguf/.tmp residuales y claves heredadas de versiones anteriores
     private fun purgeLegacyModelFilesAsync() {
         val prefs = getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
+        if (prefs.contains("gemini_api_key") || prefs.contains("cloud_ai_translation_enabled")) {
+            prefs.edit()
+                .remove("gemini_api_key")
+                .remove("cloud_ai_translation_enabled")
+                .apply()
+        }
         if (prefs.getBoolean(KEY_LEGACY_MODELS_PURGED, false)) return
         Thread {
             try {

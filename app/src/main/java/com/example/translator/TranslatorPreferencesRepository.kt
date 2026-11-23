@@ -20,7 +20,8 @@ data class TranslatorPreferences(
     val autoCheckUpdates: Boolean = true,
     val idleAutoPauseMinutes: Int = AppDefaults.DEFAULT_IDLE_AUTO_PAUSE_MINUTES,
     val enabledPackages: Set<String> = emptySet(),
-    val overlayTheme: String = AppDefaults.OVERLAY_THEME_AUTO
+    val overlayTheme: String = AppDefaults.OVERLAY_THEME_AUTO,
+    val preferSystemTranslator: Boolean = false
 )
 
 /**
@@ -106,6 +107,10 @@ class TranslatorPreferencesRepository(private val appContext: Context) {
         prefs.edit().putString(AppDefaults.KEY_OVERLAY_THEME, theme).apply()
     }
 
+    fun setPreferSystemTranslator(enabled: Boolean) {
+        prefs.edit().putBoolean(AppDefaults.KEY_PREFER_SYSTEM_TRANSLATOR, enabled).apply()
+    }
+
     fun close() {
         prefs.unregisterOnSharedPreferenceChangeListener(listener)
     }
@@ -133,7 +138,8 @@ class TranslatorPreferencesRepository(private val appContext: Context) {
             ),
             enabledPackages = TargetAppCatalog.getEnabledPackages(prefs, appContext.packageName),
             overlayTheme = prefs.getString(AppDefaults.KEY_OVERLAY_THEME, AppDefaults.OVERLAY_THEME_AUTO)
-                ?: AppDefaults.OVERLAY_THEME_AUTO
+                ?: AppDefaults.OVERLAY_THEME_AUTO,
+            preferSystemTranslator = prefs.getBoolean(AppDefaults.KEY_PREFER_SYSTEM_TRANSLATOR, false)
         )
     }
 
