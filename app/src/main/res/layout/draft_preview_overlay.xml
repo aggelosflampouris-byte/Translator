@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Por qué: Píldora flotante en dos zonas (cabecera compacta + texto completo) adaptable a ancho y tema del sistema -->
+<!-- Por qué: Píldora flotante minimalista con cierre vectorial y jerarquía limpia adaptable a tema y ancho -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/draft_container"
     android:layout_width="wrap_content"
@@ -7,12 +7,11 @@
     android:background="@drawable/bg_draft_bubble_dark"
     android:orientation="vertical"
     android:paddingStart="12dp"
-    android:paddingEnd="8dp"
-    android:paddingTop="6dp"
+    android:paddingEnd="10dp"
+    android:paddingTop="8dp"
     android:paddingBottom="10dp"
     android:elevation="10dp">
 
-    <!-- Fila superior: dirección de idioma interactiva, acción principal y cierre con área táctil cómoda -->
     <LinearLayout
         android:id="@+id/draft_header_row"
         android:layout_width="wrap_content"
@@ -31,9 +30,9 @@
             android:paddingTop="4dp"
             android:paddingBottom="4dp"
             android:singleLine="true"
-            android:text="EL → RO"
+            android:letterSpacing="0.03"
             android:textColor="#FF34D399"
-            android:textSize="11.5sp"
+            android:textSize="11sp"
             android:fontFamily="sans-serif-medium" />
 
         <View
@@ -56,32 +55,29 @@
             android:textSize="11.5sp"
             android:fontFamily="sans-serif-medium" />
 
-        <TextView
+        <ImageView
             android:id="@+id/draft_action_close"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
             android:layout_marginStart="4dp"
+            android:padding="7dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_close"
             android:background="@drawable/bg_draft_close_btn_dark"
-            android:contentDescription="@string/draft_dismiss_desc"
-            android:gravity="center"
-            android:text="✕"
-            android:textColor="#FF94A3B8"
-            android:textSize="13sp"
-            android:fontFamily="sans-serif-medium" />
+            android:contentDescription="@string/draft_dismiss_desc" />
     </LinearLayout>
 
-    <!-- Vista previa completa del borrador traducido con interlineado nítido -->
     <TextView
         android:id="@+id/draft_text"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
+        android:layout_marginTop="6dp"
         android:paddingStart="0dp"
-        android:paddingEnd="4dp"
+        android:paddingEnd="2dp"
         android:textColor="#FFF8FAFC"
         android:textSize="14sp"
         android:fontFamily="sans-serif"
         android:maxLines="3"
         android:ellipsize="end"
-        android:lineSpacingExtra="2dp" />
+        android:lineSpacingMultiplier="1.12" />
 </LinearLayout>

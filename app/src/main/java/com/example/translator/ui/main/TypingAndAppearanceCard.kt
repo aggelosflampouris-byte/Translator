@@ -1,7 +1,9 @@
 package com.example.translator.ui.main
 
 import android.os.Build
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -10,30 +12,34 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.translator.AppDefaults
+import com.example.translator.R
 import com.example.translator.TargetAppCatalog
+import com.example.translator.ui.components.OverChatSectionCard
+import com.example.translator.ui.components.OverChatSectionLabel
+import com.example.translator.ui.components.OverChatSegmentedControl
 
 /**
  * Tarjeta principal de controles rápidos, apps compatibles y diccionario personal unificado.
- *
- * Por qué: Reemplaza las dos tarjetas anteriores de escritura/aprendizaje/tema para dejar en portada
- * solo acciones de uso diario con navegación directa hacia los submenús.
  */
 @Composable
 fun ControlsAndAppsCard(
@@ -78,62 +84,26 @@ fun ControlsAndAppsCard(
         "$countText$stateSuffix"
     }
 
-    OutlinedCard(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OverChatSectionLabel(text = "Controls & Apps")
+
+        OverChatSectionCard {
             Text(
-                text = "Controls",
+                text = "Quick control surface",
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onSurface
             )
-            Spacer(modifier = Modifier.height(6.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                FilterChip(
-                    selected = controlInterface == AppDefaults.INTERFACE_NOTIFICATION,
-                    onClick = { onControlInterfaceChanged(AppDefaults.INTERFACE_NOTIFICATION) },
-                    enabled = settingsEnabled,
-                    label = {
-                        Text(
-                            text = "Notification",
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    },
-                    modifier = Modifier.weight(1f)
-                )
-                FilterChip(
-                    selected = controlInterface == AppDefaults.INTERFACE_BUBBLE,
-                    onClick = { onControlInterfaceChanged(AppDefaults.INTERFACE_BUBBLE) },
-                    enabled = settingsEnabled,
-                    label = {
-                        Text(
-                            text = "Floating",
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    },
-                    modifier = Modifier.weight(1f)
-                )
-                FilterChip(
-                    selected = controlInterface == AppDefaults.INTERFACE_TILE,
-                    onClick = { onControlInterfaceChanged(AppDefaults.INTERFACE_TILE) },
-                    enabled = settingsEnabled,
-                    label = {
-                        Text(
-                            text = "Quick Tile",
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    },
-                    modifier = Modifier.weight(1f)
-                )
-            }
+            Spacer(modifier = Modifier.height(8.dp))
+            OverChatSegmentedControl(
+                options = listOf(
+                    AppDefaults.INTERFACE_NOTIFICATION to "Notification",
+                    AppDefaults.INTERFACE_BUBBLE to "Floating",
+                    AppDefaults.INTERFACE_TILE to "Quick Tile"
+                ),
+                selectedValue = controlInterface,
+                enabled = settingsEnabled,
+                onSelected = onControlInterfaceChanged
+            )
 
             ControlHintRow(
                 controlInterface = controlInterface,
@@ -142,8 +112,9 @@ fun ControlsAndAppsCard(
             )
 
             HorizontalDivider(
-                modifier = Modifier.padding(vertical = 10.dp),
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                modifier = Modifier.padding(vertical = 14.dp),
+                thickness = 0.5.dp,
+                color = MaterialTheme.colorScheme.outlineVariant
             )
 
             NavigationSummaryRow(
@@ -154,8 +125,9 @@ fun ControlsAndAppsCard(
             )
 
             HorizontalDivider(
-                modifier = Modifier.padding(vertical = 10.dp),
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                modifier = Modifier.padding(vertical = 12.dp),
+                thickness = 0.5.dp,
+                color = MaterialTheme.colorScheme.outlineVariant
             )
 
             NavigationSummaryRow(
@@ -177,7 +149,7 @@ private fun ControlHintRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 4.dp),
+            .padding(top = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
@@ -185,7 +157,7 @@ private fun ControlHintRow(
             AppDefaults.INTERFACE_NOTIFICATION -> "Pause, resume, or scan from your notification shade."
             AppDefaults.INTERFACE_BUBBLE -> "Tap floating sphere to pause or resume. Hold for options."
             else -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                "Toggle OverChat from Quick Settings."
+                "Toggle OverChat directly from Android Quick Settings."
             } else {
                 "Swipe down twice, tap Edit, and drag OverChat into Quick Settings."
             }
@@ -221,8 +193,9 @@ private fun NavigationSummaryRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(vertical = 2.dp),
+            .padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -245,16 +218,17 @@ private fun NavigationSummaryRow(
                 overflow = TextOverflow.Ellipsis
             )
         }
-        Text(
-            text = "›",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+        Icon(
+            painter = painterResource(id = R.drawable.ic_chevron_right),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp)
         )
     }
 }
 
 /**
- * Tarjeta reutilizable de tema visual de las burbujas traducidas (mostrada en Ajustes).
+ * Tarjeta de apariencia visual con previsualización en vivo de burbujas según el tema seleccionado.
  */
 @Composable
 fun BubbleThemeCard(
@@ -262,50 +236,103 @@ fun BubbleThemeCard(
     settingsEnabled: Boolean,
     onOverlayThemeChanged: (String) -> Unit
 ) {
-    OutlinedCard(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Text(
-                text = "Overlay Bubble Theme",
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = "Matches dark mode automatically or locks a fixed bubble style.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+    val isSystemDark = isSystemInDarkTheme()
+    val useLightPreview = overlayTheme == AppDefaults.OVERLAY_THEME_LIGHT ||
+        (overlayTheme == AppDefaults.OVERLAY_THEME_AUTO && !isSystemDark)
+
+    val previewBackdrop = if (useLightPreview) Color(0xFFEFEAE2) else Color(0xFF0B141A)
+    val incomingBg = if (useLightPreview) Color(0xFFF8FAFC) else Color(0xFF202C33)
+    val incomingBorder = if (useLightPreview) Color(0xFFCBD5E1) else Color(0xFF2A3942)
+    val quotedBg = if (useLightPreview) Color(0xFFE2E8F0) else Color(0xFF172128)
+    val outgoingBg = if (useLightPreview) Color(0xFFE0F2FE) else Color(0xFF005C4B)
+    val outgoingBorder = if (useLightPreview) Color(0xFFBAE6FD) else Color(0xFF025144)
+    val bubbleInk = if (useLightPreview) Color(0xFF0F172A) else Color(0xFFE9EDEF)
+    val quotedInk = if (useLightPreview) Color(0xFF334155) else Color(0xFFD1D7DB)
+
+    OverChatSectionCard {
+        Text(
+            text = "Overlay Bubble Style",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(modifier = Modifier.height(3.dp))
+        Text(
+            text = "Matches dark mode automatically or locks a fixed bubble palette.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Vista previa realista con dos burbujas que reacciona al instante al cambiar el tema.
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            color = previewBackdrop,
+            border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                val themeOptions = listOf(
-                    AppDefaults.OVERLAY_THEME_AUTO to "Auto",
-                    AppDefaults.OVERLAY_THEME_LIGHT to "Light",
-                    AppDefaults.OVERLAY_THEME_WHATSAPP to "Classic"
-                )
-                themeOptions.forEach { (value, label) ->
-                    FilterChip(
-                        selected = overlayTheme == value,
-                        onClick = { onOverlayThemeChanged(value) },
-                        enabled = settingsEnabled,
-                        label = {
+                Surface(
+                    shape = RoundedCornerShape(topStart = 5.dp, topEnd = 14.dp, bottomStart = 14.dp, bottomEnd = 14.dp),
+                    color = incomingBg,
+                    border = BorderStroke(0.75.dp, incomingBorder)
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)) {
+                        Surface(
+                            shape = RoundedCornerShape(7.dp),
+                            color = quotedBg
+                        ) {
                             Text(
-                                text = label,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                text = "Do we meet at 6?",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = quotedInk,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
                             )
-                        },
-                        modifier = Modifier.weight(1f)
-                    )
+                        }
+                        Spacer(modifier = Modifier.height(5.dp))
+                        Text(
+                            text = "Yes, see you outside the library.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = bubbleInk
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(topStart = 14.dp, topEnd = 5.dp, bottomStart = 14.dp, bottomEnd = 14.dp),
+                        color = outgoingBg,
+                        border = BorderStroke(0.75.dp, outgoingBorder)
+                    ) {
+                        Text(
+                            text = "Perfect, on my way now.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = bubbleInk,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+                        )
+                    }
                 }
             }
         }
+
+        Spacer(modifier = Modifier.height(12.dp))
+        OverChatSegmentedControl(
+            options = listOf(
+                AppDefaults.OVERLAY_THEME_AUTO to "Auto",
+                AppDefaults.OVERLAY_THEME_LIGHT to "Light",
+                AppDefaults.OVERLAY_THEME_WHATSAPP to "Classic"
+            ),
+            selectedValue = overlayTheme,
+            enabled = settingsEnabled,
+            onSelected = onOverlayThemeChanged
+        )
     }
 }
 

@@ -11,44 +11,55 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
-// Esquema oscuro refinado con alto contraste y sin saturaciones chillonas
+// Esquema oscuro refinado con superficies escalonadas de bajo deslumbramiento
 private val DarkColorScheme = darkColorScheme(
     primary = Emerald500,
-    onPrimary = Color.White,
-    primaryContainer = Emerald700,
-    onPrimaryContainer = Emerald100,
-    secondary = Slate400,
-    onSecondary = Slate900,
-    surface = Slate800,
-    onSurface = Slate50,
-    surfaceVariant = Slate700,
-    onSurfaceVariant = Slate400,
-    background = Slate900,
-    onBackground = Slate50,
-    outline = Slate600
+    onPrimary = ObsidianBg,
+    primaryContainer = EmeraldDarkContainer,
+    onPrimaryContainer = EmeraldDarkOnContainer,
+    secondary = InkMutedDark,
+    onSecondary = ObsidianBg,
+    surface = ObsidianSurface,
+    onSurface = InkLight,
+    surfaceVariant = ObsidianSurfaceHigh,
+    onSurfaceVariant = InkMutedDark,
+    surfaceContainer = ObsidianSurface,
+    surfaceContainerHigh = ObsidianSurfaceHigh,
+    background = ObsidianBg,
+    onBackground = InkLight,
+    outline = Slate700,
+    outlineVariant = ObsidianBorder,
+    error = ErrorDark,
+    onError = ObsidianBg
 )
 
-// Esquema claro equilibrado para legibilidad diurna
+// Esquema claro minimalista con papel neutro y bordes capilares sutiles
 private val LightColorScheme = lightColorScheme(
     primary = Emerald600,
-    onPrimary = Color.White,
-    primaryContainer = Emerald100,
-    onPrimaryContainer = Emerald700,
-    secondary = Slate600,
-    onSecondary = Color.White,
-    surface = Color.White,
-    onSurface = Slate900,
-    surfaceVariant = Slate200,
-    onSurfaceVariant = Slate600,
-    background = Slate50,
-    onBackground = Slate900,
-    outline = Slate400
+    onPrimary = PaperSurface,
+    primaryContainer = EmeraldLightContainer,
+    onPrimaryContainer = EmeraldLightOnContainer,
+    secondary = InkMutedLight,
+    onSecondary = PaperSurface,
+    surface = PaperSurface,
+    onSurface = InkDark,
+    surfaceVariant = PaperSurfaceHigh,
+    onSurfaceVariant = InkMutedLight,
+    surfaceContainer = PaperSurface,
+    surfaceContainerHigh = PaperSurfaceHigh,
+    background = PaperBg,
+    onBackground = InkDark,
+    outline = Slate400,
+    outlineVariant = PaperBorder,
+    error = ErrorLight,
+    onError = PaperSurface
 )
 
 @Composable
 fun TranslatorTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
+    // Por qué: Mantener la paleta de marca fija armoniza los menús con las burbujas flotantes esmeralda/obsidiana.
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val colorScheme = when {

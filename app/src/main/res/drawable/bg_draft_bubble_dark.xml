@@ -1,11 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Fondo oscuro elevado para la píldora flotante del borrador -->
+<!-- Fondo oscuro elevado para la píldora flotante del borrador y toque individual -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
-    <solid android:color="#FF162032" />
-    <corners android:radius="18dp" />
+    <solid android:color="#F7131922" />
+    <corners android:radius="16dp" />
     <stroke
-        android:width="1dp"
-        android:color="#FF2D3B52" />
+        android:width="0.75dp"
+        android:color="#FF263244" />
 </shape>
-

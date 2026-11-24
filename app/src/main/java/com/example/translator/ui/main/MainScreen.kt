@@ -13,6 +13,11 @@ import android.widget.Toast
 import androidx.core.net.toUri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -27,10 +32,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -202,10 +209,10 @@ fun MainScreen(
             modifier = modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 16.dp, vertical = 10.dp)
+                .padding(horizontal = 16.dp, vertical = 12.dp)
                 .verticalScroll(scrollState),
             horizontalAlignment = Alignment.Start,
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             MainScreenHeader(
                 displayState = displayState,
@@ -283,7 +290,9 @@ private fun MainScreenHeader(
     onOpenSettings: () -> Unit
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -295,10 +304,10 @@ private fun MainScreenHeader(
                 painter = painterResource(id = R.drawable.ic_overchat_logo),
                 contentDescription = stringResource(R.string.app_name),
                 modifier = Modifier
-                    .size(42.dp)
+                    .size(38.dp)
                     .clip(RoundedCornerShape(10.dp))
             )
-            Spacer(modifier = Modifier.width(10.dp))
+            Spacer(modifier = Modifier.width(12.dp))
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -310,25 +319,39 @@ private fun MainScreenHeader(
                         val isTranslating = displayState == SessionDisplayState.TRANSLATING
                         Spacer(modifier = Modifier.width(8.dp))
                         Surface(
-                            shape = RoundedCornerShape(6.dp),
+                            shape = RoundedCornerShape(999.dp),
                             color = if (isTranslating) {
                                 MaterialTheme.colorScheme.primaryContainer
                             } else {
                                 MaterialTheme.colorScheme.surfaceVariant
                             }
                         ) {
-                            Text(
-                                text = stringResource(
-                                    if (isTranslating) R.string.status_translating else R.string.status_paused
-                                ),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (isTranslating) {
-                                    MaterialTheme.colorScheme.onPrimaryContainer
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                },
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Surface(
+                                    modifier = Modifier.size(6.dp),
+                                    shape = CircleShape,
+                                    color = if (isTranslating) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    }
+                                ) {}
+                                Text(
+                                    text = stringResource(
+                                        if (isTranslating) R.string.status_translating else R.string.status_paused
+                                    ),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (isTranslating) {
+                                        MaterialTheme.colorScheme.onPrimaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -347,9 +370,11 @@ private fun MainScreenHeader(
             horizontalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             Surface(
-                shape = RoundedCornerShape(8.dp),
+                shape = RoundedCornerShape(999.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant,
-                modifier = Modifier.clickable(onClick = onCheckUpdates)
+                modifier = Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .clickable(onClick = onCheckUpdates)
             ) {
                 Text(
                     text = if (isCheckingForUpdate) "Checking..." else "v${BuildConfig.VERSION_NAME}",
@@ -380,94 +405,109 @@ private fun MainActionBottomBar(
     onStop: () -> Unit
 ) {
     Surface(
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 2.dp
+        color = MaterialTheme.colorScheme.surface
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(horizontal = 16.dp, vertical = 10.dp)
+            modifier = Modifier.fillMaxWidth()
         ) {
-            when {
-                !allPermissionsGranted -> {
-                    Button(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        enabled = false,
-                        onClick = {}
-                    ) {
-                        Text(
-                            text = stringResource(R.string.action_grant_permissions),
-                            style = MaterialTheme.typography.labelLarge,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-                displayState != SessionDisplayState.OFF -> {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        FilledTonalButton(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(48.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            onClick = onTogglePauseResume
-                        ) {
-                            Text(
-                                text = stringResource(
-                                    if (displayState == SessionDisplayState.TRANSLATING) {
-                                        R.string.action_pause
-                                    } else {
-                                        R.string.action_resume
-                                    }
-                                ),
-                                style = MaterialTheme.typography.labelLarge,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+            HorizontalDivider(
+                thickness = 0.5.dp,
+                color = MaterialTheme.colorScheme.outlineVariant
+            )
+            AnimatedContent(
+                targetState = Triple(allPermissionsGranted, displayState != SessionDisplayState.OFF, displayState == SessionDisplayState.TRANSLATING),
+                transitionSpec = {
+                    fadeIn(tween(180)) togetherWith fadeOut(tween(140))
+                },
+                label = "bottomBarState"
+            ) { (permsGranted, isRunning, isTranslating) ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                ) {
+                    when {
+                        !permsGranted -> {
+                            Button(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(50.dp),
+                                shape = RoundedCornerShape(14.dp),
+                                enabled = false,
+                                onClick = {}
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.action_grant_permissions),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
-                        OutlinedButton(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(48.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            onClick = onStop
-                        ) {
-                            Text(
-                                text = stringResource(R.string.action_stop_service),
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.error,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                        isRunning -> {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                FilledTonalButton(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(50.dp),
+                                    shape = RoundedCornerShape(14.dp),
+                                    onClick = onTogglePauseResume
+                                ) {
+                                    Text(
+                                        text = stringResource(
+                                            if (isTranslating) {
+                                                R.string.action_pause
+                                            } else {
+                                                R.string.action_resume
+                                            }
+                                        ),
+                                        style = MaterialTheme.typography.labelLarge,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                OutlinedButton(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(50.dp),
+                                    shape = RoundedCornerShape(14.dp),
+                                    onClick = onStop
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.action_stop_service),
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.error,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
                         }
-                    }
-                }
-                else -> {
-                    Button(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        onClick = onStart
-                    ) {
-                        val actionRes = when (controlInterface) {
-                            AppDefaults.INTERFACE_NOTIFICATION -> R.string.action_start_notification
-                            AppDefaults.INTERFACE_BUBBLE -> R.string.action_start_sphere
-                            else -> R.string.action_start_translation
+                        else -> {
+                            Button(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(50.dp),
+                                shape = RoundedCornerShape(14.dp),
+                                onClick = onStart
+                            ) {
+                                val actionRes = when (controlInterface) {
+                                    AppDefaults.INTERFACE_NOTIFICATION -> R.string.action_start_notification
+                                    AppDefaults.INTERFACE_BUBBLE -> R.string.action_start_sphere
+                                    else -> R.string.action_start_translation
+                                }
+                                Text(
+                                    text = stringResource(actionRes),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
-                        Text(
-                            text = stringResource(actionRes),
-                            style = MaterialTheme.typography.labelLarge,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
                     }
                 }
             }

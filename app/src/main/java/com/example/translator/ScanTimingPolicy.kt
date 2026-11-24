@@ -14,8 +14,8 @@ object ScanTimingPolicy {
     const val MAX_CONTENT_STARVATION_MS = 600L
     const val SINGLE_FLIGHT_THROTTLE_MS = 90L
 
-    const val SCROLL_SETTLE_DELAY_MS = 220L
-    const val SCROLL_QUIET_THRESHOLD_MS = 240L
+    const val SCROLL_SETTLE_DELAY_MS = 170L
+    const val SCROLL_QUIET_THRESHOLD_MS = 185L
     const val SCROLL_FORCE_CLEAR_MS = 400L
 
     const val DRAFT_FAST_PATH_DELAY_MS = 35L

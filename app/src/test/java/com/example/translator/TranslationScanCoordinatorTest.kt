@@ -268,5 +268,41 @@ class TranslationScanCoordinatorTest {
 
         coordinator.stopAll()
     }
+
+    @Test
+    fun scrollStarted_usesSoftHideCallbackWhenProvided_whileInvalidateStillCallsHardClear() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val mainQueue = ArrayDeque<() -> Unit>()
+        var softHideCalls = 0
+        var hardMessageClearCalls = 0
+        var fullClearCalls = 0
+
+        val coordinator = TranslationScanCoordinator(
+            scope = backgroundScope,
+            workerDispatcher = dispatcher,
+            postToMain = { mainQueue.addLast(it) },
+            isTranslatingActive = { true },
+            isTapMode = { false },
+            isScrollQuieted = { true },
+            uptimeMs = { 10_000L + testScheduler.currentTime },
+            isKeyboardVisible = { false },
+            onClearAllOverlays = { fullClearCalls++ },
+            onClearMessageOverlays = { hardMessageClearCalls++ },
+            executeScan = { _, _, _, _ -> ScanOutcome.TRANSLATED_OR_EMPTY },
+            onScrollHideMessageOverlays = { softHideCalls++ }
+        )
+
+        coordinator.onScrollStarted(eventSourceToken = null)
+        while (mainQueue.isNotEmpty()) mainQueue.removeFirst().invoke()
+
+        assertEquals(1, softHideCalls)
+        assertEquals(0, hardMessageClearCalls)
+
+        coordinator.invalidateAndClearAllOverlays()
+        while (mainQueue.isNotEmpty()) mainQueue.removeFirst().invoke()
+
+        assertEquals(1, fullClearCalls)
+        coordinator.stopAll()
+    }
 }
 

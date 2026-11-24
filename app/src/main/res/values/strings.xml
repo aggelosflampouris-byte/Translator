@@ -46,6 +46,16 @@
     <string name="draft_undo_caption">Inserted in chat · Tap Undo to restore</string>
     <string name="draft_dismiss_desc">Dismiss translation preview</string>
 
+    <string name="pill_action_original">Original</string>
+    <string name="pill_action_translated">Translated</string>
+    <string name="pill_action_copy">Copy</string>
+    <string name="pill_action_copied">✓ Copied</string>
+    <string name="pill_close_desc">Close translation</string>
+    <string name="nav_back_desc">Back</string>
+    <string name="lang_picker_title_from">Translate from</string>
+    <string name="lang_picker_title_to">Translate to</string>
+    <string name="swap_languages_desc">Swap languages</string>
+
     <string name="perm_card_title">System Permissions</string>
     <string name="perm_accessibility_label">Accessibility Service</string>
     <string name="perm_notifications_label">Notifications</string>

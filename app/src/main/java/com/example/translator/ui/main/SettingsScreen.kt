@@ -3,7 +3,6 @@ package com.example.translator.ui.main
 import android.content.Intent
 import android.provider.Settings
 import android.widget.Toast
-import androidx.core.net.toUri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -12,22 +11,19 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -38,20 +34,23 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.translator.AppDefaults
 import com.example.translator.BuildConfig
 import com.example.translator.R
+import com.example.translator.ui.components.OverChatSectionCard
+import com.example.translator.ui.components.OverChatSectionLabel
+import com.example.translator.ui.components.OverChatTopBar
 
 /**
  * Pantalla secundaria de ajustes avanzados y diagnóstico de OverChat.
- *
- * Por qué: Retira las opciones de uso poco frecuente (tema visual, ahorro de batería, actualizaciones
- * y herramientas técnicas) de la pantalla principal para mantener el menú inicial limpio y directo.
  */
 @Composable
 fun SettingsScreen(
@@ -89,29 +88,10 @@ fun SettingsScreen(
         modifier = modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            Surface(
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 2.dp
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .statusBarsPadding()
-                        .padding(horizontal = 8.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    TextButton(onClick = onBack) {
-                        Text(text = "← Back")
-                    }
-                    Text(
-                        text = stringResource(R.string.settings_title),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Spacer(modifier = Modifier.width(64.dp))
-                }
-            }
+            OverChatTopBar(
+                title = stringResource(R.string.settings_title),
+                onBack = onBack
+            )
         }
     ) { innerPadding ->
         Column(
@@ -119,36 +99,36 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
                 .navigationBarsPadding()
-                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .padding(horizontal = 16.dp, vertical = 14.dp)
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            BubbleThemeCard(
-                overlayTheme = prefs.overlayTheme,
-                settingsEnabled = true,
-                onOverlayThemeChanged = viewModel::setOverlayTheme
-            )
-
-            if (uiState.isSystemTranslatorAvailable) {
-                SystemTranslatorCard(
-                    preferSystemTranslator = prefs.preferSystemTranslator,
-                    onToggle = viewModel::setPreferSystemTranslator
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OverChatSectionLabel(text = "Appearance")
+                BubbleThemeCard(
+                    overlayTheme = prefs.overlayTheme,
+                    settingsEnabled = true,
+                    onOverlayThemeChanged = viewModel::setOverlayTheme
                 )
             }
 
-            OutlinedCard(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Text(
-                        text = "Battery & Updates",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
+            if (uiState.isSystemTranslatorAvailable) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OverChatSectionLabel(text = "Engine")
+                    OverChatSectionCard {
+                        SettingsSwitchRow(
+                            title = stringResource(R.string.settings_system_translator_switch),
+                            subtitle = stringResource(R.string.settings_system_translator_subtitle),
+                            checked = prefs.preferSystemTranslator,
+                            onCheckedChange = viewModel::setPreferSystemTranslator
+                        )
+                    }
+                }
+            }
 
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OverChatSectionLabel(text = "Battery & Updates")
+                OverChatSectionCard {
                     SettingsSwitchRow(
                         title = "Idle Auto-Pause (${AppDefaults.DEFAULT_IDLE_AUTO_PAUSE_MINUTES}m)",
                         subtitle = "Pauses automatically when idle away from chat apps.",
@@ -157,8 +137,9 @@ fun SettingsScreen(
                     )
 
                     HorizontalDivider(
-                        modifier = Modifier.padding(vertical = 10.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                        modifier = Modifier.padding(vertical = 12.dp),
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.outlineVariant
                     )
 
                     SettingsSwitchRow(
@@ -169,8 +150,9 @@ fun SettingsScreen(
                     )
 
                     HorizontalDivider(
-                        modifier = Modifier.padding(vertical = 10.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                        modifier = Modifier.padding(vertical = 12.dp),
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.outlineVariant
                     )
 
                     Row(
@@ -203,19 +185,9 @@ fun SettingsScreen(
                 }
             }
 
-            OutlinedCard(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Text(
-                        text = "Troubleshooting",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OverChatSectionLabel(text = "Troubleshooting")
+                OverChatSectionCard {
                     SettingsActionRow(
                         title = stringResource(R.string.perm_app_info),
                         subtitle = "Open Android permissions and battery settings.",
@@ -229,8 +201,9 @@ fun SettingsScreen(
                     )
 
                     HorizontalDivider(
-                        modifier = Modifier.padding(vertical = 10.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                        modifier = Modifier.padding(vertical = 12.dp),
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.outlineVariant
                     )
 
                     SettingsActionRow(
@@ -270,7 +243,7 @@ private fun SettingsSwitchRow(
                 overflow = TextOverflow.Ellipsis
             )
         }
-        Spacer(modifier = Modifier.width(10.dp))
+        Spacer(modifier = Modifier.width(12.dp))
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange
@@ -287,8 +260,9 @@ private fun SettingsActionRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
             .clickable(onClick = onClick)
-            .padding(vertical = 2.dp),
+            .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
@@ -310,38 +284,11 @@ private fun SettingsActionRow(
                 overflow = TextOverflow.Ellipsis
             )
         }
-        Text(
-            text = "›",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+        Icon(
+            painter = painterResource(id = R.drawable.ic_chevron_right),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp)
         )
     }
 }
-
-@Composable
-private fun SystemTranslatorCard(
-    preferSystemTranslator: Boolean,
-    onToggle: (Boolean) -> Unit
-) {
-    OutlinedCard(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Text(
-                text = stringResource(R.string.settings_system_translator_title),
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            SettingsSwitchRow(
-                title = stringResource(R.string.settings_system_translator_switch),
-                subtitle = stringResource(R.string.settings_system_translator_subtitle),
-                checked = preferSystemTranslator,
-                onCheckedChange = onToggle
-            )
-        }
-    }
-}
-

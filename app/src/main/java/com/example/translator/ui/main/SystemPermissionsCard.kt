@@ -5,6 +5,7 @@ import android.content.Context
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -12,24 +13,30 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.example.translator.R
 import com.example.translator.ServiceBridge
+import com.example.translator.ui.components.OverChatSectionCard
+import com.example.translator.ui.components.OverChatSectionLabel
 
 /**
- * Tarjeta compacta de estado y concesión de permisos del sistema requeridos por OverChat.
+ * Tarjeta compacta de estado y concesión guiada de permisos requeridos por OverChat.
  */
 @Composable
 fun SystemPermissionsCard(
@@ -41,39 +48,33 @@ fun SystemPermissionsCard(
     onRequestNotificationPermission: () -> Unit,
     onOpenAppInfo: () -> Unit
 ) {
-    OutlinedCard(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OverChatSectionLabel(text = "Setup Required")
+
+        OverChatSectionCard(
+            borderColor = if (allPermissionsGranted) {
+                MaterialTheme.colorScheme.outlineVariant
+            } else {
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.30f)
+            }
+        ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = stringResource(R.string.perm_card_title),
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    if (allPermissionsGranted) {
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "· All active",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
+                Text(
+                    text = stringResource(R.string.perm_card_title),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
                 if (allPermissionsGranted) {
                     Surface(
-                        shape = RoundedCornerShape(6.dp),
+                        shape = RoundedCornerShape(999.dp),
                         color = MaterialTheme.colorScheme.primaryContainer
                     ) {
                         Text(
-                            text = "✓ Ready",
+                            text = "Ready",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
@@ -83,15 +84,17 @@ fun SystemPermissionsCard(
             }
 
             if (!allPermissionsGranted) {
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(12.dp))
                 PermissionStatusRow(
+                    stepNumber = "1",
                     label = stringResource(R.string.perm_accessibility_label),
                     granted = isAccessibilityEnabled,
                     onFix = onRequestAccessibilityPermission
                 )
                 if (isNotificationRequired) {
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
                     PermissionStatusRow(
+                        stepNumber = "2",
                         label = stringResource(R.string.perm_notifications_label),
                         granted = isNotificationPermissionGranted,
                         onFix = onRequestNotificationPermission
@@ -99,23 +102,38 @@ fun SystemPermissionsCard(
                 }
 
                 if (!isAccessibilityEnabled) {
-                    Spacer(modifier = Modifier.height(8.dp))
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 12.dp),
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.outlineVariant
+                    )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "Android 13+ restricted? App Info → ⋮ → Allow restricted settings.",
+                            text = "Android 13+ restricted? Open App Info → ⋮ → Allow restricted settings.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.weight(1f)
                         )
-                        TextButton(onClick = onOpenAppInfo) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        TextButton(
+                            onClick = onOpenAppInfo,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
                             Text(stringResource(R.string.perm_app_info), style = MaterialTheme.typography.labelMedium)
                         }
                     }
                 }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "100% on-device · Nothing leaves your phone.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
             }
         }
     }
@@ -123,6 +141,7 @@ fun SystemPermissionsCard(
 
 @Composable
 private fun PermissionStatusRow(
+    stepNumber: String,
     label: String,
     granted: Boolean,
     onFix: () -> Unit
@@ -137,27 +156,46 @@ private fun PermissionStatusRow(
             modifier = Modifier.weight(1f)
         ) {
             Surface(
-                shape = RoundedCornerShape(6.dp),
-                color = if (granted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-                modifier = Modifier.padding(end = 12.dp)
+                modifier = Modifier.size(24.dp),
+                shape = CircleShape,
+                color = if (granted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
             ) {
+                Box(contentAlignment = Alignment.Center) {
+                    if (granted) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_check),
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    } else {
+                        Text(
+                            text = stepNumber,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
                 Text(
                     text = stringResource(if (granted) R.string.status_active else R.string.status_required),
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (granted) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    color = if (granted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            Text(
-                text = label,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface
-            )
         }
         if (!granted) {
-            TextButton(
+            FilledTonalButton(
                 onClick = onFix,
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
             ) {
                 Text("Enable", style = MaterialTheme.typography.labelMedium)
             }

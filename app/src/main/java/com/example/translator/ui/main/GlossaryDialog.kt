@@ -1,5 +1,6 @@
 package com.example.translator.ui.main
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -8,21 +9,26 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -31,18 +37,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.translator.LearnedCorrectionEntry
 import com.example.translator.LearnedMemoryEntry
+import com.example.translator.R
+import com.example.translator.ui.components.OverChatSegmentedControl
 
 /**
- * Diálogo modal unificado para gestionar el diccionario personal: activar/desactivar reglas,
- * inspeccionar palabras/frases recordadas o reiniciar el historial local.
+ * Hoja modal inferior limpia para administrar el diccionario personal, reglas manuales y memorias.
  *
- * Por qué: Reúne ambos interruptores de aprendizaje y la gestión de entradas bajo un único concepto
- * para eliminar la confusión entre "Glossary" y "Learn From My Edits" en la pantalla principal.
+ * Por qué: Sustituye el diálogo estrecho por un sheet espacioso y respirable manteniendo la misma firma pública.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GlossaryDialog(
     sourceLanguage: String,
@@ -80,182 +89,228 @@ fun GlossaryDialog(
 
     val ruleSrc = if (directionOutgoing) targetLanguage else sourceLanguage
     val ruleTgt = if (directionOutgoing) sourceLanguage else targetLanguage
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    AlertDialog(
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = { Text("Personal Dictionary") },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                DictionaryToggleRow(
-                    label = "Apply saved fixes",
-                    checked = glossaryEnabled,
-                    onCheckedChange = onGlossaryChanged
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Personal Dictionary",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
-                DictionaryToggleRow(
-                    label = "Learn from my edits",
-                    checked = learningEnabled,
-                    onCheckedChange = onLearningChanged
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    FilterChip(
-                        selected = selectedTab == 0,
-                        onClick = { selectedTab = 0 },
-                        label = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (corrections.isNotEmpty() || memories.isNotEmpty()) {
+                        TextButton(
+                            onClick = onRequestResetAll,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
                             Text(
-                                text = "Words (${corrections.size})",
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                text = "Reset All",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.error
                             )
-                        },
-                        modifier = Modifier.weight(1f)
+                        }
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_close),
+                            contentDescription = stringResource(R.string.pill_close_desc),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant)
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
+                    DictionaryToggleRow(
+                        label = "Apply saved fixes",
+                        checked = glossaryEnabled,
+                        onCheckedChange = onGlossaryChanged
                     )
-                    FilterChip(
-                        selected = selectedTab == 1,
-                        onClick = { selectedTab = 1 },
-                        label = {
-                            Text(
-                                text = "Phrases (${memories.size})",
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        },
-                        modifier = Modifier.weight(1f)
+                    HorizontalDivider(
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.outlineVariant
+                    )
+                    DictionaryToggleRow(
+                        label = "Learn from my edits",
+                        checked = learningEnabled,
+                        onCheckedChange = onLearningChanged
                     )
                 }
+            }
 
-                Spacer(modifier = Modifier.height(8.dp))
+            OverChatSegmentedControl(
+                options = listOf(
+                    "words" to "Words (${corrections.size})",
+                    "phrases" to "Phrases (${memories.size})"
+                ),
+                selectedValue = if (selectedTab == 0) "words" else "phrases",
+                onSelected = { selectedTab = if (it == "words") 0 else 1 }
+            )
 
-                OutlinedTextField(
-                    value = filterQuery,
-                    onValueChange = { filterQuery = it },
-                    placeholder = { Text("Search dictionary...") },
-                    singleLine = true,
+            OutlinedTextField(
+                value = filterQuery,
+                onValueChange = { filterQuery = it },
+                placeholder = { Text("Search dictionary...", style = MaterialTheme.typography.bodySmall) },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                textStyle = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            if (selectedTab == 0) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                    border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
                     modifier = Modifier.fillMaxWidth()
-                )
-
-                if (selectedTab == 0) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedCard(
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Column(modifier = Modifier.padding(10.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Add custom rule",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            TextButton(
+                                onClick = { directionOutgoing = !directionOutgoing },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                             ) {
-                                Text(
-                                    text = "Add custom rule",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                TextButton(
-                                    onClick = { directionOutgoing = !directionOutgoing },
-                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
+                                    Icon(
+                                        painter = painterResource(id = R.drawable.ic_swap_horiz),
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(14.dp)
+                                    )
                                     Text(
-                                        text = "⇄ ${ruleSrc.uppercase()} → ${ruleTgt.uppercase()}",
+                                        text = "${ruleSrc.uppercase()} → ${ruleTgt.uppercase()}",
                                         style = MaterialTheme.typography.labelSmall
                                     )
                                 }
                             }
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = wrongTerm,
+                                onValueChange = { wrongTerm = it },
+                                placeholder = { Text("Replace", style = MaterialTheme.typography.bodySmall) },
+                                singleLine = true,
+                                shape = RoundedCornerShape(10.dp),
+                                textStyle = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f)
+                            )
+                            OutlinedTextField(
+                                value = preferredTerm,
+                                onValueChange = { preferredTerm = it },
+                                placeholder = { Text("With", style = MaterialTheme.typography.bodySmall) },
+                                singleLine = true,
+                                shape = RoundedCornerShape(10.dp),
+                                textStyle = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Button(
+                                onClick = {
+                                    if (onAddCorrection(ruleSrc, ruleTgt, wrongTerm, preferredTerm)) {
+                                        wrongTerm = ""
+                                        preferredTerm = ""
+                                    }
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
                             ) {
-                                OutlinedTextField(
-                                    value = wrongTerm,
-                                    onValueChange = { wrongTerm = it },
-                                    placeholder = { Text("Replace") },
-                                    singleLine = true,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                OutlinedTextField(
-                                    value = preferredTerm,
-                                    onValueChange = { preferredTerm = it },
-                                    placeholder = { Text("With") },
-                                    singleLine = true,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Button(
-                                    onClick = {
-                                        if (onAddCorrection(ruleSrc, ruleTgt, wrongTerm, preferredTerm)) {
-                                            wrongTerm = ""
-                                            preferredTerm = ""
-                                        }
-                                    },
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
-                                ) {
-                                    Text("Add")
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                if ((selectedTab == 0 && filteredCorrections.isEmpty()) || (selectedTab == 1 && filteredMemories.isEmpty())) {
-                    Text(
-                        text = if (filterQuery.isBlank()) "No entries yet." else "No matching entries.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = 12.dp)
-                    )
-                } else {
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 200.dp)
-                    ) {
-                        if (selectedTab == 0) {
-                            items(
-                                items = filteredCorrections,
-                                key = { "${it.sourceLang}|${it.targetLang}|${it.rejected}" }
-                            ) { entry ->
-                                GlossaryItemRow(
-                                    pairBadge = "${entry.sourceLang.uppercase()}→${entry.targetLang.uppercase()} · ×${entry.hits}",
-                                    primaryLine = "${entry.rejected}  →  ${entry.preferred}",
-                                    onDelete = { onDeleteCorrection(entry) }
-                                )
-                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                            }
-                        } else {
-                            items(
-                                items = filteredMemories,
-                                key = { it.key }
-                            ) { entry ->
-                                GlossaryItemRow(
-                                    pairBadge = "${entry.sourceLang.uppercase()}→${entry.targetLang.uppercase()}",
-                                    primaryLine = "${entry.sourceNormalized}  →  ${entry.translation}",
-                                    onDelete = { onDeleteMemory(entry) }
-                                )
-                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                                Text("Add", style = MaterialTheme.typography.labelMedium)
                             }
                         }
                     }
                 }
             }
-        },
-        dismissButton = {
-            if (corrections.isNotEmpty() || memories.isNotEmpty()) {
-                TextButton(onClick = onRequestResetAll) {
-                    Text("Reset All", color = MaterialTheme.colorScheme.error)
+
+            if ((selectedTab == 0 && filteredCorrections.isEmpty()) || (selectedTab == 1 && filteredMemories.isEmpty())) {
+                Text(
+                    text = if (filterQuery.isBlank()) "No entries saved yet." else "No matching entries.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 14.dp)
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 260.dp)
+                ) {
+                    if (selectedTab == 0) {
+                        items(
+                            items = filteredCorrections,
+                            key = { "${it.sourceLang}|${it.targetLang}|${it.rejected}" }
+                        ) { entry ->
+                            GlossaryItemRow(
+                                pairBadge = "${entry.sourceLang.uppercase()} → ${entry.targetLang.uppercase()} · ×${entry.hits}",
+                                primaryLine = "${entry.rejected}  →  ${entry.preferred}",
+                                onDelete = { onDeleteCorrection(entry) }
+                            )
+                            HorizontalDivider(
+                                thickness = 0.5.dp,
+                                color = MaterialTheme.colorScheme.outlineVariant
+                            )
+                        }
+                    } else {
+                        items(
+                            items = filteredMemories,
+                            key = { it.key }
+                        ) { entry ->
+                            GlossaryItemRow(
+                                pairBadge = "${entry.sourceLang.uppercase()} → ${entry.targetLang.uppercase()}",
+                                primaryLine = "${entry.sourceNormalized}  →  ${entry.translation}",
+                                onDelete = { onDeleteMemory(entry) }
+                            )
+                            HorizontalDivider(
+                                thickness = 0.5.dp,
+                                color = MaterialTheme.colorScheme.outlineVariant
+                            )
+                        }
+                    }
                 }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Done")
             }
         }
-    )
+    }
 }
 
 @Composable
@@ -265,7 +320,9 @@ private fun DictionaryToggleRow(
     onCheckedChange: (Boolean) -> Unit
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
@@ -293,7 +350,7 @@ private fun GlossaryItemRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 6.dp),
+            .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
@@ -303,6 +360,7 @@ private fun GlossaryItemRow(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.primary
             )
+            Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = primaryLine,
                 style = MaterialTheme.typography.bodySmall,
@@ -310,16 +368,16 @@ private fun GlossaryItemRow(
             )
         }
         Spacer(modifier = Modifier.width(6.dp))
-        TextButton(
+        IconButton(
             onClick = onDelete,
-            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+            modifier = Modifier.size(32.dp)
         ) {
-            Text(
-                text = "Delete",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.error
+            Icon(
+                painter = painterResource(id = R.drawable.ic_close),
+                contentDescription = "Delete",
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(16.dp)
             )
         }
     }
 }
-

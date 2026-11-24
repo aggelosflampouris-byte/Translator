@@ -40,7 +40,8 @@ class TranslationScanCoordinator(
     private val executeScan: suspend (overlayEpoch: Long, generation: Long, eventSourceToken: Any?, isManualRequest: Boolean) -> ScanOutcome,
     private val onLoopTick: (isInitial: Boolean) -> Unit = {},
     private val isInTargetForeground: () -> Boolean = { true },
-    private val isInteractive: () -> Boolean = { true }
+    private val isInteractive: () -> Boolean = { true },
+    private val onScrollHideMessageOverlays: ((clearDraftToo: Boolean) -> Unit)? = null
 ) {
     val scanGeneration = AtomicLong(0)
     val overlayEpoch = AtomicLong(0)
@@ -211,7 +212,7 @@ class TranslationScanCoordinator(
 
         val clearDraft = !isKeyboardVisible()
         postToMain {
-            onClearMessageOverlays(clearDraft)
+            (onScrollHideMessageOverlays ?: onClearMessageOverlays)(clearDraft)
         }
 
         if (isTapMode()) {
