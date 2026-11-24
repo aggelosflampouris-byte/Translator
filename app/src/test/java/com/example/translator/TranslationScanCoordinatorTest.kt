@@ -232,5 +232,55 @@ class TranslationScanCoordinatorTest {
         assertEquals(1, fullClearCalls)
         coordinator.stopAll()
     }
+
+    @Test
+    fun deferredKeyboardVisible_keepsScreenDirtyAndRescansAfterKeyboardCloses() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        var keyboardVisible = true
+        var scanCalls = 0
+        var completedTranslations = 0
+
+        val coordinator = TranslationScanCoordinator(
+            scope = backgroundScope,
+            workerDispatcher = dispatcher,
+            postToMain = { it.invoke() },
+            isTranslatingActive = { true },
+            isScrollQuieted = { true },
+            uptimeMs = { 10_000L + testScheduler.currentTime },
+            isKeyboardVisible = { keyboardVisible },
+            onClearAllOverlays = {},
+            onClearMessageOverlays = {},
+            executeScan = { _, _, _, _ ->
+                scanCalls++
+                if (keyboardVisible) {
+                    ScanOutcome.DEFERRED_KEYBOARD_VISIBLE
+                } else {
+                    completedTranslations++
+                    ScanOutcome.TRANSLATED_OR_EMPTY
+                }
+            }
+        )
+
+        coordinator.startPeriodicLoop()
+        advanceTimeBy(150L)
+        runCurrent()
+        assertEquals(1, scanCalls)
+        assertEquals(0, completedTranslations)
+
+        // Tras cerrarse el teclado sin eventos adicionales en la lista, el ciclo de 500ms debe reescanear
+        keyboardVisible = false
+        advanceTimeBy(650L)
+        runCurrent()
+        assertTrue(scanCalls >= 2)
+        assertEquals(1, completedTranslations)
+
+        // Un ciclo adicional de 2500ms no vuelve a escanear porque la pantalla ya quedó limpia tras traducir
+        val callsAfterTranslate = scanCalls
+        advanceTimeBy(2_500L)
+        runCurrent()
+        assertEquals(callsAfterTranslate, scanCalls)
+
+        coordinator.stopAll()
+    }
 }
 

@@ -701,5 +701,78 @@ class MessageStructureRecognizerTest {
             evaluated.map { it.text }
         )
     }
+
+    @Test
+    fun recognizeRowAnatomy_instagramKeepsOutgoingBubbleAboveDeliveryStatusNearComposer() {
+        val instagramProfile = TargetAppCatalog.CURATED_PROFILES.first { it.id == "instagram" }
+        val localMaxY = 2050
+        val rawNodes = listOf(
+            // Etiqueta de estado debajo de la burbuja anterior ("Αλίμονο" -> filtrada por idioma destino)
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(580, 1780, 990, 1825),
+                expandedRect = WindowRect(580, 1780, 990, 1825),
+                directText = "Στάλθηκε πριν από 10 λεπ.",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 41,
+                parentNodeId = 410,
+                nodeId = 4101
+            ),
+            // Burbuja saliente enviada cerca del compositor y su estado de entrega inmediato en la misma fila
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(680, 1950, 990, 2030),
+                expandedRect = WindowRect(680, 1950, 990, 2030),
+                directText = "Avem succes",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 42,
+                parentNodeId = 420,
+                nodeId = 4201
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(780, 2034, 990, 2070),
+                expandedRect = WindowRect(780, 2034, 990, 2070),
+                directText = "Στάλθηκε",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 42,
+                parentNodeId = 420,
+                nodeId = 4202
+            )
+        )
+
+        val anatomies = MessageStructureRecognizer.recognizeRowAnatomy(
+            rawNodes = rawNodes,
+            configuredSource = TranslateLanguage.ROMANIAN,
+            density = density,
+            profile = instagramProfile
+        )
+        assertEquals(1, anatomies.size)
+        assertEquals("Avem succes", anatomies[0].replyingText)
+
+        val evaluated = NodeCandidateEvaluator.evaluateBottomUp(
+            rawNodes = rawNodes,
+            minY = minY,
+            maxY = localMaxY,
+            screenWidth = screenWidth,
+            density = density,
+            configuredSource = TranslateLanguage.ROMANIAN,
+            configuredTarget = TranslateLanguage.GREEK,
+            profile = instagramProfile
+        )
+        assertEquals(listOf("Avem succes"), evaluated.map { it.text })
+    }
 }
 

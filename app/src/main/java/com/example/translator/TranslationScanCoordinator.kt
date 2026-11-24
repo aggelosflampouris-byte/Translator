@@ -13,6 +13,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 enum class ScanOutcome {
     TRANSLATED_OR_EMPTY,
+    DEFERRED_KEYBOARD_VISIBLE,
     ABORT_NO_FG,
     ABORT_NULL_ROOT,
     SKIPPED_MODE_OR_INACTIVE
@@ -47,6 +48,7 @@ class TranslationScanCoordinator(
     private val dirtyVersion = AtomicLong(1)
     private val dirtyWakeSignal = Channel<Unit>(Channel.CONFLATED)
     @Volatile private var screenNeedsRescan: Boolean = true
+    @Volatile private var deferredByKeyboard: Boolean = false
     @Volatile private var lastDrawnOverlayEpoch: Long = -1L
     @Volatile private var lastClearedOverlayEpoch: Long = -1L
 
@@ -112,6 +114,7 @@ class TranslationScanCoordinator(
      */
     fun clearDirtyOnDeparture() {
         screenNeedsRescan = false
+        deferredByKeyboard = false
     }
 
     /**
@@ -149,7 +152,8 @@ class TranslationScanCoordinator(
                     dirtyWakeSignal.receive()
                     continue
                 }
-                withTimeoutOrNull(2000L) {
+                val pollIntervalMs = if (deferredByKeyboard) 500L else 2000L
+                withTimeoutOrNull(pollIntervalMs) {
                     dirtyWakeSignal.receive()
                 }
                 if (!isTranslatingActive()) break
@@ -185,6 +189,7 @@ class TranslationScanCoordinator(
         pendingScanEventSource = null
         entryNullRootRetries = 0
         isScreenScrolling = false
+        deferredByKeyboard = false
     }
 
     fun cancelDebouncedWorkOnly() {
@@ -307,6 +312,7 @@ class TranslationScanCoordinator(
             val outcome = executeScan(epoch, generation, eventSourceToken, isManualRequest)
             when (outcome) {
                 ScanOutcome.TRANSLATED_OR_EMPTY -> {
+                    deferredByKeyboard = false
                     entryNullRootRetries = 0
                     entryRetryJob?.cancel()
                     // Por qué: Solo limpia la bandera si no llegaron eventos nuevos durante el escaneo en curso.
@@ -314,7 +320,16 @@ class TranslationScanCoordinator(
                         screenNeedsRescan = false
                     }
                 }
+                ScanOutcome.DEFERRED_KEYBOARD_VISIBLE -> {
+                    // Por qué: Si un escaneo se difiere mientras el teclado está abierto, conservamos la pantalla sucia
+                    // para reintentar automáticamente al cerrarse sin depender de otro evento de contenido.
+                    entryNullRootRetries = 0
+                    entryRetryJob?.cancel()
+                    deferredByKeyboard = true
+                    screenNeedsRescan = true
+                }
                 ScanOutcome.ABORT_NO_FG -> {
+                    deferredByKeyboard = false
                     entryNullRootRetries = 0
                 }
                 ScanOutcome.ABORT_NULL_ROOT -> {

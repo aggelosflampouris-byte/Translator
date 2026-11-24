@@ -314,7 +314,14 @@ class TranslationAccessibilityService : AccessibilityService() {
             onCacheEvictRequired = {
                 synchronized(translationCache) { translationCache.evictAll() }
             },
-            identifyLanguage = ::identifyLanguageAsync
+            identifyLanguage = ::identifyLanguageAsync,
+            onReverseTranslationSeeded = { src, tgt, srcText, tgtText ->
+                val cleanSrc = TextSanitizer.sanitizeSpecialCharacters(srcText).trim()
+                val cleanTgt = TextSanitizer.sanitizeSpecialCharacters(tgtText).trim()
+                if (cleanSrc.isNotEmpty() && cleanTgt.isNotEmpty()) {
+                    putCachedTranslation(src, tgt, cleanSrc, cleanTgt)
+                }
+            }
         )
 
         sessionTracker.enabledTargetPackages = initSettingsAndPowerMonitors()
@@ -483,6 +490,14 @@ class TranslationAccessibilityService : AccessibilityService() {
 
         val packageName = event.packageName?.toString() ?: ""
         if (sessionTracker.isKeyboardPackage(packageName)) {
+            if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+                ServiceBridge.isTranslatingActive &&
+                sessionTracker.state.lastForegroundTargetPackage != null
+            ) {
+                // Por qué: Cuando el teclado OEM se cierra, algunos chats no emiten evento inmediato en la lista;
+                // programamos un reescaneo tras cerrarse sin alterar el estado de sesión ni diagnósticos.
+                coordinator.scheduleContentScan(220L)
+            }
             return
         }
 
@@ -782,7 +797,7 @@ class TranslationAccessibilityService : AccessibilityService() {
                     isLearningEnabled = isLearningEnabled
                 )
             }
-            return ScanOutcome.TRANSLATED_OR_EMPTY
+            return ScanOutcome.DEFERRED_KEYBOARD_VISIBLE
         } else if (isKeyboardTranslatorEnabled && (currentInputNode != null || overlayManager.currentDraftOverlayBounds != null)) {
             draftController.handleOutgoingTyping(
                 eventSource = currentInputNode,

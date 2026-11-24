@@ -41,12 +41,15 @@ class DraftTranslationController(
     private val currentOverlayEpoch: () -> Long,
     private val recordOverlayDrawn: (epoch: Long) -> Unit,
     private val onCacheEvictRequired: () -> Unit,
-    private val identifyLanguage: suspend (String) -> String? = { null }
+    private val identifyLanguage: suspend (String) -> String? = { null },
+    private val onReverseTranslationSeeded: (sourceLang: String, targetLang: String, sourceText: String, targetText: String) -> Unit = { _, _, _, _ -> }
 ) {
     companion object {
         private val PLACEHOLDER_TOKENS = setOf(
             "μήνυμα", "μηνυμα", "message", "message...", "type a message", "type a message...",
-            "aa", "add a comment", "add a comment...", "write a message", "reply..."
+            "aa", "add a comment", "add a comment...", "write a message", "reply...",
+            "αποστολή μηνύματος", "αποστολή μηνύματος...", "αποστολή μηνύμα...",
+            "send message", "send message...", "trimite un mesaj", "trimite un mesaj..."
         )
 
         /**
@@ -535,7 +538,9 @@ class DraftTranslationController(
                                 text = translatedDraft,
                                 fallbackNode = liveNode,
                                 originalSourceText = liveText,
-                                fallbackInputRect = freshRect
+                                fallbackInputRect = freshRect,
+                                sourceLang = effectiveSourceLang,
+                                targetLang = effectiveTargetLang
                             )
                         }
                     },
@@ -686,9 +691,17 @@ class DraftTranslationController(
     private fun observeInputForLearning(inputNode: AccessibilityNodeInfo, isLearningEnabled: Boolean) {
         val rawText = try { inputNode.text?.toString()?.trim() ?: "" } catch (_: Exception) { "" }
         val hintText = safeHintText(inputNode) ?: ""
-        val isEmptyField = rawText.isEmpty() ||
+        val isShowingHint = try {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && inputNode.isShowingHintText
+        } catch (_: Exception) {
+            false
+        }
+        val lowerRaw = rawText.lowercase()
+        val isEmptyField = isShowingHint ||
+            rawText.isEmpty() ||
             rawText.equals(hintText, ignoreCase = true) ||
-            PLACEHOLDER_TOKENS.contains(rawText.lowercase())
+            PLACEHOLDER_TOKENS.contains(lowerRaw) ||
+            lowerRaw.startsWith("αποστολή μηνύμα")
 
         val sentText = sentMessageDetector.observe(if (isEmptyField) "" else rawText) ?: return
         val session = pendingDraftSession ?: return
@@ -724,7 +737,9 @@ class DraftTranslationController(
         text: String,
         fallbackNode: AccessibilityNodeInfo? = null,
         originalSourceText: String? = null,
-        fallbackInputRect: Rect? = null
+        fallbackInputRect: Rect? = null,
+        sourceLang: String? = null,
+        targetLang: String? = null
     ) {
         try {
             val node = findCurrentEditableNode() ?: fallbackNode
@@ -743,6 +758,16 @@ class DraftTranslationController(
                 val inserted = applyTextToEditableNode(node, text)
 
                 if (inserted) {
+                    if (!originalSourceText.isNullOrBlank() &&
+                        !sourceLang.isNullOrBlank() &&
+                        !targetLang.isNullOrBlank() &&
+                        sourceLang != targetLang &&
+                        TranslationPipeline.isValidTranslation(originalSourceText, text, sourceLang)
+                    ) {
+                        // Por qué: Al reemplazar el borrador, sembramos la traducción inversa exacta en caché
+                        // para que la burbuja enviada se traduzca al instante al regresar al chat.
+                        onReverseTranslationSeeded(targetLang, sourceLang, text, originalSourceText)
+                    }
                     if (!originalSourceText.isNullOrBlank()) {
                         undoBannerActive = true
                         postToMain(null) {

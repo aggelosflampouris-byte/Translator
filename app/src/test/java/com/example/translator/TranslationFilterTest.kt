@@ -423,4 +423,15 @@ class TranslationFilterTest {
         assertFalse(TranslationFilter.hasPlausibleLetterCandidate("@~Geala Stefan", null, TranslateLanguage.GREEK))
         assertTrue(TranslationFilter.hasPlausibleLetterCandidate("Te pup stefan ms", null, TranslateLanguage.GREEK))
     }
+
+    @Test
+    fun isDeliveryStatusText_matchesRelativeInstagramStatusesAndExcludesMessages() {
+        assertTrue(TranslationFilter.isDeliveryStatusText("Στάλθηκε πριν από 10 λεπ."))
+        assertTrue(TranslationFilter.isDeliveryStatusText("Στάλθηκε μόλις τώρα"))
+        assertTrue(TranslationFilter.isDeliveryStatusText("Αποστολή..."))
+        assertTrue(TranslationFilter.isDeliveryStatusText("Sent 10m ago"))
+        assertTrue(TranslationFilter.isDeliveryStatusText("Sending..."))
+        assertTrue(TranslationFilter.isDeliveryStatusText("Στάλθηκε"))
+        assertFalse(TranslationFilter.isDeliveryStatusText("Avem succes"))
+    }
 }

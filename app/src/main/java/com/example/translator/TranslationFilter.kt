@@ -46,6 +46,10 @@ object TranslationFilter {
         """^([,.:\s\n]*(\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?)?[,.:\s\n]*(delivered|read|sent|seen|pending|unread|edited|\(edited\)|επεξεργάστηκε|\(επεξεργάστηκε\)|τροποποιήθηκε|\(τροποποιήθηκε\)|τροποποιηθηκε|\(τροποποιηθηκε\)|editat|παραδόθηκε|παραδοθηκε|διαβάστηκε|διαβαστηκε|στάλθηκε|σταλθηκε|εστάλη|εσταλη|απεστάλη|απεσταλη|εθεάθη|εθεαθη|εμφανίστηκε|εμφανιστηκε|το είδε|το ειδε|σε εκκρεμότητα|σε εκκρεμοτητα|εκκρεμεί|εκκρεμει|trimis|citit|citiți|cititi|livrat|în așteptare|in asteptare|[✓✔\u2713\u2714\u2705]+)[,.:\s\n]*)+$""",
         RegexOption.IGNORE_CASE
     )
+    private val RELATIVE_DELIVERY_STATUS_REGEX = Regex(
+        """^(?:(?:στάλθηκε|σταλθηκε|εστάλη|εσταλη|απεστάλη|απεσταλη|παραδόθηκε|παραδοθηκε|διαβάστηκε|διαβαστηκε|εθεάθη|εθεαθη|το\s+είδε|το\s+ειδε)\s+(?:πριν\s+από|πριν\s+απο|μόλις|μολις|τώρα|τωρα)\b[^\n]{0,32}|αποστολή\s*\.{0,3}|sending\s*\.{0,3}|(?:sent|seen|delivered|read)\s+(?:just\s+now|\d+\s*[smhdw]\s+ago|\d+\s+(?:sec|min|hr|hour|day)s?\s+ago|yesterday|today)\.?|(?:trimis|livrat|văzut|vazut|citit)\s+(?:acum|chiar\s+acum)\b[^\n]{0,32})$""",
+        RegexOption.IGNORE_CASE
+    )
     private val TRAILING_TIMESTAMP_REGEX = Regex(
         """(?:(?:,\s*|\n+\s*)(?:today|yesterday|σήμερα|σημερα|χθες|mon|tue|wed|thu|fri|sat|sun|δευ|τρι|τετ|πεμ|παρ|σαβ|κυρ|lun|mar|mie|joi|vin|sâm|sam|dum)?\s*(?:at|στις|στὶς|la)?\s*|[\s\n]+)\d{1,2}:\d{2}(\s*(μ\.?μ\.?|π\.?μ\.?|am|pm))?(\s*[✓✔\u2713\u2714\u2705]+)?\s*$""",
         RegexOption.IGNORE_CASE
@@ -200,6 +204,19 @@ object TranslationFilter {
     }
 
     /**
+     * Indica si el texto es únicamente una etiqueta de estado de entrega/lectura
+     * (p. ej. "Στάλθηκε πριν από 10 λεπ.", "Αποστολή...", "Sent 10m ago").
+     */
+    fun isDeliveryStatusText(text: String): Boolean {
+        val clean = TextSanitizer.sanitizeSpecialCharacters(text).trim()
+        if (clean.isEmpty()) return false
+        val lower = clean.lowercase()
+        return MESSAGE_STATUS_TOKENS.contains(lower) ||
+            lower.matches(STANDALONE_STATUS_REGEX) ||
+            lower.matches(RELATIVE_DELIVERY_STATUS_REGEX)
+    }
+
+    /**
      * Detecta menciones puras (`@~Geala Stefan`) o alias de participante en chats grupales de WhatsApp (`~ stefan`,
      * `~ Crypto1706`) para no traducir nombres de remitentes ni encender consultas IPC padre sobre ellos.
      */
@@ -334,7 +351,7 @@ object TranslationFilter {
         }
 
         // Filter out standalone status or combined timestamp + delivery markers
-        if (lower.matches(STANDALONE_STATUS_REGEX)) {
+        if (isDeliveryStatusText(trimmed)) {
             return "st"
         }
 

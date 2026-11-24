@@ -595,5 +595,24 @@ class TranslationSenseEngineTest {
                 TranslateLanguage.GREEK
             )
         )
+        // Regresión: frases salientes comunes en rumano sin diacríticos (ej. "Avem succes") deben reconocerse sin ML Kit
+        assertTrue(
+            TranslationSenseEngine.isEligibleSourceText(
+                "Avem succes",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
+                identifiedLang = null,
+                conversationMatchesSource = false
+            )
+        )
+        assertTrue(
+            TranslationSenseEngine.isEligibleSourceText(
+                "Avem succes",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK,
+                identifiedLang = "fr",
+                conversationMatchesSource = false
+            )
+        )
     }
 }

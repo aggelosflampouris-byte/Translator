@@ -551,13 +551,14 @@ object NodeCandidateEvaluator {
         }
 
         val isBubble = TranslationSenseEngine.isMessageBubble(expandedRect.left, expandedRect.right, screenWidth, profile.alignmentMode)
-        val visibleMargin = (20 * density).toInt()
+        val topVisibleMargin = (20 * density).toInt()
+        val bottomVisibleMargin = (8 * density).toInt()
 
         if (isBubble &&
             expandedRect.width > (22 * density).toInt() &&
             expandedRect.height > (16 * density).toInt() &&
-            expandedRect.bottom > minY + visibleMargin &&
-            expandedRect.top < maxY - visibleMargin
+            expandedRect.bottom > minY + topVisibleMargin &&
+            expandedRect.top < maxY - bottomVisibleMargin
         ) {
             val clampedRect = clampRectToViewport(expandedRect, minY, maxY)
             val clampedRaw = clampRectToViewport(rawRect, minY, maxY)

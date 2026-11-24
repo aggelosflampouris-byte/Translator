@@ -70,7 +70,8 @@ object TranslationSenseEngine {
         "intru", "intri", "intrii", "ștampilate", "stampilate", "știe", "stie", "știi", "stii",
         "poze", "abonament", "abonamente", "abonamentele", "legitimația", "legitimatia",
         "cartela", "cartele", "metrou", "bilete", "ploaie", "afară", "afara", "lungă", "lunga",
-        "șuruburi", "suruburi", "dovada", "dovadă", "ms"
+        "șuruburi", "suruburi", "dovada", "dovadă", "ms",
+        "avem", "aveti", "aveți", "suntem", "sunteti", "sunteți", "putem", "vrem", "succes"
     )
 
     private val GENERIC_ROMANCE_PREPOSITIONS = setOf("de", "in", "e", "a", "la")

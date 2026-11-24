@@ -335,6 +335,7 @@ object MessageStructureRecognizer {
         val isTimestamp = BooleanArray(n)
         val isPhone = BooleanArray(n)
         val isInlineAction = BooleanArray(n)
+        val isDeliveryStatus = BooleanArray(n)
 
         for (i in 0 until n) {
             val item = rawNodes[i]
@@ -354,7 +355,9 @@ object MessageStructureRecognizer {
                 )
             isInlineAction[i] = isLeafCarrier[i] && !item.isMediaPlaceholder && !isTimestamp[i] && !isPhone[i] &&
                 TranslationFilter.isInlineActionLabel(txt, profile)
-            if (!isLeafCarrier[i] || isTimestamp[i] || isPhone[i] || item.isMediaPlaceholder || isInlineAction[i]) {
+            isDeliveryStatus[i] = isLeafCarrier[i] && !item.isMediaPlaceholder && !isTimestamp[i] && !isPhone[i] &&
+                !isInlineAction[i] && TranslationFilter.isDeliveryStatusText(txt)
+            if (!isLeafCarrier[i] || isTimestamp[i] || isPhone[i] || item.isMediaPlaceholder || isInlineAction[i] || isDeliveryStatus[i]) {
                 roles[i] = MessageComponentRole.METADATA_IGNORED
             }
         }
@@ -365,7 +368,7 @@ object MessageStructureRecognizer {
         for ((rowId, indices) in byRow) {
             if (rowId <= 0) {
                 for (i in indices) {
-                    if (!isLeafCarrier[i] || isTimestamp[i] || isPhone[i] || rawNodes[i].isMediaPlaceholder || isInlineAction[i]) continue
+                    if (!isLeafCarrier[i] || isTimestamp[i] || isPhone[i] || rawNodes[i].isMediaPlaceholder || isInlineAction[i] || isDeliveryStatus[i]) continue
                     val item = rawNodes[i]
                     val hasPhonePeer = findPhoneSiblingInRowOrParent(i, rawNodes, isLeafCarrier, isPhone, density)
                     when {
@@ -393,7 +396,7 @@ object MessageStructureRecognizer {
             }
 
             val contentLeaves = indices
-                .filter { isLeafCarrier[it] && !isTimestamp[it] && !isPhone[it] && !isInlineAction[it] }
+                .filter { isLeafCarrier[it] && !isTimestamp[it] && !isPhone[it] && !isInlineAction[it] && !isDeliveryStatus[it] }
                 .sortedWith(compareBy<Int> { rawNodes[it].rawRect.top }.thenBy { rawNodes[it].rawRect.left })
 
             if (contentLeaves.isEmpty()) continue
