@@ -14,14 +14,7 @@ object ServiceBridge {
     val runtimeState: StateFlow<TranslatorRuntimeState>
         get() = sessionController.runtimeState
 
-    // ── Floating Sphere & Session state ────────────────────────────────────────
-
-    /** True while the floating sphere overlay is shown. */
-    var isBubbleRunning: Boolean
-        get() = sessionController.current.isBubbleRunning
-        set(value) {
-            sessionController.setBubbleRunning(value)
-        }
+    // ── TranslationAccessibilityService & Session state ───────────────────────
 
     /** True when translation scanning/typing assistance is active. */
     var isTranslatingActive: Boolean
@@ -29,8 +22,6 @@ object ServiceBridge {
         set(value) {
             sessionController.setTranslatingActive(value)
         }
-
-    // ── TranslationAccessibilityService state ──────────────────────────────────
 
     /** True while [TranslationAccessibilityService] is bound and connected. */
     var isAccessibilityActive: Boolean
@@ -41,16 +32,11 @@ object ServiceBridge {
 
     /**
      * Callback registered by [TranslationAccessibilityService] in [onServiceConnected].
-     * Invoked when the user toggles translation on/off from Notification, Tile, Sphere or MainScreen.
+     * Invoked when the user toggles translation on/off from Notification or MainScreen.
      */
     @Volatile var onTranslationStateChanged: ((Boolean) -> Unit)? = null
 
-    /**
-     * Callback para mostrar u ocultar inmediatamente la esfera flotante (`TYPE_ACCESSIBILITY_OVERLAY`).
-     */
-    @Volatile var onBubbleVisibilityChanged: ((Boolean) -> Unit)? = null
-
-    // ── System Notification Menu & Tile state ───────────────────────────────────
+    // ── System Notification Menu state ────────────────────────────────────────
 
     /** True while the persistent system notification menu is posted in the notification shade. */
     var isNotificationActive: Boolean
@@ -63,12 +49,6 @@ object ServiceBridge {
      * Callback para actualizar bajo demanda las cadenas diagnósticas cuando el usuario abre el diálogo de diagnóstico.
      */
     @Volatile var onDiagnosticsRefreshRequested: (() -> Unit)? = null
-
-    /**
-     * Callback para sincronizar inmediatamente la apariencia de la esfera flotante si está visible.
-     * Se limpia al desconectar [TranslationAccessibilityService].
-     */
-    @Volatile var onBubbleAppearanceSync: ((Boolean) -> Unit)? = null
 
     /**
      * Callback para vaciar cachés en memoria cuando el usuario restablece los datos aprendidos.
@@ -118,7 +98,7 @@ object ServiceBridge {
     @Volatile var lastPerAppScanDebug: String = ""
 
     fun isAnyServiceActive(): Boolean {
-        return isTranslatingActive || isBubbleRunning || isNotificationActive
+        return isTranslatingActive || isNotificationActive
     }
 
     fun notifyUiStateChanged() {

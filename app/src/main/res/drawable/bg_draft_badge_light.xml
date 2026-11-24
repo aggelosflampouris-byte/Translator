@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Insignia interactiva de par de idiomas en modo claro -->
 <ripple xmlns:android="http://schemas.android.com/apk/res/android"
-    android:color="#22059669">
+    android:color="#222563EB">
     <item>
         <shape android:shape="rectangle">
             <solid android:color="#FFF1F5F9" />
@@ -12,4 +12,3 @@
         </shape>
     </item>
 </ripple>
-

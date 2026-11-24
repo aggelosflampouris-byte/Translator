@@ -19,7 +19,7 @@ class TranslatorSessionControllerTest {
         assertFalse(controller.current.isAccessibilityActive)
 
         controller.setAccessibilityActive(true)
-        controller.setBubbleRunning(true)
+        controller.setNotificationActive(true)
         assertTrue(controller.current.isAnyServiceActive)
 
         val activated = controller.toggleTranslating()
@@ -45,7 +45,7 @@ class TranslatorSessionControllerTest {
         val controller = TranslatorSessionController()
         assertEquals(SessionDisplayState.OFF, controller.current.displayState())
 
-        controller.setBubbleRunning(true)
+        controller.setNotificationActive(true)
         assertEquals(SessionDisplayState.PAUSED, controller.current.displayState())
 
         controller.setTranslatingActive(true)
@@ -54,12 +54,7 @@ class TranslatorSessionControllerTest {
         controller.setTranslatingActive(false)
         assertEquals(SessionDisplayState.PAUSED, controller.current.displayState())
 
-        controller.setBubbleRunning(false)
-        controller.setNotificationActive(true)
-        assertEquals(SessionDisplayState.PAUSED, controller.current.displayState())
-
         controller.stopAllSurfaces()
         assertEquals(SessionDisplayState.OFF, controller.current.displayState())
     }
 }
-

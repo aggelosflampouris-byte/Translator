@@ -11,12 +11,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
-// Esquema oscuro refinado con superficies escalonadas de bajo deslumbramiento
+// Esquema oscuro refinado con superficies escalonadas y acento azul de marca OverChat
 private val DarkColorScheme = darkColorScheme(
-    primary = Emerald500,
-    onPrimary = ObsidianBg,
-    primaryContainer = EmeraldDarkContainer,
-    onPrimaryContainer = EmeraldDarkOnContainer,
+    primary = Blue500,
+    onPrimary = Color.White,
+    primaryContainer = BlueDarkContainer,
+    onPrimaryContainer = BlueDarkOnContainer,
     secondary = InkMutedDark,
     onSecondary = ObsidianBg,
     surface = ObsidianSurface,
@@ -33,12 +33,12 @@ private val DarkColorScheme = darkColorScheme(
     onError = ObsidianBg
 )
 
-// Esquema claro minimalista con papel neutro y bordes capilares sutiles
+// Esquema claro minimalista con papel neutro, bordes capilares y azul de marca OverChat
 private val LightColorScheme = lightColorScheme(
-    primary = Emerald600,
-    onPrimary = PaperSurface,
-    primaryContainer = EmeraldLightContainer,
-    onPrimaryContainer = EmeraldLightOnContainer,
+    primary = Blue600,
+    onPrimary = Color.White,
+    primaryContainer = BlueLightContainer,
+    onPrimaryContainer = BlueLightOnContainer,
     secondary = InkMutedLight,
     onSecondary = PaperSurface,
     surface = PaperSurface,

@@ -17,22 +17,19 @@ enum class SessionDisplayState {
 /**
  * Snapshot inmutable del estado en tiempo real de OverChat.
  *
- * Por qué: Reemplaza las banderas sueltas y callbacks manuales para que la UI Compose y los servicios
- * observen una sola fuente reactiva de verdad.
+ * Por qué: Mantiene un único origen reactivo entre Compose, accesibilidad y el menú de notificación.
  */
 data class TranslatorRuntimeState(
     val isAccessibilityActive: Boolean = false,
     val isTranslatingActive: Boolean = false,
-    val isBubbleRunning: Boolean = false,
     val isNotificationActive: Boolean = false
 ) {
     val isAnyServiceActive: Boolean
-        get() = isTranslatingActive || isBubbleRunning || isNotificationActive
+        get() = isTranslatingActive || isNotificationActive
 
-    // Por qué: Evita que la interfaz reporte "Translating" cuando solo está visible la esfera en pausa
     fun displayState(): SessionDisplayState = when {
         isTranslatingActive -> SessionDisplayState.TRANSLATING
-        isBubbleRunning || isNotificationActive -> SessionDisplayState.PAUSED
+        isNotificationActive -> SessionDisplayState.PAUSED
         else -> SessionDisplayState.OFF
     }
 }
@@ -55,10 +52,6 @@ class TranslatorSessionController {
         _runtimeState.update { it.copy(isTranslatingActive = active) }
     }
 
-    fun setBubbleRunning(running: Boolean) {
-        _runtimeState.update { it.copy(isBubbleRunning = running) }
-    }
-
     fun setNotificationActive(active: Boolean) {
         _runtimeState.update { it.copy(isNotificationActive = active) }
     }
@@ -76,7 +69,6 @@ class TranslatorSessionController {
         _runtimeState.update {
             it.copy(
                 isTranslatingActive = false,
-                isBubbleRunning = false,
                 isNotificationActive = false
             )
         }
@@ -86,4 +78,3 @@ class TranslatorSessionController {
         _runtimeState.value = TranslatorRuntimeState()
     }
 }
-

@@ -74,7 +74,6 @@ fun SettingsScreen(
         ScanDiagnosticsDialog(
             sourceLanguage = prefs.sourceLanguage,
             targetLanguage = prefs.targetLanguage,
-            translationMode = prefs.translationMode,
             enabledPackages = prefs.enabledPackages,
             onCopied = {
                 showDiagnosticsDialog = false

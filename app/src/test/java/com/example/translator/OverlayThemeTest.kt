@@ -255,7 +255,7 @@ class OverlayThemeTest {
             isUndoMode = true
         )
         assertEquals(R.drawable.bg_draft_undo_btn_dark, undoDark.actionBgRes)
-        assertEquals(0xFF34D399.toInt(), undoDark.actionTextColor)
+        assertEquals(0xFF60A5FA.toInt(), undoDark.actionTextColor)
 
         val undoLight = OverlayManager.resolveDraftPillStyle(
             overlayTheme = AppDefaults.OVERLAY_THEME_LIGHT,
@@ -263,7 +263,7 @@ class OverlayThemeTest {
             isUndoMode = true
         )
         assertEquals(R.drawable.bg_draft_undo_btn_light, undoLight.actionBgRes)
-        assertEquals(0xFF047857.toInt(), undoLight.badgeTextColor)
+        assertEquals(0xFF1D4ED8.toInt(), undoLight.badgeTextColor)
 
         val staleDark = OverlayManager.resolveDraftPillStyle(
             overlayTheme = AppDefaults.OVERLAY_THEME_AUTO,

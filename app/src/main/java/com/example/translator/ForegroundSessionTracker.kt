@@ -156,7 +156,7 @@ class ForegroundSessionTracker(
             }
         }
 
-        if (!isTargetEvt || (!ServiceBridge.isTranslatingActive && !ServiceBridge.isBubbleRunning)) {
+        if (!isTargetEvt || !ServiceBridge.isTranslatingActive) {
             return capturedSourceNode
         }
 

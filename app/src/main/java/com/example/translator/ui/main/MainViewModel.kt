@@ -18,7 +18,6 @@ import com.example.translator.ServiceBridge
 import com.example.translator.SystemOnDeviceTranslationEngine
 import com.example.translator.TranslationNotificationManager
 import com.example.translator.TranslationPipeline
-import com.example.translator.TranslationTileService
 import com.example.translator.TranslatorApplication
 import com.example.translator.TranslatorPreferences
 import com.example.translator.TranslatorPreferencesRepository
@@ -142,16 +141,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ensureModelsDownloaded(updated.sourceLanguage, updated.targetLanguage)
     }
 
-    fun setTranslationMode(mode: String) {
-        preferencesRepository.setTranslationMode(mode)
-        if (ServiceBridge.isNotificationActive) {
-            TranslationNotificationManager.showNotification(
-                appContext,
-                isTranslating = ServiceBridge.isTranslatingActive
-            )
-        }
-    }
-
     fun setGlossaryEnabled(enabled: Boolean) = preferencesRepository.setGlossaryEnabled(enabled)
     fun setKeyboardTranslatorEnabled(enabled: Boolean) = preferencesRepository.setKeyboardTranslatorEnabled(enabled)
     fun setLearningEnabled(enabled: Boolean) = preferencesRepository.setLearningEnabled(enabled)
@@ -160,36 +149,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setOverlayTheme(theme: String) = preferencesRepository.setOverlayTheme(theme)
     fun setPreferSystemTranslator(enabled: Boolean) = preferencesRepository.setPreferSystemTranslator(enabled)
 
-    fun setControlInterface(selected: String) {
-        preferencesRepository.setControlInterface(selected)
-        if (runtimeState.value.isAnyServiceActive) {
-            syncActiveControlSurface(selected)
-        }
-    }
-
     fun startService() {
         val current = preferences.value
         ensureModelsDownloaded(current.sourceLanguage, current.targetLanguage)
-        // Por qué: Iniciar siempre en estado Translating unifica la expectativa del usuario en los 3 controles
         ServiceBridge.isTranslatingActive = true
+        ServiceBridge.isNotificationActive = true
         ServiceBridge.onTranslationStateChanged?.invoke(true)
-        syncActiveControlSurface(current.controlInterface)
-        val toastMessage = when (current.controlInterface) {
-            AppDefaults.INTERFACE_NOTIFICATION -> "Translating (Notification controls active)"
-            AppDefaults.INTERFACE_BUBBLE -> "Translating (Floating sphere open)"
-            else -> "Translating (Quick Tile controls active)"
-        }
-        _events.tryEmit(MainUiEvent.ShowToast(toastMessage))
+        TranslationNotificationManager.showNotification(appContext, isTranslating = true)
+        ServiceBridge.notifyUiStateChanged()
+        _events.tryEmit(MainUiEvent.ShowToast("OverChat started (Notification controls active)"))
     }
 
     fun togglePauseResume() {
         val next = ServiceBridge.sessionController.toggleTranslating()
         ServiceBridge.onTranslationStateChanged?.invoke(next)
-        ServiceBridge.onBubbleAppearanceSync?.invoke(next)
         if (ServiceBridge.isNotificationActive) {
             TranslationNotificationManager.showNotification(appContext, isTranslating = next)
         }
-        TranslationTileService.requestSync(appContext)
         ServiceBridge.notifyUiStateChanged()
         _events.tryEmit(MainUiEvent.ShowToast(if (next) "Translation active" else "Translation paused"))
     }
@@ -197,9 +173,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun stopService() {
         ServiceBridge.sessionController.stopAllSurfaces()
         TranslationNotificationManager.cancelNotification(appContext)
-        ServiceBridge.onBubbleVisibilityChanged?.invoke(false)
         ServiceBridge.onTranslationStateChanged?.invoke(false)
-        TranslationTileService.requestSync(appContext)
         ServiceBridge.notifyUiStateChanged()
         _events.tryEmit(MainUiEvent.ShowToast("OverChat stopped"))
     }
@@ -366,34 +340,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.update { it.copy(modelStatus = "Model download error. Check connection.") }
             }
         )
-    }
-
-    private fun syncActiveControlSurface(controlInterface: String) {
-        when (controlInterface) {
-            AppDefaults.INTERFACE_NOTIFICATION -> {
-                ServiceBridge.isNotificationActive = true
-                ServiceBridge.isBubbleRunning = false
-                ServiceBridge.onBubbleVisibilityChanged?.invoke(false)
-                TranslationNotificationManager.showNotification(
-                    appContext,
-                    isTranslating = ServiceBridge.isTranslatingActive
-                )
-            }
-            AppDefaults.INTERFACE_BUBBLE -> {
-                ServiceBridge.isNotificationActive = false
-                TranslationNotificationManager.cancelNotification(appContext)
-                ServiceBridge.isBubbleRunning = true
-                ServiceBridge.onBubbleVisibilityChanged?.invoke(true)
-            }
-            else -> {
-                ServiceBridge.isNotificationActive = false
-                TranslationNotificationManager.cancelNotification(appContext)
-                ServiceBridge.isBubbleRunning = false
-                ServiceBridge.onBubbleVisibilityChanged?.invoke(false)
-            }
-        }
-        TranslationTileService.requestSync(appContext)
-        ServiceBridge.notifyUiStateChanged()
     }
 
     private fun checkNotificationPermissionGranted(): Boolean {

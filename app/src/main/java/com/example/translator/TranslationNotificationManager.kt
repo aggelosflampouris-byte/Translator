@@ -45,35 +45,23 @@ object TranslationNotificationManager {
         val expandedHint: String
     )
 
-    // Por qué: Centraliza los textos dependientes del modo para probarlos en JVM y evitar mensajes contradictorios
+    // Por qué: Centraliza los textos del menú de notificaciones para probarlos en JVM con un único flujo claro
     fun buildNotificationCopy(
-        mode: String,
         isTranslating: Boolean,
         srcName: String,
         tgtName: String,
-        autoTitle: String = "OverChat · Auto",
-        tapTitle: String = "OverChat · Tap Mode",
+        activeTitle: String = "OverChat Active",
         pausedTitle: String = "OverChat Paused",
         subtitle: String = "$srcName to $tgtName",
         switchActionLabel: String = "Switch Lang",
         pauseLabel: String = "Pause",
         resumeLabel: String = "Resume",
-        autoHint: String = "Automatically translates visible chat screens.",
-        tapHint: String = "Tap any message in chat to translate.",
+        activeHint: String = "Automatically translates visible chat screens.",
         pausedHint: String = "Translation is paused. Tap Resume to continue."
     ): NotificationCopy {
-        val isTapMode = mode == AppDefaults.MODE_TAP
-        val title = when {
-            !isTranslating -> pausedTitle
-            isTapMode -> tapTitle
-            else -> autoTitle
-        }
+        val title = if (isTranslating) activeTitle else pausedTitle
         val toggleActionLabel = if (isTranslating) pauseLabel else resumeLabel
-        val expandedHint = when {
-            !isTranslating -> pausedHint
-            isTapMode -> tapHint
-            else -> autoHint
-        }
+        val expandedHint = if (isTranslating) activeHint else pausedHint
         return NotificationCopy(
             title = title,
             subtitle = subtitle,
@@ -89,7 +77,6 @@ object TranslationNotificationManager {
         val prefs = context.getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
         val src = prefs.getString(AppDefaults.KEY_SOURCE_LANGUAGE, AppDefaults.SOURCE_LANGUAGE) ?: AppDefaults.SOURCE_LANGUAGE
         val tgt = prefs.getString(AppDefaults.KEY_TARGET_LANGUAGE, AppDefaults.TARGET_LANGUAGE) ?: AppDefaults.TARGET_LANGUAGE
-        val mode = prefs.getString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_ALL) ?: AppDefaults.MODE_ALL
 
         val srcCode = AppDefaults.formatLanguageDisplayName(src)
         val tgtCode = AppDefaults.formatLanguageDisplayName(tgt)
@@ -139,19 +126,16 @@ object TranslationNotificationManager {
         )
 
         val copy = buildNotificationCopy(
-            mode = mode,
             isTranslating = isTranslating,
             srcName = srcCode,
             tgtName = tgtCode,
-            autoTitle = context.getString(R.string.notif_title_auto_active),
-            tapTitle = context.getString(R.string.notif_title_tap_active),
+            activeTitle = context.getString(R.string.notif_title_auto_active),
             pausedTitle = context.getString(R.string.notif_title_paused),
             subtitle = context.getString(R.string.notif_subtitle_pair, srcCode, tgtCode),
             switchActionLabel = context.getString(R.string.notif_action_switch_languages),
             pauseLabel = context.getString(R.string.notif_action_pause),
             resumeLabel = context.getString(R.string.notif_action_resume),
-            autoHint = context.getString(R.string.notif_hint_auto),
-            tapHint = context.getString(R.string.notif_hint_tap),
+            activeHint = context.getString(R.string.notif_hint_auto),
             pausedHint = context.getString(R.string.notif_hint_paused)
         )
 

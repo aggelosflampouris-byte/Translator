@@ -1,19 +1,16 @@
 package com.example.translator.ui.main
 
-import android.os.Build
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
@@ -39,18 +36,15 @@ import com.example.translator.ui.components.OverChatSectionLabel
 import com.example.translator.ui.components.OverChatSegmentedControl
 
 /**
- * Tarjeta principal de controles rápidos, apps compatibles y diccionario personal unificado.
+ * Tarjeta principal de aplicaciones compatibles y diccionario personal unificado.
  */
 @Composable
 fun ControlsAndAppsCard(
-    controlInterface: String,
     enabledPackages: Set<String>,
     learningStats: Pair<Int, Int>,
     glossaryEnabled: Boolean,
     learningEnabled: Boolean,
     settingsEnabled: Boolean,
-    onControlInterfaceChanged: (String) -> Unit,
-    onRequestAddQuickTile: () -> Unit,
     onManageApps: () -> Unit,
     onOpenDictionary: () -> Unit
 ) {
@@ -85,38 +79,9 @@ fun ControlsAndAppsCard(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        OverChatSectionLabel(text = "Controls & Apps")
+        OverChatSectionLabel(text = "Apps & Dictionary")
 
         OverChatSectionCard {
-            Text(
-                text = "Quick control surface",
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            OverChatSegmentedControl(
-                options = listOf(
-                    AppDefaults.INTERFACE_NOTIFICATION to "Notification",
-                    AppDefaults.INTERFACE_BUBBLE to "Floating",
-                    AppDefaults.INTERFACE_TILE to "Quick Tile"
-                ),
-                selectedValue = controlInterface,
-                enabled = settingsEnabled,
-                onSelected = onControlInterfaceChanged
-            )
-
-            ControlHintRow(
-                controlInterface = controlInterface,
-                settingsEnabled = settingsEnabled,
-                onRequestAddQuickTile = onRequestAddQuickTile
-            )
-
-            HorizontalDivider(
-                modifier = Modifier.padding(vertical = 14.dp),
-                thickness = 0.5.dp,
-                color = MaterialTheme.colorScheme.outlineVariant
-            )
-
             NavigationSummaryRow(
                 title = "Supported Apps",
                 subtitle = enabledAppsSummary,
@@ -136,49 +101,6 @@ fun ControlsAndAppsCard(
                 enabled = settingsEnabled,
                 onClick = onOpenDictionary
             )
-        }
-    }
-}
-
-@Composable
-private fun ControlHintRow(
-    controlInterface: String,
-    settingsEnabled: Boolean,
-    onRequestAddQuickTile: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        val hint = when (controlInterface) {
-            AppDefaults.INTERFACE_NOTIFICATION -> "Pause, resume, or scan from your notification shade."
-            AppDefaults.INTERFACE_BUBBLE -> "Tap floating sphere to pause or resume. Hold for options."
-            else -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                "Toggle OverChat directly from Android Quick Settings."
-            } else {
-                "Swipe down twice, tap Edit, and drag OverChat into Quick Settings."
-            }
-        }
-        Text(
-            text = hint,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(1f),
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
-        )
-        if (controlInterface == AppDefaults.INTERFACE_TILE && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            Spacer(modifier = Modifier.width(8.dp))
-            TextButton(
-                onClick = onRequestAddQuickTile,
-                enabled = settingsEnabled,
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-            ) {
-                Text("Add Tile", style = MaterialTheme.typography.labelMedium)
-            }
         }
     }
 }
@@ -263,7 +185,6 @@ fun BubbleThemeCard(
         )
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Vista previa realista con dos burbujas que reacciona al instante al cambiar el tema.
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),

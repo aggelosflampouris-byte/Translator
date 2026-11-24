@@ -9,7 +9,7 @@ import android.widget.Toast
  * Receptor de difusión para las acciones del menú de notificaciones del sistema.
  *
  * Por qué: Procesa de forma desacoplada los toques en los botones de acción de la notificación
- * (Traducir, Pausar/Reanudar y Detener), comunicándose con el servicio de accesibilidad a través de ServiceBridge.
+ * (Pausar/Reanudar y Detener), comunicándose con el servicio de accesibilidad a través de ServiceBridge.
  */
 class TranslationNotificationReceiver : BroadcastReceiver() {
 
@@ -25,24 +25,18 @@ class TranslationNotificationReceiver : BroadcastReceiver() {
                 }
                 ServiceBridge.isTranslatingActive = newState
                 ServiceBridge.onTranslationStateChanged?.invoke(newState)
-                ServiceBridge.onBubbleAppearanceSync?.invoke(newState)
                 TranslationNotificationManager.showNotification(context, isTranslating = newState)
-                TranslationTileService.requestSync(context)
                 val msg = if (newState) "Translation Active" else "Translation Paused"
                 Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
             }
 
             TranslationNotificationManager.ACTION_STOP -> {
                 ServiceBridge.isTranslatingActive = false
-                ServiceBridge.isBubbleRunning = false
-                ServiceBridge.onBubbleVisibilityChanged?.invoke(false)
                 ServiceBridge.onTranslationStateChanged?.invoke(false)
                 TranslationNotificationManager.cancelNotification(context)
-                TranslationTileService.requestSync(context)
                 ServiceBridge.notifyUiStateChanged()
                 Toast.makeText(context, "OverChat Stopped", Toast.LENGTH_SHORT).show()
             }
         }
     }
 }
-

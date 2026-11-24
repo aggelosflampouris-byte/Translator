@@ -1,15 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Botón tonal de deshacer en modo oscuro para distinguirlo visualmente de Reemplazar -->
+<!-- Botón tonal de deshacer en modo oscuro con acento azul -->
 <ripple xmlns:android="http://schemas.android.com/apk/res/android"
-    android:color="#3334D399">
+    android:color="#3360A5FA">
     <item>
         <shape android:shape="rectangle">
             <solid android:color="#FF1E293B" />
             <corners android:radius="10dp" />
             <stroke
                 android:width="1dp"
-                android:color="#FF10B981" />
+                android:color="#FF3B82F6" />
         </shape>
     </item>
 </ripple>
-

@@ -27,17 +27,6 @@ object AppDefaults {
 
     // Por qué: Permite al usuario activar o desactivar el aprendizaje local a partir de sus correcciones
     const val KEY_LEARNING_ENABLED = "adaptive_learning_enabled"
-    
-    // Por qué: Modos de interacción: TAP para traducir mensajes específicos al tocarlos, ALL para overlay general
-    const val KEY_TRANSLATE_MODE = "translate_mode"
-    const val MODE_TAP = "TAP"
-    const val MODE_ALL = "ALL"
-
-    // Por qué: Tipo de interfaz de control preferida por el usuario: NOTIFICATION, BUBBLE o TILE (Ajustes Rápidos sin permisos de notificación ni superposición)
-    const val KEY_CONTROL_INTERFACE = "control_interface"
-    const val INTERFACE_NOTIFICATION = "NOTIFICATION"
-    const val INTERFACE_BUBBLE = "BUBBLE"
-    const val INTERFACE_TILE = "TILE"
 
     // Por qué: Controla si la app busca actualizaciones en GitHub al abrirse
     const val KEY_AUTO_CHECK_UPDATES = "auto_check_updates"
@@ -45,12 +34,6 @@ object AppDefaults {
     // Por qué: Minutos de inactividad sin usar apps de chat antes de pausar automáticamente para ahorrar batería (0 = desactivado)
     const val KEY_IDLE_AUTO_PAUSE_MINUTES = "idle_auto_pause_minutes"
     const val DEFAULT_IDLE_AUTO_PAUSE_MINUTES = 15
-
-    // Por qué: Persiste el borde y la altura elegidos por el usuario para la esfera flotante
-    const val KEY_SPHERE_EDGE_RIGHT = "sphere_edge_right"
-    const val KEY_SPHERE_Y_RATIO = "sphere_y_ratio"
-    // Por qué: Evita repetir el recordatorio inicial de gestos tras el primer uso de la esfera
-    const val KEY_SPHERE_HINT_SHOWN = "sphere_hint_shown"
 
     // Por qué: Conjunto de paquetes de apps de mensajería habilitados dinámicamente para traducción en pantalla
     const val KEY_ENABLED_PACKAGES = "enabled_target_packages"

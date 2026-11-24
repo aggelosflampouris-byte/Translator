@@ -157,10 +157,10 @@ class OverlayManager(private val context: Context) {
                 DraftPillStyle(
                     containerBgRes = R.drawable.bg_draft_bubble_light,
                     badgeBgRes = R.drawable.bg_draft_badge_light,
-                    badgeTextColor = if (isUndoMode) 0xFF047857.toInt() else 0xFF059669.toInt(),
+                    badgeTextColor = if (isUndoMode) 0xFF1D4ED8.toInt() else 0xFF2563EB.toInt(),
                     bodyTextColor = if (isUndoMode || isStalePending) 0xFF475569.toInt() else TEXT_COLOR_LIGHT_SURFACE,
                     actionBgRes = if (isUndoMode) R.drawable.bg_draft_undo_btn_light else R.drawable.bg_draft_action_btn_light,
-                    actionTextColor = if (isUndoMode) 0xFF047857.toInt() else 0xFFFFFFFF.toInt(),
+                    actionTextColor = if (isUndoMode) 0xFF1D4ED8.toInt() else 0xFFFFFFFF.toInt(),
                     closeBgRes = R.drawable.bg_draft_close_btn_light,
                     closeTextColor = 0xFF64748B.toInt()
                 )
@@ -168,10 +168,10 @@ class OverlayManager(private val context: Context) {
                 DraftPillStyle(
                     containerBgRes = R.drawable.bg_draft_bubble_dark,
                     badgeBgRes = R.drawable.bg_draft_badge_dark,
-                    badgeTextColor = 0xFF34D399.toInt(),
+                    badgeTextColor = 0xFF60A5FA.toInt(),
                     bodyTextColor = if (isUndoMode || isStalePending) 0xFFCBD5E1.toInt() else 0xFFF8FAFC.toInt(),
                     actionBgRes = if (isUndoMode) R.drawable.bg_draft_undo_btn_dark else R.drawable.bg_draft_action_btn,
-                    actionTextColor = if (isUndoMode) 0xFF34D399.toInt() else 0xFFFFFFFF.toInt(),
+                    actionTextColor = if (isUndoMode) 0xFF60A5FA.toInt() else 0xFFFFFFFF.toInt(),
                     closeBgRes = R.drawable.bg_draft_close_btn_dark,
                     closeTextColor = 0xFF94A3B8.toInt()
                 )
@@ -251,7 +251,7 @@ class OverlayManager(private val context: Context) {
     }
 
     private fun notifyOverlayPresenceLocked() {
-        val current = activeBubbles.isNotEmpty() || bubbleCanvas != null || singlePillView != null || draftOverlayView != null
+        val current = activeBubbles.isNotEmpty() || bubbleCanvas != null || draftOverlayView != null
         if (current != lastReportedHasOverlays) {
             lastReportedHasOverlays = current
             onOverlaysActiveChanged?.invoke(current)
@@ -454,7 +454,6 @@ class OverlayManager(private val context: Context) {
             canvas.animate().cancel()
             canvas.animate().alpha(0f).setDuration(70L).start()
         }
-        removeSingleMessagePill()
         if (clearDraftToo) {
             removeDraftOverlay()
         }
@@ -1398,175 +1397,6 @@ class OverlayManager(private val context: Context) {
         }
     }
 
-    private var singlePillView: View? = null
-
-    /**
-     * Muestra una pastilla flotante compacta para un mensaje específico seleccionado al tocarlo.
-     * Por qué: Evita saturar la pantalla con 20 overlays simultáneos; el usuario traduce exactamente
-     * el mensaje que desea leer con formato claro y acciones rápidas (Copiar / Cerrar).
-     */
-    fun showSingleMessagePill(
-        targetRect: Rect,
-        translatedText: String,
-        targetLangCode: String = "EL",
-        originalText: String? = null,
-        onDismiss: () -> Unit = {}
-    ) {
-        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
-            mainHandler.post { showSingleMessagePill(targetRect, translatedText, targetLangCode, originalText, onDismiss) }
-            return
-        }
-
-        if (translatedText.isBlank()) {
-            removeSingleMessagePill()
-            return
-        }
-
-        val metrics = ScreenMetricsHelper.currentBounds(context)
-        val screenWidth = metrics.widthPx
-        val density = metrics.density
-
-        synchronized(this) {
-            val view = singlePillView ?: inflater.inflate(R.layout.single_message_pill_overlay, null)
-            val style = resolveDraftPillStyle(
-                overlayTheme = overlayTheme,
-                isSystemDarkMode = isSystemDarkModeNow(),
-                isUndoMode = false,
-                isStalePending = false
-            )
-            view.setBackgroundResource(style.containerBgRes)
-
-            val badgeView = view.findViewById<TextView>(R.id.pill_badge)
-            val textView = view.findViewById<TextView>(R.id.pill_translated_text)
-            val peekBtn = view.findViewById<TextView>(R.id.pill_btn_peek)
-            val copyBtn = view.findViewById<TextView>(R.id.pill_btn_copy)
-            val closeBtn = view.findViewById<ImageView>(R.id.pill_btn_close)
-
-            badgeView.setBackgroundResource(style.badgeBgRes)
-            badgeView.setTextColor(style.badgeTextColor)
-            peekBtn.setBackgroundResource(style.badgeBgRes)
-            peekBtn.setTextColor(style.closeTextColor)
-            copyBtn.setBackgroundResource(style.badgeBgRes)
-            copyBtn.setTextColor(style.closeTextColor)
-            copyBtn.setText(R.string.pill_action_copy)
-            closeBtn.setBackgroundResource(style.closeBgRes)
-            closeBtn.setColorFilter(style.closeTextColor)
-            textView.setTextColor(style.bodyTextColor)
-
-            val canPeekOriginal = !originalText.isNullOrBlank() && originalText != translatedText
-            var showingOriginal = false
-
-            fun renderPillContent() {
-                if (showingOriginal && canPeekOriginal) {
-                    badgeView.text = "ORIG"
-                    textView.text = originalText
-                    peekBtn.setText(R.string.pill_action_translated)
-                } else {
-                    badgeView.text = "⇄ $targetLangCode"
-                    textView.text = translatedText
-                    peekBtn.setText(R.string.pill_action_original)
-                }
-            }
-
-            peekBtn.visibility = if (canPeekOriginal) View.VISIBLE else View.GONE
-            renderPillContent()
-
-            val maxWidth = (screenWidth * 0.88f).toInt()
-            val params = (view.layoutParams as? WindowManager.LayoutParams) ?: WindowManager.LayoutParams(
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                PixelFormat.TRANSLUCENT
-            ).apply {
-                gravity = Gravity.TOP or Gravity.START
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                    layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-                }
-            }
-
-            fun measureAndComputePosition() {
-                view.measure(
-                    View.MeasureSpec.makeMeasureSpec(maxWidth, View.MeasureSpec.AT_MOST),
-                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
-                )
-                val pillWidth = view.measuredWidth.coerceAtLeast((180 * density).toInt())
-                val pillHeight = view.measuredHeight
-                params.width = pillWidth
-                params.height = pillHeight
-                params.x = targetRect.left.coerceIn(
-                    (12 * density).toInt(),
-                    (screenWidth - pillWidth - (12 * density).toInt()).coerceAtLeast((12 * density).toInt())
-                )
-                params.y = if (targetRect.top - pillHeight - (8 * density).toInt() > (48 * density).toInt()) {
-                    targetRect.top - pillHeight - (8 * density).toInt()
-                } else {
-                    targetRect.bottom + (8 * density).toInt()
-                }
-            }
-
-            measureAndComputePosition()
-
-            peekBtn.setOnClickListener {
-                if (!canPeekOriginal) return@setOnClickListener
-                showingOriginal = !showingOriginal
-                renderPillContent()
-                measureAndComputePosition()
-                try {
-                    windowManager.updateViewLayout(view, params)
-                } catch (_: Exception) {
-                    // Ignorar si ya fue cerrada
-                }
-            }
-
-            copyBtn.setOnClickListener {
-                val activeText = if (showingOriginal && canPeekOriginal) originalText else translatedText
-                ClipboardHelper.copySensitiveText(context, "Translation", activeText)
-                copyBtn.setText(R.string.pill_action_copied)
-                copyBtn.setTextColor(style.badgeTextColor)
-                copyBtn.postDelayed({
-                    if (singlePillView === view) {
-                        copyBtn.setText(R.string.pill_action_copy)
-                        copyBtn.setTextColor(style.closeTextColor)
-                    }
-                }, 1200L)
-            }
-
-            closeBtn.setOnClickListener {
-                removeSingleMessagePill()
-                onDismiss()
-            }
-
-            if (singlePillView == null) {
-                if (addWindowViewWithFallback(view, params, "single pill overlay")) {
-                    singlePillView = view
-                    animatePillEntrance(view, density)
-                    notifyOverlayPresenceLocked()
-                }
-            } else {
-                try {
-                    windowManager.updateViewLayout(view, params)
-                } catch (e: Exception) {
-                    // Ignore
-                }
-            }
-        }
-    }
-
-    @Synchronized
-    fun removeSingleMessagePill() {
-        singlePillView?.let {
-            try {
-                windowManager.removeView(it)
-            } catch (e: Exception) {
-                // Ignore
-            }
-            singlePillView = null
-        }
-        notifyOverlayPresenceLocked()
-    }
-
     @Synchronized
     fun removeAllMessageOverlays() {
         for (bubble in activeBubbles.values) {
@@ -1574,7 +1404,6 @@ class OverlayManager(private val context: Context) {
         }
         activeBubbles.clear()
         detachBubbleCanvasLocked()
-        removeSingleMessagePill()
         notifyOverlayPresenceLocked()
     }
 
@@ -1641,7 +1470,7 @@ class OverlayManager(private val context: Context) {
     // para que el vigilante en segundo plano pueda purgar la pantalla inmediatamente al salir del chat activo.
     @Synchronized
     fun hasOverlays(): Boolean {
-        return activeBubbles.isNotEmpty() || bubbleCanvas != null || singlePillView != null || draftOverlayView != null
+        return activeBubbles.isNotEmpty() || bubbleCanvas != null || draftOverlayView != null
     }
 
     @Synchronized

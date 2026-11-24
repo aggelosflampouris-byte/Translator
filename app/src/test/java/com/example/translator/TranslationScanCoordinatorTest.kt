@@ -14,55 +14,11 @@ import org.junit.Test
 /**
  * Pruebas unitarias del coordinador de escaneo [TranslationScanCoordinator].
  *
- * Por qué: Garantizan la exclusión mutua single-flight, la subordinación estricta de `MODE_TAP`,
- * el aislamiento de dibujos/limpiezas mediante épocas monótonas y los 3 reintentos por `null_root`.
+ * Por qué: Garantizan la exclusión mutua single-flight, el aislamiento de dibujos/limpiezas
+ * mediante épocas monótonas y los 3 reintentos por `null_root`.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class TranslationScanCoordinatorTest {
-
-    @Test
-    fun tapMode_skipsPeriodicLoopContentDebounceAndScrollSettle_butAllowsManualScan() = runTest {
-        val dispatcher = StandardTestDispatcher(testScheduler)
-        val mainQueue = ArrayDeque<() -> Unit>()
-        var autoScans = 0
-        var manualScans = 0
-        var clearedMessageCount = 0
-
-        val coordinator = TranslationScanCoordinator(
-            scope = backgroundScope,
-            workerDispatcher = dispatcher,
-            postToMain = { mainQueue.addLast(it) },
-            isTranslatingActive = { true },
-            isTapMode = { true },
-            isScrollQuieted = { true },
-            uptimeMs = { 10_000L + testScheduler.currentTime },
-            isKeyboardVisible = { false },
-            onClearAllOverlays = {},
-            onClearMessageOverlays = { clearedMessageCount++ },
-            executeScan = { _, _, _, isManual ->
-                if (isManual) manualScans++ else autoScans++
-                ScanOutcome.TRANSLATED_OR_EMPTY
-            }
-        )
-
-        coordinator.startPeriodicLoop()
-        coordinator.scheduleContentScan(delayMs = 100L)
-        coordinator.onScrollStarted(eventSourceToken = "scroll-node")
-
-        advanceTimeBy(4_500L)
-        runCurrent()
-        while (mainQueue.isNotEmpty()) mainQueue.removeFirst().invoke()
-
-        assertEquals(0, autoScans)
-        assertEquals(1, clearedMessageCount)
-
-        coordinator.requestManualScan(delayBeforeAttemptMs = 0L)
-        runCurrent()
-        coordinator.stopAll()
-
-        assertEquals(1, manualScans)
-        assertEquals(0, autoScans)
-    }
 
     @Test
     fun invalidateAndClearAllOverlays_doesNotOverwriteNewerDrawnEpoch() = runTest {
@@ -75,7 +31,6 @@ class TranslationScanCoordinatorTest {
             workerDispatcher = dispatcher,
             postToMain = { mainQueue.addLast(it) },
             isTranslatingActive = { true },
-            isTapMode = { false },
             isScrollQuieted = { true },
             uptimeMs = { 10_000L + testScheduler.currentTime },
             isKeyboardVisible = { false },
@@ -115,7 +70,6 @@ class TranslationScanCoordinatorTest {
             workerDispatcher = dispatcher,
             postToMain = { it.invoke() },
             isTranslatingActive = { true },
-            isTapMode = { false },
             isScrollQuieted = { true },
             uptimeMs = { 10_000L + testScheduler.currentTime },
             isKeyboardVisible = { false },
@@ -150,7 +104,6 @@ class TranslationScanCoordinatorTest {
             workerDispatcher = dispatcher,
             postToMain = { it.invoke() },
             isTranslatingActive = { true },
-            isTapMode = { false },
             isScrollQuieted = { true },
             uptimeMs = { 10_000L + testScheduler.currentTime },
             isKeyboardVisible = { false },
@@ -180,29 +133,6 @@ class TranslationScanCoordinatorTest {
     }
 
     @Test
-    fun tapMode_doesNotStartPeriodicLoopJob() = runTest {
-        val dispatcher = StandardTestDispatcher(testScheduler)
-        val coordinator = TranslationScanCoordinator(
-            scope = backgroundScope,
-            workerDispatcher = dispatcher,
-            postToMain = { it.invoke() },
-            isTranslatingActive = { true },
-            isTapMode = { true },
-            isScrollQuieted = { true },
-            uptimeMs = { 10_000L + testScheduler.currentTime },
-            isKeyboardVisible = { false },
-            onClearAllOverlays = {},
-            onClearMessageOverlays = {},
-            executeScan = { _, _, _, _ -> ScanOutcome.TRANSLATED_OR_EMPTY }
-        )
-
-        coordinator.startPeriodicLoop()
-        runCurrent()
-
-        assertFalse(coordinator.isLoopAlive)
-    }
-
-    @Test
     fun periodicLoop_skipsStationaryOrBackgroundTicks_untilDirtyInTargetApp() = runTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         var inTargetApp = true
@@ -214,7 +144,6 @@ class TranslationScanCoordinatorTest {
             workerDispatcher = dispatcher,
             postToMain = { it.invoke() },
             isTranslatingActive = { true },
-            isTapMode = { false },
             isScrollQuieted = { true },
             uptimeMs = { 10_000L + testScheduler.currentTime },
             isKeyboardVisible = { false },
@@ -282,7 +211,6 @@ class TranslationScanCoordinatorTest {
             workerDispatcher = dispatcher,
             postToMain = { mainQueue.addLast(it) },
             isTranslatingActive = { true },
-            isTapMode = { false },
             isScrollQuieted = { true },
             uptimeMs = { 10_000L + testScheduler.currentTime },
             isKeyboardVisible = { false },

@@ -74,7 +74,6 @@ import com.example.translator.R
 import com.example.translator.SessionDisplayState
 import com.example.translator.Settings as SettingsRoute
 import com.example.translator.TargetApps
-import com.example.translator.TranslationTileService
 
 /**
  * Pantalla principal simplificada de configuración diaria y activación de OverChat.
@@ -184,8 +183,7 @@ fun MainScreen(
         )
     }
 
-    val isNotificationRequired = prefs.controlInterface == AppDefaults.INTERFACE_NOTIFICATION &&
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+    val isNotificationRequired = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
     val allPermissionsGranted = uiState.isAccessibilityEnabled &&
         (!isNotificationRequired || uiState.isNotificationPermissionGranted)
     val displayState = runtime.displayState()
@@ -196,7 +194,6 @@ fun MainScreen(
             MainActionBottomBar(
                 allPermissionsGranted = allPermissionsGranted,
                 displayState = displayState,
-                controlInterface = prefs.controlInterface,
                 onStart = viewModel::startService,
                 onTogglePauseResume = viewModel::togglePauseResume,
                 onStop = viewModel::stopService
@@ -249,29 +246,20 @@ fun MainScreen(
                 targetLanguage = prefs.targetLanguage,
                 availableLanguages = AppDefaults.AVAILABLE_LANGUAGES,
                 modelStatus = uiState.modelStatus,
-                translationMode = prefs.translationMode,
                 keyboardTranslatorEnabled = prefs.keyboardTranslatorEnabled,
                 settingsEnabled = true,
                 onSourceSelected = viewModel::setSourceLanguage,
                 onTargetSelected = viewModel::setTargetLanguage,
                 onSwapLanguages = viewModel::swapLanguages,
-                onTranslationModeChanged = viewModel::setTranslationMode,
                 onKeyboardTranslatorChanged = viewModel::setKeyboardTranslatorEnabled
             )
 
             ControlsAndAppsCard(
-                controlInterface = prefs.controlInterface,
                 enabledPackages = prefs.enabledPackages,
                 learningStats = uiState.learningStats,
                 glossaryEnabled = prefs.glossaryEnabled,
                 learningEnabled = prefs.learningEnabled,
                 settingsEnabled = true,
-                onControlInterfaceChanged = viewModel::setControlInterface,
-                onRequestAddQuickTile = {
-                    TranslationTileService.requestAddTile(context) { message ->
-                        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-                    }
-                },
                 onManageApps = { onItemClick(TargetApps) },
                 onOpenDictionary = {
                     viewModel.refreshGlossarySnapshot()
@@ -399,7 +387,6 @@ private fun MainScreenHeader(
 private fun MainActionBottomBar(
     allPermissionsGranted: Boolean,
     displayState: SessionDisplayState,
-    controlInterface: String,
     onStart: () -> Unit,
     onTogglePauseResume: () -> Unit,
     onStop: () -> Unit
@@ -495,13 +482,8 @@ private fun MainActionBottomBar(
                                 shape = RoundedCornerShape(14.dp),
                                 onClick = onStart
                             ) {
-                                val actionRes = when (controlInterface) {
-                                    AppDefaults.INTERFACE_NOTIFICATION -> R.string.action_start_notification
-                                    AppDefaults.INTERFACE_BUBBLE -> R.string.action_start_sphere
-                                    else -> R.string.action_start_translation
-                                }
                                 Text(
-                                    text = stringResource(actionRes),
+                                    text = stringResource(R.string.action_start_translation),
                                     style = MaterialTheme.typography.labelLarge,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis

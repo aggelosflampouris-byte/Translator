@@ -11,12 +11,9 @@
     <string name="action_stop_service">Stop OverChat</string>
     <string name="action_pause">Pause</string>
     <string name="action_resume">Resume</string>
-    <string name="action_start_notification">Start Notification Menu</string>
-    <string name="action_start_sphere">Start Floating Sphere</string>
     <string name="action_start_translation">Start Translation</string>
 
-    <string name="notif_title_auto_active">OverChat · Auto</string>
-    <string name="notif_title_tap_active">OverChat · Tap Mode</string>
+    <string name="notif_title_auto_active">OverChat Active</string>
     <string name="notif_title_paused">OverChat Paused</string>
     <string name="notif_subtitle_pair">%1$s to %2$s</string>
     <string name="notif_action_switch_languages">Switch Lang</string>
@@ -24,16 +21,9 @@
     <string name="notif_action_resume">Resume</string>
     <string name="notif_action_stop">Stop</string>
     <string name="notif_hint_auto">Automatically translates visible chat screens.</string>
-    <string name="notif_hint_tap">Tap any message in chat to translate.</string>
     <string name="notif_hint_paused">Translation is paused. Tap Resume to continue.</string>
     <string name="quick_switch_title">Switch Languages</string>
     <string name="quick_switch_subtitle">Applies immediately to active chat translations.</string>
-
-    <string name="sphere_first_hint">Tap sphere to pause or resume. Hold for options.</string>
-    <string name="sphere_menu_to_tap">Mode: Tap</string>
-    <string name="sphere_menu_to_auto">Mode: Auto</string>
-    <string name="sphere_menu_settings">Settings</string>
-    <string name="sphere_menu_turn_off">Turn Off</string>
 
     <string name="settings_title">Settings</string>
     <string name="settings_system_translator_title">System Translation</string>
@@ -46,11 +36,7 @@
     <string name="draft_undo_caption">Inserted in chat · Tap Undo to restore</string>
     <string name="draft_dismiss_desc">Dismiss translation preview</string>
 
-    <string name="pill_action_original">Original</string>
-    <string name="pill_action_translated">Translated</string>
-    <string name="pill_action_copy">Copy</string>
-    <string name="pill_action_copied">✓ Copied</string>
-    <string name="pill_close_desc">Close translation</string>
+    <string name="pill_close_desc">Close</string>
     <string name="nav_back_desc">Back</string>
     <string name="lang_picker_title_from">Translate from</string>
     <string name="lang_picker_title_to">Translate to</string>

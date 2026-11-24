@@ -51,18 +51,6 @@
             android:name=".TranslationNotificationReceiver"
             android:exported="false" />
 
-        <!-- Mosaico de Ajustes Rápidos (Quick Settings Tile) para activar/desactivar la traducción en un toque -->
-        <service
-            android:name=".TranslationTileService"
-            android:label="OverChat"
-            android:icon="@drawable/ic_translate_sphere"
-            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.service.quicksettings.action.QS_TILE" />
-            </intent-filter>
-        </service>
-
         <service
             android:name=".TranslationAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"

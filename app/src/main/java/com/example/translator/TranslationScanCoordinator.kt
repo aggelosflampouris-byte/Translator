@@ -31,7 +31,6 @@ class TranslationScanCoordinator(
     private val workerDispatcher: CoroutineDispatcher,
     private val postToMain: (() -> Unit) -> Unit,
     private val isTranslatingActive: () -> Boolean,
-    private val isTapMode: () -> Boolean,
     private val isScrollQuieted: (nowMs: Long) -> Boolean,
     private val uptimeMs: () -> Long,
     private val isKeyboardVisible: () -> Boolean,
@@ -126,13 +125,13 @@ class TranslationScanCoordinator(
 
     fun startPeriodicLoop() {
         activeScanLoopJob?.cancel()
-        if (!isTranslatingActive() || isTapMode()) {
+        if (!isTranslatingActive()) {
             return
         }
         markScreenDirty()
         activeScanLoopJob = scope.launch(workerDispatcher) {
             delay(50L)
-            if (!isTranslatingActive() || isTapMode()) return@launch
+            if (!isTranslatingActive()) return@launch
             if (isInteractive()) {
                 onLoopTick(true)
                 val nowInit = uptimeMs()
@@ -142,7 +141,7 @@ class TranslationScanCoordinator(
             }
 
             var offTargetDirtyTicks = 0
-            while (isTranslatingActive() && !isTapMode()) {
+            while (isTranslatingActive()) {
                 // Por qué: Si la pantalla ya está limpia, suspendemos sin temporizadores (0 despertares)
                 // hasta que `markScreenDirty` señale nuevo contenido o regreso a primer plano.
                 if (!screenNeedsRescan) {
@@ -153,7 +152,7 @@ class TranslationScanCoordinator(
                 withTimeoutOrNull(2000L) {
                     dirtyWakeSignal.receive()
                 }
-                if (!isTranslatingActive() || isTapMode()) break
+                if (!isTranslatingActive()) break
                 if (!screenNeedsRescan) {
                     offTargetDirtyTicks = 0
                     continue
@@ -215,21 +214,16 @@ class TranslationScanCoordinator(
             (onScrollHideMessageOverlays ?: onClearMessageOverlays)(clearDraft)
         }
 
-        if (isTapMode()) {
-            isScreenScrolling = false
-            return
-        }
-
         scrollSettleJob = scope.launch(workerDispatcher) {
             delay(ScanTimingPolicy.SCROLL_SETTLE_DELAY_MS)
             isScreenScrolling = false
-            if (!isTranslatingActive() || isTapMode()) return@launch
+            if (!isTranslatingActive()) return@launch
             runSingleFlightScan(eventSourceToken = eventSourceToken, isManualRequest = false, ignoreThrottle = true)
         }
     }
 
     fun scheduleContentScan(delayMs: Long, eventSourceToken: Any? = null) {
-        if (!isTranslatingActive() || isTapMode()) return
+        if (!isTranslatingActive()) return
         markScreenDirty()
 
         val now = uptimeMs()
@@ -265,7 +259,7 @@ class TranslationScanCoordinator(
             pendingScanWindowStartMs = 0L
             val sourceForScan = pendingScanEventSource ?: eventSourceToken
             pendingScanEventSource = null
-            if (!isTranslatingActive() || isTapMode()) return@launch
+            if (!isTranslatingActive()) return@launch
 
             val nowAfterDelay = uptimeMs()
             if (!isScrollQuieted(nowAfterDelay)) {
@@ -276,7 +270,7 @@ class TranslationScanCoordinator(
                     (scrollThreshold - age).coerceIn(80L, ScanTimingPolicy.SCROLL_SETTLE_DELAY_MS)
                 }
                 delay(retryWaitMs)
-                if (!isTranslatingActive() || isTapMode() || !isScrollQuieted(uptimeMs())) return@launch
+                if (!isTranslatingActive() || !isScrollQuieted(uptimeMs())) return@launch
             }
             runSingleFlightScan(eventSourceToken = sourceForScan, isManualRequest = false)
         }
@@ -302,7 +296,6 @@ class TranslationScanCoordinator(
     ) {
         scanMutex.withLock {
             if (!isTranslatingActive()) return
-            if (!isManualRequest && isTapMode()) return
             val now = uptimeMs()
             if (!ignoreThrottle && now - lastCompletedOrStartedScanMs < ScanTimingPolicy.SINGLE_FLIGHT_THROTTLE_MS) {
                 return
@@ -333,7 +326,7 @@ class TranslationScanCoordinator(
     }
 
     private fun scheduleNullRootEntryRetryIfNeeded() {
-        if (isTapMode() || !isTranslatingActive()) return
+        if (!isTranslatingActive()) return
         val attempt = entryNullRootRetries
         if (attempt >= 3) return
         entryNullRootRetries = attempt + 1
@@ -342,7 +335,7 @@ class TranslationScanCoordinator(
         entryRetryJob?.cancel()
         entryRetryJob = scope.launch(workerDispatcher) {
             delay(waitMs)
-            if (isTranslatingActive() && !isTapMode() && isScrollQuieted(uptimeMs())) {
+            if (isTranslatingActive() && isScrollQuieted(uptimeMs())) {
                 runSingleFlightScan(eventSourceToken = null, isManualRequest = false, ignoreThrottle = true)
             }
         }

@@ -12,11 +12,9 @@ import kotlinx.coroutines.flow.asStateFlow
 data class TranslatorPreferences(
     val sourceLanguage: String = AppDefaults.SOURCE_LANGUAGE,
     val targetLanguage: String = AppDefaults.TARGET_LANGUAGE,
-    val translationMode: String = AppDefaults.MODE_ALL,
     val keyboardTranslatorEnabled: Boolean = true,
     val glossaryEnabled: Boolean = true,
     val learningEnabled: Boolean = true,
-    val controlInterface: String = AppDefaults.INTERFACE_NOTIFICATION,
     val autoCheckUpdates: Boolean = true,
     val idleAutoPauseMinutes: Int = AppDefaults.DEFAULT_IDLE_AUTO_PAUSE_MINUTES,
     val enabledPackages: Set<String> = emptySet(),
@@ -74,10 +72,6 @@ class TranslatorPreferencesRepository(private val appContext: Context) {
             .apply()
     }
 
-    fun setTranslationMode(mode: String) {
-        prefs.edit().putString(AppDefaults.KEY_TRANSLATE_MODE, mode).apply()
-    }
-
     fun setGlossaryEnabled(enabled: Boolean) {
         prefs.edit().putBoolean(AppDefaults.KEY_AI_ENABLED, enabled).apply()
     }
@@ -88,10 +82,6 @@ class TranslatorPreferencesRepository(private val appContext: Context) {
 
     fun setLearningEnabled(enabled: Boolean) {
         prefs.edit().putBoolean(AppDefaults.KEY_LEARNING_ENABLED, enabled).apply()
-    }
-
-    fun setControlInterface(controlInterface: String) {
-        prefs.edit().putString(AppDefaults.KEY_CONTROL_INTERFACE, controlInterface).apply()
     }
 
     fun setAutoCheckUpdates(enabled: Boolean) {
@@ -124,13 +114,9 @@ class TranslatorPreferencesRepository(private val appContext: Context) {
         return TranslatorPreferences(
             sourceLanguage = if (available.contains(savedSource)) savedSource else AppDefaults.SOURCE_LANGUAGE,
             targetLanguage = if (available.contains(savedTarget)) savedTarget else AppDefaults.TARGET_LANGUAGE,
-            translationMode = prefs.getString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_ALL)
-                ?: AppDefaults.MODE_ALL,
             keyboardTranslatorEnabled = prefs.getBoolean(AppDefaults.KEY_KEYBOARD_ENABLED, true),
             glossaryEnabled = prefs.getBoolean(AppDefaults.KEY_AI_ENABLED, true),
             learningEnabled = prefs.getBoolean(AppDefaults.KEY_LEARNING_ENABLED, true),
-            controlInterface = prefs.getString(AppDefaults.KEY_CONTROL_INTERFACE, AppDefaults.INTERFACE_NOTIFICATION)
-                ?: AppDefaults.INTERFACE_NOTIFICATION,
             autoCheckUpdates = prefs.getBoolean(AppDefaults.KEY_AUTO_CHECK_UPDATES, true),
             idleAutoPauseMinutes = prefs.getInt(
                 AppDefaults.KEY_IDLE_AUTO_PAUSE_MINUTES,

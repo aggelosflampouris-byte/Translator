@@ -50,7 +50,6 @@ import com.example.translator.AppDefaults
 import com.example.translator.R
 import com.example.translator.ui.components.OverChatSectionCard
 import com.example.translator.ui.components.OverChatSectionLabel
-import com.example.translator.ui.components.OverChatSegmentedControl
 
 private enum class LanguageSlot { FROM, TO }
 
@@ -67,13 +66,11 @@ fun TranslationSettingsCard(
     targetLanguage: String,
     availableLanguages: List<String>,
     modelStatus: String,
-    translationMode: String,
     keyboardTranslatorEnabled: Boolean,
     settingsEnabled: Boolean,
     onSourceSelected: (String) -> Unit,
     onTargetSelected: (String) -> Unit,
     onSwapLanguages: () -> Unit,
-    onTranslationModeChanged: (String) -> Unit,
     onKeyboardTranslatorChanged: (Boolean) -> Unit
 ) {
     var activePickerSlot by remember { mutableStateOf<LanguageSlot?>(null) }
@@ -169,40 +166,6 @@ fun TranslationSettingsCard(
                     modifier = Modifier.weight(1f)
                 )
             }
-
-            HorizontalDivider(
-                modifier = Modifier.padding(vertical = 14.dp),
-                thickness = 0.5.dp,
-                color = MaterialTheme.colorScheme.outlineVariant
-            )
-
-            Text(
-                text = "Reading mode",
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            OverChatSegmentedControl(
-                options = listOf(
-                    AppDefaults.MODE_ALL to "Auto-Translate",
-                    AppDefaults.MODE_TAP to "Tap Message"
-                ),
-                selectedValue = translationMode,
-                enabled = settingsEnabled,
-                onSelected = onTranslationModeChanged
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = if (translationMode == AppDefaults.MODE_TAP) {
-                    "Tap any message in chat to reveal its translation."
-                } else {
-                    "Translates visible chat messages automatically."
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
 
             HorizontalDivider(
                 modifier = Modifier.padding(vertical = 14.dp),

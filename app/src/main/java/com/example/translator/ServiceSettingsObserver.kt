@@ -14,7 +14,6 @@ class ServiceSettingsObserver(
     private val onLanguagePairChanged: (source: String, target: String) -> Unit,
     private val onKeyboardTranslatorChanged: (enabled: Boolean) -> Unit,
     private val onLearningOrGlossaryChanged: () -> Unit,
-    private val onTranslationModeChanged: (mode: String) -> Unit,
     private val onOverlayThemeChanged: (theme: String) -> Unit,
     private val onIdleAutoPauseChanged: (minutes: Int) -> Unit
 ) {
@@ -27,8 +26,6 @@ class ServiceSettingsObserver(
     @Volatile var isGlossaryAndValidationEnabled: Boolean = true
         private set
     @Volatile var isLearningEnabled: Boolean = true
-        private set
-    @Volatile var translationMode: String = AppDefaults.MODE_ALL
         private set
     @Volatile var overlayTheme: String = AppDefaults.OVERLAY_THEME_AUTO
         private set
@@ -64,10 +61,6 @@ class ServiceSettingsObserver(
                 isLearningEnabled = prefs.getBoolean(key, true)
                 onLearningOrGlossaryChanged()
             }
-            AppDefaults.KEY_TRANSLATE_MODE -> {
-                translationMode = prefs.getString(key, AppDefaults.MODE_ALL) ?: AppDefaults.MODE_ALL
-                onTranslationModeChanged(translationMode)
-            }
             AppDefaults.KEY_OVERLAY_THEME -> {
                 overlayTheme = prefs.getString(key, AppDefaults.OVERLAY_THEME_AUTO) ?: AppDefaults.OVERLAY_THEME_AUTO
                 onOverlayThemeChanged(overlayTheme)
@@ -92,8 +85,6 @@ class ServiceSettingsObserver(
         isKeyboardTranslatorEnabled = prefs.getBoolean(AppDefaults.KEY_KEYBOARD_ENABLED, true)
         isGlossaryAndValidationEnabled = prefs.getBoolean(AppDefaults.KEY_AI_ENABLED, true)
         isLearningEnabled = prefs.getBoolean(AppDefaults.KEY_LEARNING_ENABLED, true)
-        translationMode = prefs.getString(AppDefaults.KEY_TRANSLATE_MODE, AppDefaults.MODE_ALL)
-            ?: AppDefaults.MODE_ALL
         overlayTheme = prefs.getString(AppDefaults.KEY_OVERLAY_THEME, AppDefaults.OVERLAY_THEME_AUTO)
             ?: AppDefaults.OVERLAY_THEME_AUTO
         idleAutoPauseMinutes = prefs.getInt(

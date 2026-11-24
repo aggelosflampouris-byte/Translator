@@ -29,7 +29,6 @@ import com.example.translator.TranslatorApplication
 fun ScanDiagnosticsDialog(
     sourceLanguage: String,
     targetLanguage: String,
-    translationMode: String,
     enabledPackages: Set<String>,
     onCopied: () -> Unit,
     onDismiss: () -> Unit
@@ -38,12 +37,11 @@ fun ScanDiagnosticsDialog(
     val crashPrefs = remember {
         context.getSharedPreferences(TranslatorApplication.CRASH_PREFS, Context.MODE_PRIVATE)
     }
-    val diagReport = remember(sourceLanguage, targetLanguage, translationMode, enabledPackages) {
+    val diagReport = remember(sourceLanguage, targetLanguage, enabledPackages) {
         buildDiagnosticsReport(
             crashPrefs = crashPrefs,
             sourceLanguage = sourceLanguage,
             targetLanguage = targetLanguage,
-            translationMode = translationMode,
             enabledPackages = enabledPackages
         )
     }
@@ -83,7 +81,6 @@ private fun buildDiagnosticsReport(
     crashPrefs: android.content.SharedPreferences,
     sourceLanguage: String,
     targetLanguage: String,
-    translationMode: String,
     enabledPackages: Set<String>
 ): String {
     // Por qué: Materializa las trazas acumuladas bajo demanda justo al abrir el diálogo para evitar costo en tiempo real.
@@ -107,7 +104,7 @@ private fun buildDiagnosticsReport(
     return buildString {
         appendLine("Version: v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
         appendLine("AccService: ${ServiceBridge.isAccessibilityActive} | Translating: ${ServiceBridge.isTranslatingActive}")
-        appendLine("Pair: $sourceLanguage -> $targetLanguage | Mode: $translationMode")
+        appendLine("Pair: $sourceLanguage -> $targetLanguage")
         appendLine("EnabledPkgs: ${enabledPackages.size}")
         appendLine("Runtime: ${ServiceBridge.lastRuntimeTrace}")
         appendLine("LastScan: ${ServiceBridge.lastScanDebug}")
