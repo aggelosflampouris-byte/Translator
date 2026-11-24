@@ -278,7 +278,7 @@ class NodeCandidateEvaluatorTest {
         val replyCandidate = bounded.single()
         assertEquals("Te pup stefan ms", replyCandidate.text)
         assertFalse(replyCandidate.isQuoted)
-        assertEquals(WindowRect(160, 930, 560, 995), replyCandidate.bounds)
+        assertEquals(WindowRect(130, 918, 910, 1020), replyCandidate.bounds)
         assertEquals(maxY, replyCandidate.maxBottomPx)
     }
 
@@ -817,6 +817,106 @@ class NodeCandidateEvaluatorTest {
         val edwardReply = bounded[1]
         assertTrue(dariaBubble.maxBottomPx <= 620)
         assertEquals("Unde depunem cererea?", edwardReply.repliedMessageContext)
+    }
+
+    @Test
+    fun evaluateBottomUp_trimsTopBelowHeaderQuoteWhilePreservingHorizontalWidth_andSuppressesTwoNodeRoleBadge() {
+        val whatsappProfile = TargetAppCatalog.profileForPackage("com.whatsapp")
+        val rawNodes = listOf(
+            // Bubble 1: Reply with expandedRect matching parent horizontal bubble padding [130..920]
+            // whose top overlaps the header/quote above, plus tighter rawRect [165..740].
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(165, 320, 420, 368),
+                expandedRect = WindowRect(165, 320, 420, 368),
+                directText = "~ Gabriel +40 750 254 702",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 1,
+                parentNodeId = 10,
+                nodeId = 101
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(175, 378, 760, 430),
+                expandedRect = WindowRect(175, 378, 760, 430),
+                directText = "Poza/scan fata verso",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 1,
+                parentNodeId = 11,
+                nodeId = 102,
+                isInsideQuoteContainer = true
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(165, 444, 740, 520),
+                expandedRect = WindowRect(130, 320, 920, 535),
+                directText = "Astia sunt dobitoci?",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 1,
+                parentNodeId = 10,
+                nodeId = 103
+            ),
+            // Bubble 2: 2-node cluster [sender handle + role badge above image/sticker]
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(165, 620, 540, 665),
+                expandedRect = WindowRect(165, 620, 540, 665),
+                directText = "~ Edysuperedy",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 2,
+                parentNodeId = 20,
+                nodeId = 201
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(165, 670, 560, 710),
+                expandedRect = WindowRect(165, 670, 560, 710),
+                directText = "Higher Year Representative",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 2,
+                parentNodeId = 20,
+                nodeId = 202
+            )
+        )
+
+        val evaluated = NodeCandidateEvaluator.evaluateBottomUp(
+            rawNodes = rawNodes,
+            minY = minY,
+            maxY = maxY,
+            screenWidth = screenWidth,
+            density = density,
+            configuredSource = TranslateLanguage.ROMANIAN,
+            configuredTarget = TranslateLanguage.GREEK,
+            profile = whatsappProfile
+        )
+
+        assertEquals(1, evaluated.size)
+        val gabrielReply = evaluated[0]
+        assertEquals("Astia sunt dobitoci?", gabrielReply.text)
+        // Top must be trimmed strictly below the quote bottom (430), while preserving full parent horizontal span [130..920]
+        assertTrue(gabrielReply.bounds.top >= 430)
+        assertEquals(130, gabrielReply.bounds.left)
+        assertEquals(920, gabrielReply.bounds.right)
     }
 }
 

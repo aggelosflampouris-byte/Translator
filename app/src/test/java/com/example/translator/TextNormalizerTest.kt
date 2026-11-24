@@ -195,5 +195,21 @@ class TextNormalizerTest {
             "Și durează 500 ms sau 12 pt",
             TextNormalizer.normalizeRomanianChatForTranslation("Si durează 500 ms sau 12 pt")
         )
+        assertEquals(
+            "Vă învață stefania",
+            TextNormalizer.normalizeRomanianChatForTranslation("Va invata stefania")
+        )
+        assertEquals(
+            "Poate mai durează să se actualizeze",
+            TextNormalizer.normalizeRomanianChatForTranslation("Poate mai dureaza sa se updateze")
+        )
+        assertEquals(
+            "Perfect hai că vin și eu să fur câte ceva",
+            TextNormalizer.normalizeRomanianChatForTranslation("Perfect hai ca vin si eu sa fur cate ceva")
+        )
+        assertEquals(
+            "Nu știu cum este la noi",
+            TextNormalizer.normalizeRomanianChatForTranslation("Nu stiu cum e la noi")
+        )
     }
 }

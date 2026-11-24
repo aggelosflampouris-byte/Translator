@@ -587,5 +587,13 @@ class TranslationSenseEngineTest {
                 conversationMatchesSource = true
             )
         )
+        assertEquals(
+            "Perfect bine, vin și eu",
+            TranslationSenseEngine.applyPreTranslationPivotDisambiguation(
+                "Perfect hai că vin și eu",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK
+            )
+        )
     }
 }

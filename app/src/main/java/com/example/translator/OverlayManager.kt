@@ -688,8 +688,12 @@ class OverlayManager(private val context: Context) {
         )
         view.setBackgroundResource(style.backgroundRes)
 
-        val horizPad = ((if (isQuoted) 8 else 12) * density).toInt()
-        val vertPad = ((if (isQuoted) 4 else 7) * density).toInt()
+        val horizPad = (when {
+            isQuoted -> 8
+            targetRect.width() < (210 * density).toInt() -> 8
+            else -> 10
+        } * density).toInt()
+        val vertPad = ((if (isQuoted) 4 else 6) * density).toInt()
         view.setPadding(horizPad, vertPad, horizPad, vertPad)
 
         val posX = targetRect.left

@@ -572,7 +572,7 @@ object MessageStructureRecognizer {
             }
         }
 
-        if (assigned[0] == MessageComponentRole.SENDER_NAME && cluster.size >= 3 && assigned[1] == null) {
+        if (assigned[0] == MessageComponentRole.SENDER_NAME && cluster.size >= 2 && assigned[1] == null) {
             val topHeaderBottom = rawNodes[cluster[0]].rawRect.bottom
             val secondIdx = cluster[1]
             val gap = rawNodes[secondIdx].rawRect.top - topHeaderBottom

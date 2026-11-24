@@ -267,10 +267,25 @@ object NodeCandidateEvaluator {
         if (candidates.isEmpty()) return emptyList()
 
         val minReplyGapPx = (2 * density).toInt()
+        val maxReplyTopPadPx = (4 * density).toInt()
+        val minReplyHeightPx = (12 * density).toInt()
         val nonInvading = ArrayList<EvaluatedCandidate>(candidates.size)
         for (idx in candidates.indices) {
             val cand = candidates[idx]
             var adjustedBounds = cand.bounds
+
+            // Por qué: Recorta primero el borde superior por debajo de cabecera/cita para no perder
+            // el ancho horizontal del contenedor padre en burbujas grupales.
+            if (cand.minReplyTopPx != Int.MIN_VALUE && cand.rawBounds.top >= cand.minReplyTopPx) {
+                val flooredTop = maxOf(
+                    adjustedBounds.top,
+                    cand.minReplyTopPx + minReplyGapPx,
+                    cand.rawBounds.top - maxReplyTopPadPx
+                )
+                if (flooredTop > adjustedBounds.top && flooredTop < adjustedBounds.bottom - minReplyHeightPx) {
+                    adjustedBounds = adjustedBounds.copy(top = flooredTop)
+                }
+            }
 
             if (adjustedBounds != cand.rawBounds) {
                 var collidesWithSibling = false
@@ -307,14 +322,13 @@ object NodeCandidateEvaluator {
                         tight.height > (14 * density).toInt()
                     ) {
                         adjustedBounds = tight
+                        if (cand.minReplyTopPx != Int.MIN_VALUE && cand.rawBounds.top >= cand.minReplyTopPx) {
+                            val flooredTop = maxOf(adjustedBounds.top, cand.minReplyTopPx + minReplyGapPx)
+                            if (flooredTop > adjustedBounds.top && flooredTop < adjustedBounds.bottom - minReplyHeightPx) {
+                                adjustedBounds = adjustedBounds.copy(top = flooredTop)
+                            }
+                        }
                     }
-                }
-            }
-
-            if (cand.minReplyTopPx != Int.MIN_VALUE && cand.rawBounds.top >= cand.minReplyTopPx) {
-                val flooredTop = maxOf(adjustedBounds.top, cand.minReplyTopPx + minReplyGapPx)
-                if (flooredTop > adjustedBounds.top && flooredTop < adjustedBounds.bottom - (12 * density).toInt()) {
-                    adjustedBounds = adjustedBounds.copy(top = flooredTop)
                 }
             }
 
@@ -1102,6 +1116,28 @@ class NodeTreeScanner(
                     Rect.intersects(pRect, result)
                 ) {
                     result.set(pRect)
+                } else {
+                    // Por qué: En chats grupales el contenedor padre incluye cabecera y cita arriba del cuerpo;
+                    // heredamos sus márgenes horizontales reales manteniendo `top` acotado alrededor de la respuesta.
+                    val maxLeftExtend = (20 * density).toInt()
+                    val maxRightExtend = (96 * density).toInt()
+                    val candLeft = maxOf(pRect.left, rawRect.left - maxLeftExtend)
+                    val candRight = minOf(pRect.right, rawRect.right + maxRightExtend)
+                    val candTop = maxOf(pRect.top, rawRect.top - (4 * density).toInt())
+                    val candBottom = minOf(pRect.bottom, rawRect.bottom + maxBottomExtend)
+                    if (pRect.left <= rawRect.left &&
+                        pRect.right >= rawRect.right &&
+                        pRect.top <= rawRect.top &&
+                        pRect.bottom >= rawRect.bottom &&
+                        pRect.bottom <= rawRect.bottom + maxBottomExtend &&
+                        pRect.height() <= (screenHeight * 0.55f).toInt() &&
+                        pRect.width() <= maxParentWidth &&
+                        candRight > candLeft &&
+                        candBottom > candTop &&
+                        Rect.intersects(pRect, result)
+                    ) {
+                        result.set(candLeft, candTop, candRight, candBottom)
+                    }
                 }
             }
         } catch (_: Exception) {

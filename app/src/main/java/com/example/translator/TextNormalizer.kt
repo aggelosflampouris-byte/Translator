@@ -130,7 +130,18 @@ object TextNormalizer {
         "parca" to "parcă",
         "macar" to "măcar",
         "inca" to "încă",
-        "daca" to "dacă"
+        "daca" to "dacă",
+        "invata" to "învață",
+        "dureaza" to "durează",
+        "astept" to "aștept",
+        "asteptam" to "așteptăm",
+        "verificati" to "verificați",
+        "anuntam" to "anunțăm",
+        "afisat" to "afișat",
+        "afisa" to "afișa",
+        "sectiunea" to "secțiunea",
+        "oportunitati" to "oportunități",
+        "ziceti" to "ziceți"
     )
 
     private val WORD_BOUNDARY_REGEX = Regex("""(?i)\b([a-zăâîșț]+(-[a-zăâîșț]+)?)\b""")
@@ -184,13 +195,16 @@ object TextNormalizer {
     private val PHRASE_SA_DIE_REGEX = Regex("""\b([Ss][aă])\s+die\b""")
     private val PHRASE_SA_INTRII_REGEX = Regex("""(?iu)\b(sa|să)\s+intrii\b""")
     private val PHRASE_SA_CLAUSE_REGEX = Regex(
-        """(?iu)\bsa\s+(nu|te|ne|va|vă|le|li|ii|îi|imi|îmi|iti|îți|o|se|fie|fiu|fim|fiti|fiți|merg|mergem|merge|vii|vina|vină|dam|dăm|dai|dea|intri|intru|fac|facem|faca|facă|stii|știi|stie|știe|spun|spuna|spună)\b"""
+        """(?iu)\bsa\s+(nu|te|ne|va|vă|le|li|ii|îi|imi|îmi|iti|îți|o|se|fie|fiu|fim|fiti|fiți|merg|mergem|merge|vii|vina|vină|dam|dăm|dai|dea|intri|intru|fac|facem|faca|facă|stii|știi|stie|știe|spun|spuna|spună|fur|fure|iau|iei|luam|luăm|duc|duci|duca|ducă|vad|văd|vada|vadă|vorbim|vorbesc|trimit|trimita|trimită|verific|verifice|depun|depunem|depuna|depună|completez|completam|completăm|semnez|semnam|semnăm|semneze)\b"""
     )
     private val PHRASE_TI_DA_REGEX = Regex("""(?iu)\b(ti|ți)\s+da\b""")
     private val PHRASE_TI_VERB_REGEX = Regex("""(?iu)\b(ti|ți)\s+(dau|dai|spune|spun|trimit|trimite|arăt|arat|zice|zic)\b""")
     private val PHRASE_VERB_CA_REGEX = Regex(
-        """(?iu)\b(cred|zic|zice|spune|spun|stiu|știu|pare|parcă|gândesc|banuiesc|bănuiesc|vad|văd|auzit|aflat|scrie|pentru|fiindcă|deși|măcar)\s+ca\b"""
+        """(?iu)\b(cred|zic|zice|spune|spun|stiu|știu|pare|parcă|gândesc|banuiesc|bănuiesc|vad|văd|auzit|aflat|scrie|pentru|fiindcă|deși|măcar|hai|haide)\s+ca\b"""
     )
+    private val RO_UPDATE_ROMGLISH_REGEX = Regex("""(?iu)\bupdat(eze|ează|eaza|at|ăm|am|a)\b""")
+    private val RO_VA_INVATA_REGEX = Regex("""(?iu)\b(va)\s+(învață)\b""")
+    private val RO_CUM_E_LA_NOI_REGEX = Regex("""(?iu)\bcum\s+e\s+la\s+(noi|voi|ei|ele)\b""")
     private val PHRASE_CA_CLAUSE_REGEX = Regex(
         """(?iu)\bca\s+(nu|doar|numai|deja|e|este|sunt|am|ai|a|au|o|va|mai|poate|trebuie|acum|mâine|maine|azi|aici|acolo|eu|tu|el|ea|noi|voi|ei|ele|oricum|dacă|daca|după|dupa|pentru|fără|fara|tot|toți|toti)\b"""
     )
@@ -418,6 +432,18 @@ object TextNormalizer {
             }
             result = RO_CAMPUS_ACRONYM_REGEX.replace(result) { it.groupValues[1].uppercase() }
             result = RO_BUILDING_CODE_REGEX.replace(result) { "P${it.groupValues[1]}" }
+            result = RO_UPDATE_ROMGLISH_REGEX.replace(result) { match ->
+                val stem = when (match.groupValues[1].lowercase()) {
+                    "eze" -> "actualizeze"
+                    "ează", "eaza" -> "actualizează"
+                    "at" -> "actualizat"
+                    "ăm", "am" -> "actualizăm"
+                    else -> "actualiza"
+                }
+                matchCasing(match.value, stem)
+            }
+            result = RO_VA_INVATA_REGEX.replace(result) { "${matchCasing(it.groupValues[1], "vă")} învață" }
+            result = RO_CUM_E_LA_NOI_REGEX.replace(result) { "cum este la ${it.groupValues[1]}" }
         }
 
         return result

@@ -117,6 +117,7 @@ object TranslationSenseEngine {
     private val PIVOT_FATA_VERSO_REGEX = Regex("""(?iu)\bfață[\s-]+verso\b""")
     private val PIVOT_VIZA_FLOTANT_REGEX = Regex("""(?iu)\bviza\s+de\s+flotant\b""")
     private val PIVOT_VERB_FIZIC_REGEX = Regex("""(?iu)\b(mergem|mergeți|se\s+duc|ducem|venim|depunem|predăm|duceți)\s+fizic\b""")
+    private val PIVOT_HAI_CA_FIRST_PERSON_REGEX = Regex("""(?iu)\b(hai|haide)\s+că\s+(vin|merg|fac|dau|iau|scriu|sun|trimit|ajung|încerc|văd|stau)\b""")
     private val PIVOT_BONUL_CONTEXT_REGEX = Regex("""(?iu)\b(stb|cartel|bilet|secretariat|cerere|abonament)""")
     private val PIVOT_BONUL_REGEX = Regex("""(?iu)\bbonul\b""")
     private val PIVOT_MEDIEI_BAC_REGEX = Regex("""(?iu)\bmediei\s+de\s+la\s+bac\b""")
@@ -566,6 +567,7 @@ object TranslationSenseEngine {
         result = PIVOT_FATA_VERSO_REGEX.replace(result) { matchPreserveFirstCap(it.value, "pe ambele fețe") }
         result = PIVOT_VIZA_FLOTANT_REGEX.replace(result) { matchPreserveFirstCap(it.value, "viza de reședință temporară") }
         result = PIVOT_VERB_FIZIC_REGEX.replace(result) { "${it.groupValues[1]} în persoană" }
+        result = PIVOT_HAI_CA_FIRST_PERSON_REGEX.replace(result) { "${matchPreserveFirstCap(it.groupValues[1], "bine")}, ${it.groupValues[2]}" }
         if (PIVOT_BONUL_CONTEXT_REGEX.containsMatchIn(result)) {
             result = PIVOT_BONUL_REGEX.replace(result) { matchPreserveFirstCap(it.value, "chitanța") }
         }
