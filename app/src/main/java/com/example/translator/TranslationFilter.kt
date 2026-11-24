@@ -63,8 +63,28 @@ object TranslationFilter {
         "βιντεοκλήση", "video call", "πληροφορίες", "info", "conversation information",
         "κάμερα", "camera", "συλλογή", "gallery", "μικρόφωνο", "voice clip",
         "μου αρέσει", "like", "thumbs up", "αυτοκόλλητα", "stickers", "gif", "emoji",
-        "περισσότερα", "more", "μενού", "menu"
+        "περισσότερα", "more", "μενού", "menu",
+        "μετάφραση", "translate", "see translation", "δείτε τη μετάφραση",
+        "show original", "εμφάνιση πρωτοτύπου", "view translation",
+        "προτεινόμενες απαντήσεις", "suggested replies", "read more",
+        "διαβάστε περισσότερα"
     )
+
+    /**
+     * Detecta botones de acción integrados dentro de burbujas (ej. "Μετάφραση", "See translation")
+     * para excluirlos del análisis estructural sin depender del idioma destino.
+     */
+    fun isInlineActionLabel(
+        text: String,
+        profile: ChatAppProfile = TargetAppCatalog.GENERIC_DEFAULT_PROFILE
+    ): Boolean {
+        val clean = TextSanitizer.sanitizeSpecialCharacters(text)
+            .trim()
+            .lowercase()
+            .trimEnd('.', '…', ':', '!', '?')
+        if (clean.isEmpty()) return false
+        return clean in profile.inlineActionLabels || clean in COMMON_UI_TOKENS
+    }
 
     private val SYSTEM_NOTICE_PHRASES = listOf(
         "end-to-end encrypted",

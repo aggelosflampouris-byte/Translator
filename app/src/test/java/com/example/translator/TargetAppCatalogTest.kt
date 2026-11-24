@@ -165,5 +165,21 @@ class TargetAppCatalogTest {
         assertFalse(isAccessibilityComponentEnabled("$pkg/.OtherService", pkg, svc))
         assertFalse(isAccessibilityComponentEnabled("", pkg, svc))
     }
+
+    @Test
+    fun viberProfile_configuresAnatomyThresholdsAndInlineChromeRules() {
+        val viber = TargetAppCatalog.profileForPackage("com.viber.voip")
+        assertEquals("viber", viber.id)
+        assertTrue(viber.expandContainerToParent)
+        assertEquals(22, viber.maxParentTopExtendDp)
+        assertEquals(30, viber.maxParentBottomExtendDp)
+        assertEquals(12, viber.fallbackTopExtendDp)
+        assertEquals(56, viber.minMediaPlaceholderWidthDp)
+        assertEquals(56, viber.minMediaPlaceholderHeightDp)
+        assertTrue(TranslationFilter.isInlineActionLabel("Μετάφραση", viber))
+        assertTrue(TranslationFilter.isInlineActionLabel("Προτεινόμενες απαντήσεις", viber))
+        assertTrue(MessageStructureRecognizer.isIgnoredChromeResourceId("com.viber.voip:id/like_btn", viber))
+        assertFalse(MessageStructureRecognizer.isIgnoredChromeResourceId("com.viber.voip:id/body", viber))
+    }
 }
 

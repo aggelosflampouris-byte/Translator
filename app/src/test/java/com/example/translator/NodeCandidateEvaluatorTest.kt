@@ -918,5 +918,117 @@ class NodeCandidateEvaluatorTest {
         assertEquals(130, gabrielReply.bounds.left)
         assertEquals(920, gabrielReply.bounds.right)
     }
+
+    @Test
+    fun evaluateBottomUp_viberPreservesRomanianBubbleNextToReactionAndTranslateChip() {
+        val viberProfile = TargetAppCatalog.CURATED_PROFILES.first { it.id == "viber" }
+        val rawNodes = listOf(
+            // Mensaje griego previo con corazón lateral (debe filtrarse por idioma destino, sin afectar vecinos)
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(410, 360, 960, 415),
+                expandedRect = WindowRect(390, 330, 980, 435),
+                directText = "Καλημέρα.",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 1,
+                parentNodeId = 10,
+                nodeId = 101
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(280, 355, 370, 430),
+                expandedRect = WindowRect(280, 355, 370, 430),
+                directText = null,
+                descText = null,
+                shortClass = "ImageView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 1,
+                parentNodeId = 10,
+                nodeId = 102,
+                isMediaPlaceholder = true
+            ),
+            // Mensaje rumano con botón "Μετάφραση" abajo y corazón al costado
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(70, 500, 680, 640),
+                expandedRect = WindowRect(50, 480, 700, 700),
+                directText = "Sunt sigur că aplicația ta a funcționat mai bine decât Outlook în ultimele ore.",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 2,
+                parentNodeId = 21,
+                nodeId = 201
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(80, 646, 310, 686),
+                expandedRect = WindowRect(80, 646, 310, 686),
+                directText = "Μετάφραση",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 2,
+                parentNodeId = 21,
+                nodeId = 202
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(700, 540, 810, 650),
+                expandedRect = WindowRect(700, 540, 810, 650),
+                directText = null,
+                descText = null,
+                shortClass = "ImageView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 2,
+                parentNodeId = 20,
+                nodeId = 203,
+                isMediaPlaceholder = true
+            ),
+            // Chip flotante de Viber fuera de la conversación
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(40, 1850, 520, 1910),
+                expandedRect = WindowRect(40, 1850, 520, 1910),
+                directText = "Προτεινόμενες απαντήσεις",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 0,
+                parentNodeId = 99,
+                nodeId = 9901
+            )
+        )
+
+        val evaluated = NodeCandidateEvaluator.evaluateBottomUp(
+            rawNodes = rawNodes,
+            minY = minY,
+            maxY = maxY,
+            screenWidth = screenWidth,
+            density = density,
+            configuredSource = TranslateLanguage.ROMANIAN,
+            configuredTarget = TranslateLanguage.GREEK,
+            profile = viberProfile
+        )
+
+        assertEquals(
+            listOf("Sunt sigur că aplicația ta a funcționat mai bine decât Outlook în ultimele ore."),
+            evaluated.map { it.text }
+        )
+    }
 }
 

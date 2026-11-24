@@ -100,12 +100,28 @@ object MessageStructureRecognizer {
         return SENDER_HEADER_ID_KEYWORDS.any { shortId.contains(it) }
     }
 
-    internal fun isMainMessageBodyResourceId(viewIdName: String?): Boolean {
+    internal fun isMainMessageBodyResourceId(
+        viewIdName: String?,
+        profile: ChatAppProfile = TargetAppCatalog.GENERIC_DEFAULT_PROFILE
+    ): Boolean {
         val shortId = extractShortViewId(viewIdName)
         if (shortId.isEmpty() || isQuoteContainerResourceId(shortId) || isSenderHeaderResourceId(shortId)) {
             return false
         }
-        return MAIN_MESSAGE_BODY_ID_KEYWORDS.any { shortId.contains(it) }
+        if (profile.ignoredChromeIdKeywords.any { shortId.contains(it) }) {
+            return false
+        }
+        return MAIN_MESSAGE_BODY_ID_KEYWORDS.any { shortId.contains(it) } ||
+            profile.messageBodyIdKeywords.any { shortId.contains(it) }
+    }
+
+    internal fun isIgnoredChromeResourceId(
+        viewIdName: String?,
+        profile: ChatAppProfile = TargetAppCatalog.GENERIC_DEFAULT_PROFILE
+    ): Boolean {
+        val shortId = extractShortViewId(viewIdName)
+        if (shortId.isEmpty() || profile.ignoredChromeIdKeywords.isEmpty()) return false
+        return profile.ignoredChromeIdKeywords.any { shortId.contains(it) }
     }
 
     private fun extractShortViewId(viewIdName: String?): String =
@@ -294,15 +310,17 @@ object MessageStructureRecognizer {
     fun recognizeRowAnatomy(
         rawNodes: List<CollectedNodeSnapshot>,
         configuredSource: String = TranslateLanguage.ROMANIAN,
-        density: Float = 3.0f
+        density: Float = 3.0f,
+        profile: ChatAppProfile = TargetAppCatalog.GENERIC_DEFAULT_PROFILE
     ): List<RecognizedMessageAnatomy> {
-        return analyzeRawNodes(rawNodes, configuredSource, density).rowAnatomies
+        return analyzeRawNodes(rawNodes, configuredSource, density, profile).rowAnatomies
     }
 
     internal fun analyzeRawNodes(
         rawNodes: List<CollectedNodeSnapshot>,
         configuredSource: String = TranslateLanguage.ROMANIAN,
-        density: Float = 3.0f
+        density: Float = 3.0f,
+        profile: ChatAppProfile = TargetAppCatalog.GENERIC_DEFAULT_PROFILE
     ): NodeStructureAnalysis {
         val n = rawNodes.size
         val roles = Array(n) { MessageComponentRole.REPLYING_TEXT }
@@ -316,6 +334,7 @@ object MessageStructureRecognizer {
         val isLeafCarrier = BooleanArray(n)
         val isTimestamp = BooleanArray(n)
         val isPhone = BooleanArray(n)
+        val isInlineAction = BooleanArray(n)
 
         for (i in 0 until n) {
             val item = rawNodes[i]
@@ -333,7 +352,9 @@ object MessageStructureRecognizer {
                     shortId.contains("phone_number") ||
                     shortId == "sender_phone"
                 )
-            if (!isLeafCarrier[i] || isTimestamp[i] || isPhone[i] || item.isMediaPlaceholder) {
+            isInlineAction[i] = isLeafCarrier[i] && !item.isMediaPlaceholder && !isTimestamp[i] && !isPhone[i] &&
+                TranslationFilter.isInlineActionLabel(txt, profile)
+            if (!isLeafCarrier[i] || isTimestamp[i] || isPhone[i] || item.isMediaPlaceholder || isInlineAction[i]) {
                 roles[i] = MessageComponentRole.METADATA_IGNORED
             }
         }
@@ -344,7 +365,7 @@ object MessageStructureRecognizer {
         for ((rowId, indices) in byRow) {
             if (rowId <= 0) {
                 for (i in indices) {
-                    if (!isLeafCarrier[i] || isTimestamp[i] || isPhone[i] || rawNodes[i].isMediaPlaceholder) continue
+                    if (!isLeafCarrier[i] || isTimestamp[i] || isPhone[i] || rawNodes[i].isMediaPlaceholder || isInlineAction[i]) continue
                     val item = rawNodes[i]
                     val hasPhonePeer = findPhoneSiblingInRowOrParent(i, rawNodes, isLeafCarrier, isPhone, density)
                     when {
@@ -372,7 +393,7 @@ object MessageStructureRecognizer {
             }
 
             val contentLeaves = indices
-                .filter { isLeafCarrier[it] && !isTimestamp[it] && !isPhone[it] }
+                .filter { isLeafCarrier[it] && !isTimestamp[it] && !isPhone[it] && !isInlineAction[it] }
                 .sortedWith(compareBy<Int> { rawNodes[it].rawRect.top }.thenBy { rawNodes[it].rawRect.left })
 
             if (contentLeaves.isEmpty()) continue
@@ -589,8 +610,26 @@ object MessageStructureRecognizer {
             assigned[pos] == null || rawNodes[cluster[pos]].isMediaPlaceholder
         }
 
-        if (remainingPositions.isNotEmpty()) {
-            val bottomPos = remainingPositions.last()
+        // Por qué: Iconos laterales de reacción (ej. corazón junto al globo en Viber) son media placeholders
+        // adyacentes horizontalmente o traslapados al texto, no un sticker debajo; no deben desplazar a bottomPos.
+        val effectiveRemaining = remainingPositions.filterNot { pos ->
+            val node = rawNodes[cluster[pos]]
+            if (!node.isMediaPlaceholder) return@filterNot false
+            val sideAdjacent = isSideAdjacentMediaPlaceholder(
+                mediaNode = node,
+                remainingPositions = remainingPositions,
+                cluster = cluster,
+                rawNodes = rawNodes,
+                density = density
+            )
+            if (sideAdjacent) {
+                assigned[pos] = MessageComponentRole.METADATA_IGNORED
+            }
+            sideAdjacent
+        }
+
+        if (effectiveRemaining.isNotEmpty()) {
+            val bottomPos = effectiveRemaining.last()
             val bottomNode = rawNodes[cluster[bottomPos]]
             if (!bottomNode.isMediaPlaceholder) {
                 assigned[bottomPos] = MessageComponentRole.REPLYING_TEXT
@@ -607,17 +646,17 @@ object MessageStructureRecognizer {
                 density = density
             )
 
-            for (posIdx in 0 until remainingPositions.lastIndex) {
-                val pos = remainingPositions[posIdx]
+            for (posIdx in 0 until effectiveRemaining.lastIndex) {
+                val pos = effectiveRemaining[posIdx]
                 val nodeIdx = cluster[pos]
                 val node = rawNodes[nodeIdx]
                 if (node.isMediaPlaceholder) continue
                 val txt = texts[nodeIdx]
 
                 // Autor citado intermedio en tarjeta de cita sin `~` ni IDs explícitos
-                val nextRemainingPos = remainingPositions[posIdx + 1]
+                val nextRemainingPos = effectiveRemaining[posIdx + 1]
                 val nextRemainingNode = rawNodes[cluster[nextRemainingPos]]
-                if (posIdx + 1 < remainingPositions.lastIndex &&
+                if (posIdx + 1 < effectiveRemaining.lastIndex &&
                     !nextRemainingNode.isMediaPlaceholder &&
                     (isSavedContactIdentifier(txt, configuredSource) ||
                         TranslationSenseEngine.isLikelyRowSenderHeader(txt, configuredSource)) &&
@@ -709,6 +748,28 @@ object MessageStructureRecognizer {
             replyingNodeIndex = replyingNodeIndex,
             minReplyTopPx = minReplyTop
         )
+    }
+
+    private fun isSideAdjacentMediaPlaceholder(
+        mediaNode: CollectedNodeSnapshot,
+        remainingPositions: List<Int>,
+        cluster: List<Int>,
+        rawNodes: List<CollectedNodeSnapshot>,
+        density: Float
+    ): Boolean {
+        val media = mediaNode.rawRect
+        val horizontalGapTol = (8 * density).toInt()
+        val verticalOverlapMin = (4 * density).toInt()
+        return remainingPositions.any { otherPos ->
+            val other = rawNodes[cluster[otherPos]]
+            if (other.isMediaPlaceholder) return@any false
+            val text = other.rawRect
+            val horizontallyDisjoint = media.right <= text.left + horizontalGapTol ||
+                media.left >= text.right - horizontalGapTol
+            val verticallyOverlaps = minOf(media.bottom, text.bottom) >
+                maxOf(media.top, text.top) + verticalOverlapMin
+            horizontallyDisjoint || verticallyOverlaps
+        }
     }
 
     private fun sharesNonZeroSubContainer(a: CollectedNodeSnapshot, b: CollectedNodeSnapshot): Boolean {

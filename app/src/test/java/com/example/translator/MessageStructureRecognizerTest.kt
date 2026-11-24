@@ -514,5 +514,192 @@ class MessageStructureRecognizerTest {
             evaluated.map { it.text }
         )
     }
+
+    @Test
+    fun recognizeRowAnatomy_viberIgnoresSideHeartAndInlineTranslatePill() {
+        val viberProfile = TargetAppCatalog.CURATED_PROFILES.first { it.id == "viber" }
+        val rawNodes = listOf(
+            // Burbuja saliente con corazón de reacción a la izquierda
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(340, 260, 960, 360),
+                expandedRect = WindowRect(310, 240, 980, 410),
+                directText = "Vreau să fac un test de tip traducere",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 31,
+                parentNodeId = 311,
+                nodeId = 3101
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(820, 362, 950, 396),
+                expandedRect = WindowRect(820, 362, 950, 396),
+                directText = "1:01 PM",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 31,
+                parentNodeId = 311,
+                nodeId = 3102
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(240, 290, 330, 390),
+                expandedRect = WindowRect(240, 290, 330, 390),
+                directText = null,
+                descText = null,
+                shortClass = "ImageView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 31,
+                parentNodeId = 310,
+                nodeId = 3103,
+                isMediaPlaceholder = true
+            ),
+            // Burbuja entrante con botón inline "Μετάφραση" debajo del texto y corazón a la derecha
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(70, 480, 680, 620),
+                expandedRect = WindowRect(50, 460, 700, 680),
+                directText = "Sunt sigur că aplicația ta a funcționat mai bine decât Outlook în ultimele ore.",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 32,
+                parentNodeId = 321,
+                nodeId = 3201
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(80, 628, 320, 668),
+                expandedRect = WindowRect(80, 628, 320, 668),
+                directText = "Μετάφραση",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 32,
+                parentNodeId = 321,
+                nodeId = 3202
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(560, 628, 670, 668),
+                expandedRect = WindowRect(560, 628, 670, 668),
+                directText = "3:55 PM",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 32,
+                parentNodeId = 321,
+                nodeId = 3203
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(695, 510, 775, 590),
+                expandedRect = WindowRect(695, 510, 775, 590),
+                directText = null,
+                descText = null,
+                shortClass = "ImageView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 32,
+                parentNodeId = 320,
+                nodeId = 3204,
+                isMediaPlaceholder = true
+            ),
+            // Burbuja saliente corta con corazón lateral
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(340, 720, 960, 790),
+                expandedRect = WindowRect(310, 700, 980, 825),
+                directText = "Te voi dracu '. Adăugați Mala.",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 33,
+                parentNodeId = 331,
+                nodeId = 3301
+            ),
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(240, 725, 330, 815),
+                expandedRect = WindowRect(240, 725, 330, 815),
+                directText = null,
+                descText = null,
+                shortClass = "ImageView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 33,
+                parentNodeId = 330,
+                nodeId = 3302,
+                isMediaPlaceholder = true
+            ),
+            // Pill flotante inferior de Viber fuera de la lista (rowId = 0)
+            CollectedNodeSnapshot(
+                rawRect = WindowRect(40, 1850, 520, 1910),
+                expandedRect = WindowRect(40, 1850, 520, 1910),
+                directText = "Προτεινόμενες απαντήσεις",
+                descText = null,
+                shortClass = "TextView",
+                isScrollableContainer = false,
+                childCount = 0,
+                inChatViewport = true,
+                childIndices = emptyList(),
+                rowId = 0,
+                parentNodeId = 900,
+                nodeId = 9001
+            )
+        )
+
+        val anatomies = MessageStructureRecognizer.recognizeRowAnatomy(
+            rawNodes = rawNodes,
+            configuredSource = TranslateLanguage.ROMANIAN,
+            density = density,
+            profile = viberProfile
+        )
+        assertEquals(3, anatomies.size)
+        assertEquals("Vreau să fac un test de tip traducere", anatomies[0].replyingText)
+        assertEquals(
+            "Sunt sigur că aplicația ta a funcționat mai bine decât Outlook în ultimele ore.",
+            anatomies[1].replyingText
+        )
+        assertEquals("Te voi dracu '. Adăugați Mala.", anatomies[2].replyingText)
+
+        val evaluated = NodeCandidateEvaluator.evaluateBottomUp(
+            rawNodes = rawNodes,
+            minY = minY,
+            maxY = maxY,
+            screenWidth = screenWidth,
+            density = density,
+            configuredSource = TranslateLanguage.ROMANIAN,
+            configuredTarget = TranslateLanguage.GREEK,
+            profile = viberProfile
+        )
+        assertEquals(
+            listOf(
+                "Vreau să fac un test de tip traducere",
+                "Sunt sigur că aplicația ta a funcționat mai bine decât Outlook în ultimele ore.",
+                "Te voi dracu '. Adăugați Mala."
+            ),
+            evaluated.map { it.text }
+        )
+    }
 }
 

@@ -21,7 +21,15 @@ data class ChatAppProfile(
     val topInsetDp: Int = 48,
     val bottomInsetDp: Int = 40,
     val expandContainerToParent: Boolean = true,
-    val defaultEnabled: Boolean = true
+    val defaultEnabled: Boolean = true,
+    val inlineActionLabels: Set<String> = emptySet(),
+    val ignoredChromeIdKeywords: Set<String> = emptySet(),
+    val messageBodyIdKeywords: Set<String> = emptySet(),
+    val maxParentTopExtendDp: Int = 14,
+    val maxParentBottomExtendDp: Int = 26,
+    val fallbackTopExtendDp: Int = 4,
+    val minMediaPlaceholderWidthDp: Int = 36,
+    val minMediaPlaceholderHeightDp: Int = 28
 )
 
 /**
@@ -41,7 +49,10 @@ object TargetAppCatalog {
             topInsetDp = 48,
             bottomInsetDp = 40,
             expandContainerToParent = true,
-            defaultEnabled = true
+            defaultEnabled = true,
+            inlineActionLabels = setOf("read more", "περισσότερα", "διαβάστε περισσότερα"),
+            ignoredChromeIdKeywords = setOf("reaction", "reactions", "emoji_btn", "forward", "share_btn"),
+            messageBodyIdKeywords = setOf("message_text", "caption")
         ),
         ChatAppProfile(
             id = "instagram",
@@ -51,7 +62,17 @@ object TargetAppCatalog {
             topInsetDp = 56,
             bottomInsetDp = 44,
             expandContainerToParent = false,
-            defaultEnabled = true
+            defaultEnabled = true,
+            inlineActionLabels = setOf(
+                "see translation",
+                "δείτε τη μετάφραση",
+                "show original",
+                "εμφάνιση πρωτοτύπου",
+                "view translation",
+                "see more"
+            ),
+            ignoredChromeIdKeywords = setOf("reaction", "heart", "like", "double_tap", "quick_reply", "emoji"),
+            messageBodyIdKeywords = setOf("direct_text_message_text_view", "message_content")
         ),
         ChatAppProfile(
             id = "viber",
@@ -61,7 +82,36 @@ object TargetAppCatalog {
             topInsetDp = 48,
             bottomInsetDp = 40,
             expandContainerToParent = true,
-            defaultEnabled = true
+            defaultEnabled = true,
+            // Por qué: Viber inserta botones inline ("Μετάφραση"), chips de sugerencias e iconos de corazón junto a cada burbuja.
+            inlineActionLabels = setOf(
+                "μετάφραση",
+                "translate",
+                "εμφάνιση πρωτοτύπου",
+                "show original",
+                "προτεινόμενες απαντήσεις",
+                "suggested replies",
+                "read more",
+                "περισσότερα"
+            ),
+            ignoredChromeIdKeywords = setOf(
+                "like",
+                "heart",
+                "reaction",
+                "reply_btn",
+                "forward",
+                "translate",
+                "suggestion",
+                "smart_reply",
+                "quick_reply",
+                "vote"
+            ),
+            messageBodyIdKeywords = setOf("body", "message_text", "text_body"),
+            maxParentTopExtendDp = 22,
+            maxParentBottomExtendDp = 30,
+            fallbackTopExtendDp = 12,
+            minMediaPlaceholderWidthDp = 56,
+            minMediaPlaceholderHeightDp = 56
         )
     )
 

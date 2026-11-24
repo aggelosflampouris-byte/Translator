@@ -150,7 +150,7 @@ object NodeCandidateEvaluator {
     ): List<EvaluatedCandidate> {
         if (rawNodes.isEmpty()) return emptyList()
         val analysis = precomputedAnalysis
-            ?: MessageStructureRecognizer.analyzeRawNodes(rawNodes, configuredSource, density)
+            ?: MessageStructureRecognizer.analyzeRawNodes(rawNodes, configuredSource, density, profile)
         val outList = mutableListOf<EvaluatedCandidate>()
         val subtreeMaxAccepted = IntArray(rawNodes.size)
         val subtreeAcceptedCounts = IntArray(rawNodes.size)
@@ -364,11 +364,12 @@ object NodeCandidateEvaluator {
         rawNodes: List<CollectedNodeSnapshot>,
         configuredSource: String,
         density: Float,
-        precomputedAnalysis: NodeStructureAnalysis? = null
+        precomputedAnalysis: NodeStructureAnalysis? = null,
+        profile: ChatAppProfile = TargetAppCatalog.GENERIC_DEFAULT_PROFILE
     ): List<Pair<Int, WindowRect>> {
         if (rawNodes.isEmpty()) return emptyList()
         val analysis = precomputedAnalysis
-            ?: MessageStructureRecognizer.analyzeRawNodes(rawNodes, configuredSource, density)
+            ?: MessageStructureRecognizer.analyzeRawNodes(rawNodes, configuredSource, density, profile)
         val barriers = ArrayList<Pair<Int, WindowRect>>()
         for (i in rawNodes.indices) {
             val role = analysis.roles[i]
@@ -676,7 +677,8 @@ class NodeTreeScanner(
         val structureAnalysis = MessageStructureRecognizer.analyzeRawNodes(
             rawNodes = rawNodes,
             configuredSource = configuredSource,
-            density = displayBounds.density
+            density = displayBounds.density,
+            profile = profile
         )
         val evaluated = NodeCandidateEvaluator.evaluateBottomUp(
             rawNodes = rawNodes,
@@ -904,7 +906,9 @@ class NodeTreeScanner(
             try { node.isHeading } catch (_: Exception) { false }
         val nodeInQuote = insideQuoteContainer || MessageStructureRecognizer.isQuoteContainerResourceId(viewIdName)
         val nodeInHeader = insideHeaderContainer || isHeadingNode || MessageStructureRecognizer.isSenderHeaderResourceId(viewIdName)
-        val isMainBodyViewId = !nodeInQuote && !nodeInHeader && MessageStructureRecognizer.isMainMessageBodyResourceId(viewIdName)
+        val isIgnoredChrome = MessageStructureRecognizer.isIgnoredChromeResourceId(viewIdName, profile)
+        val isMainBodyViewId = !nodeInQuote && !nodeInHeader && !isIgnoredChrome &&
+            MessageStructureRecognizer.isMainMessageBodyResourceId(viewIdName, profile)
 
         val isScrollableContainer = AccessibilityNodeSafeOps.isScrollableOrToolbarClass(node, className)
         val isPagerOrToolbar = className.contains("ViewPager", ignoreCase = true) ||
@@ -977,9 +981,12 @@ class NodeTreeScanner(
 
         if (AccessibilityNodeSafeOps.isIgnoredWidgetClass(className)) {
             stats.skippedWidget++
-            val isMediaCandidate = currentRowId > 0 && !nodeInQuote && !nodeInHeader &&
-                (className.contains("Image", ignoreCase = true) || className.contains("SeekBar", ignoreCase = true))
+            val isSeekBar = className.contains("SeekBar", ignoreCase = true)
+            val isMediaCandidate = !isIgnoredChrome && currentRowId > 0 && !nodeInQuote && !nodeInHeader &&
+                (className.contains("Image", ignoreCase = true) || isSeekBar)
             if (isMediaCandidate) {
+                val minMediaW = if (isSeekBar) 36 else profile.minMediaPlaceholderWidthDp
+                val minMediaH = if (isSeekBar) 18 else profile.minMediaPlaceholderHeightDp
                 val mediaRect = Rect()
                 val gotMediaBounds = try {
                     node.getBoundsInScreen(mediaRect)
@@ -990,8 +997,8 @@ class NodeTreeScanner(
                 if (gotMediaBounds &&
                     mediaRect.left >= (screenWidth * 0.14f).toInt() &&
                     mediaRect.right > (screenWidth * 0.22f).toInt() &&
-                    mediaRect.width() >= (36 * density).toInt() &&
-                    mediaRect.height() >= (28 * density).toInt() &&
+                    mediaRect.width() >= (minMediaW * density).toInt() &&
+                    mediaRect.height() >= (minMediaH * density).toInt() &&
                     mediaRect.bottom > minY &&
                     mediaRect.top < maxY
                 ) {
@@ -1033,6 +1040,9 @@ class NodeTreeScanner(
         if (descText != null) stats.nodesWithDesc++
 
         if (directText.isNullOrBlank() && descText.isNullOrBlank()) {
+            return collectedChildren
+        }
+        if (isIgnoredChrome) {
             return collectedChildren
         }
 
@@ -1098,9 +1108,9 @@ class NodeTreeScanner(
             if (container != null) {
                 val pRect = Rect()
                 container.getBoundsInScreen(pRect)
-                val maxTopExtend = (14 * density).toInt()
-                val maxBottomExtend = (26 * density).toInt()
-                val maxParentHeight = (rawRect.height() * 1.45f + 16 * density).toInt()
+                val maxTopExtend = (profile.maxParentTopExtendDp * density).toInt()
+                val maxBottomExtend = (profile.maxParentBottomExtendDp * density).toInt()
+                val maxParentHeight = (rawRect.height() * 1.65f + 28 * density).toInt()
                 val maxParentWidth = (screenWidth * if (profile.expandContainerToParent) 0.90f else 0.85f).toInt()
                 val safeVerticalSpan = pRect.top >= rawRect.top - maxTopExtend &&
                     pRect.bottom <= rawRect.bottom + maxBottomExtend &&
@@ -1123,7 +1133,7 @@ class NodeTreeScanner(
                     val maxRightExtend = (96 * density).toInt()
                     val candLeft = maxOf(pRect.left, rawRect.left - maxLeftExtend)
                     val candRight = minOf(pRect.right, rawRect.right + maxRightExtend)
-                    val candTop = maxOf(pRect.top, rawRect.top - (4 * density).toInt())
+                    val candTop = maxOf(pRect.top, rawRect.top - (profile.fallbackTopExtendDp * density).toInt())
                     val candBottom = minOf(pRect.bottom, rawRect.bottom + maxBottomExtend)
                     if (pRect.left <= rawRect.left &&
                         pRect.right >= rawRect.right &&
