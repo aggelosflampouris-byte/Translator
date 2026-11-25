@@ -96,6 +96,30 @@ class OverlayManager(private val context: Context) {
         }
 
         /**
+         * Calcula límites horizontales ampliados dentro de márgenes seguros cuando una traducción
+         * supera la altura disponible antes de reducir fuente o truncar con puntos suspensivos.
+         */
+        internal fun resolveHorizontalExpansionBounds(
+            targetLeft: Int,
+            targetRight: Int,
+            screenWidth: Int,
+            isRightSide: Boolean,
+            isQuoted: Boolean,
+            density: Float
+        ): Pair<Int, Int> {
+            if (isQuoted || screenWidth <= 0) return targetLeft to targetRight
+            val edgeMargin = (14 * density).toInt()
+            val maxExpandedWidth = (screenWidth * 0.84f).toInt().coerceAtLeast(targetRight - targetLeft)
+            return if (!isRightSide) {
+                val newRight = maxOf(targetRight, min(screenWidth - edgeMargin, targetLeft + maxExpandedWidth))
+                targetLeft to newRight
+            } else {
+                val newLeft = minOf(targetLeft, max(edgeMargin, targetRight - maxExpandedWidth))
+                newLeft to targetRight
+            }
+        }
+
+        /**
          * Resuelve el fondo y color de texto de la burbuja según el tema elegido, si es cita y la app activa.
          */
         fun resolveBubbleStyle(
@@ -928,12 +952,12 @@ class OverlayManager(private val context: Context) {
             holder.backgroundRes = style.backgroundRes
         }
 
-        val horizPad = (when {
+        var horizPad = (when {
             isQuoted -> 8
             targetRect.width() < (210 * density).toInt() -> 8
             else -> 10
         } * density).toInt()
-        val vertPad = ((if (isQuoted) 4 else 6) * density).toInt()
+        var vertPad = ((if (isQuoted) 4 else 6) * density).toInt()
         val paddingChanged = holder.padH != horizPad || holder.padV != vertPad
         if (paddingChanged) {
             view.setPadding(horizPad, vertPad, horizPad, vertPad)
@@ -941,9 +965,9 @@ class OverlayManager(private val context: Context) {
             holder.padV = vertPad
         }
 
-        val posX = targetRect.left
+        var posX = targetRect.left
         val posY = targetRect.top
-        val bubbleWidth = targetRect.width().coerceAtLeast((24 * density).toInt())
+        var bubbleWidth = targetRect.width().coerceAtLeast((24 * density).toInt())
 
         val textView = holder.textView
         if (holder.textColor != style.textColor) {
@@ -984,17 +1008,47 @@ class OverlayManager(private val context: Context) {
                 holder.lastText = text
             }
 
-            val widthSpec = View.MeasureSpec.makeMeasureSpec(bubbleWidth, View.MeasureSpec.EXACTLY)
+            var widthSpec = View.MeasureSpec.makeMeasureSpec(bubbleWidth, View.MeasureSpec.EXACTLY)
             val unspecHeight = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
             view.measure(widthSpec, unspecHeight)
 
             if (hasBottomLimit && view.measuredHeight > availableHeight) {
-                val compactSizeSp = if (isQuoted) 11.5f else 12.5f
-                if (compactSizeSp < baseSizeSp) {
-                    textView.setTextSize(TypedValue.COMPLEX_UNIT_SP, compactSizeSp)
-                    holder.textSizeSp = compactSizeSp
+                // Por qué: Expande ancho horizontal hacia el lado libre antes de reducir fuente o truncar.
+                val (expLeft, expRight) = resolveHorizontalExpansionBounds(
+                    targetLeft = targetRect.left,
+                    targetRight = targetRect.right,
+                    screenWidth = screenWidth,
+                    isRightSide = isRightSide,
+                    isQuoted = isQuoted,
+                    density = density
+                )
+                val expWidth = (expRight - expLeft).coerceAtLeast(bubbleWidth)
+                if (expWidth > bubbleWidth) {
+                    posX = expLeft
+                    bubbleWidth = expWidth
+                    widthSpec = View.MeasureSpec.makeMeasureSpec(bubbleWidth, View.MeasureSpec.EXACTLY)
                     view.measure(widthSpec, unspecHeight)
                 }
+
+                if (view.measuredHeight > availableHeight) {
+                    horizPad = (8 * density).toInt()
+                    vertPad = (2 * density).toInt()
+                    if (holder.padH != horizPad || holder.padV != vertPad) {
+                        view.setPadding(horizPad, vertPad, horizPad, vertPad)
+                        holder.padH = horizPad
+                        holder.padV = vertPad
+                    }
+                    val stepSizes = if (isQuoted) floatArrayOf(11.5f, 10.5f, 9.5f) else floatArrayOf(12.5f, 11.5f, 10.5f, 9.5f)
+                    for (stepSp in stepSizes) {
+                        if (stepSp < holder.textSizeSp) {
+                            textView.setTextSize(TypedValue.COMPLEX_UNIT_SP, stepSp)
+                            holder.textSizeSp = stepSp
+                        }
+                        view.measure(widthSpec, unspecHeight)
+                        if (view.measuredHeight <= availableHeight) break
+                    }
+                }
+
                 if (view.measuredHeight > availableHeight) {
                     val maxTextHeight = (availableHeight - vertPad * 2).coerceAtLeast(textView.lineHeight.coerceAtLeast(1))
                     val layout = textView.layout

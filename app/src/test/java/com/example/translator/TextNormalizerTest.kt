@@ -1,6 +1,7 @@
 package com.example.translator
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TextNormalizerTest {
@@ -211,5 +212,18 @@ class TextNormalizerTest {
             "Nu știu cum este la noi",
             TextNormalizer.normalizeRomanianChatForTranslation("Nu stiu cum e la noi")
         )
+        assertEquals(
+            "Bine bă misule",
+            TextNormalizer.normalizeRomanianChatForTranslation("Bineee baaa misule")
+        )
+        assertEquals(
+            "probabil că ai vrut să scrii ianuarie în loc de februarie",
+            TextNormalizer.normalizeRomanianChatForTranslation("probabil ca ai vrut sa scri ianuarie in loc de februarie")
+        )
+
+        val urlMessage = "‼️ Va invitam sa urmăriți colegii noștri 🤗 https://vm.tiktok.com/ZN8PxdsHD/"
+        val protectedUrl = TextNormalizer.protectEmojis(urlMessage)
+        assertTrue(protectedUrl.tokens.contains("https://vm.tiktok.com/ZN8PxdsHD/"))
+        assertEquals(urlMessage, TextNormalizer.restoreEmojis(protectedUrl.text, protectedUrl.tokens))
     }
 }

@@ -19,6 +19,17 @@ object RomanianGreekPivotTable {
     private val EL_PRYTIDA_REGEX = Regex("""(?iu)\bΠρυτίδα\b""")
     private val EL_ECHO_SEF_REGEX = Regex("""(?iu)\bέχω\s+σεφ\b""")
     private val EL_SPOROS_REGEX = Regex("""(?iu)\bσπόρος\b""")
+    private val EL_SESSION_NO_EXAMS_REGEX = Regex("""(?iu)(?<!\p{L})(σύνοδο|σύνοδος|συνεδρία)(?!\p{L})""")
+    private val EL_SESSION_GEN_REGEX = Regex("""(?iu)(?<!\p{L})συνεδρίας(?!\p{L})""")
+    private val EL_MATRICOL_MATRIX_REGEX = Regex("""(?iu)(?<!\p{L})μήτρα(?!\p{L})""")
+    private val EL_SITE_AREA_REGEX = Regex("""(?iu)(?<!\p{L})στην\s+περιοχή(?!\p{L})""")
+    private val EL_BALL_BALL_REGEX = Regex("""(?iu)(?<!\p{L})στην\s+μπάλα(?!\p{L})""")
+    private val RO_BAL_WORD_REGEX = Regex("""(?i)\bbal(ul)?\b""")
+    private val EL_KANEIS_POU_REGEX = Regex("""(?iu)^Ξέρει\s+κανείς\s+που\b""")
+    private val EL_LEADING_OTAN_REGEX = Regex("""^Όταν\b""")
+    private val EL_LEADING_OSO_REGEX = Regex("""^Όσο\b""")
+    private val RO_CAND_INTERROGATIVE_REGEX = Regex("""\bcand\s+(avem|aveti|ai|am|e|este|sunt|incepe|se|dau|dam|vin|vine|mergem|plecam|apare)\b""")
+    private val RO_CAT_INTERROGATIVE_REGEX = Regex("""\bcat\s+(avem|aveti|costa|dureaza|e|este|mai|timp)\b""")
 
     private val GREEK_NOMINATIVE_TO_VOCATIVE_NAMES = mapOf(
         "Γιάννης" to "Γιάννη",
@@ -122,6 +133,42 @@ object RomanianGreekPivotTable {
         },
         PivotRewriteRule(Regex("""(?iu)\bdobitoci\b""")) { m ->
             matchPreserveFirstCap(m.value, "proști")
+        },
+        PivotRewriteRule(Regex("""(?iu)\b(subiecte\s+de|vreun|un|la|avem|aveți|aveti|ai|am|dăm|dam|dau|dai|pentru|cu|din|despre)\s+par[tț]ial\b""")) { m ->
+            "${m.groupValues[1]} examen intermediar"
+        },
+        PivotRewriteRule(Regex("""(?iu)\bpar[tț]ialul\b""")) { m ->
+            matchPreserveFirstCap(m.value, "examenul intermediar")
+        },
+        PivotRewriteRule(Regex("""(?iu)\bpar[tț]ial\s+(la|de|din|cu|pe|în|in)\b""")) { m ->
+            "${matchPreserveFirstCap(m.value.take(7), "examen")} intermediar ${m.groupValues[1]}"
+        },
+        PivotRewriteRule(Regex("""(?iu)\b(subiecte\s+de|la|avem|aveți|aveti|pentru|din)\s+par[tț]iale\b""")) { m ->
+            "${m.groupValues[1]} examene intermediare"
+        },
+        PivotRewriteRule(Regex("""(?iu)\bsesiunea(?!\s+de\s+examene)\b""")) { m ->
+            matchPreserveFirstCap(m.value, "sesiunea de examene")
+        },
+        PivotRewriteRule(Regex("""(?iu)\bsesiune(?!\s+de\s+examene)\b""")) { m ->
+            matchPreserveFirstCap(m.value, "sesiune de examene")
+        },
+        PivotRewriteRule(Regex("""(?iu)\b(?:nr\.?\s*|num[aă]r(?:ul)?\s+)?matricol[aă]?\b""")) { m ->
+            matchPreserveFirstCap(m.value, "numărul de înmatriculare")
+        },
+        PivotRewriteRule(Regex("""(?iu)\b(pe|de\s+pe|la|în|in)\s+site(-?ul)?\b""")) { m ->
+            "${m.groupValues[1]} website${m.groupValues[2]}"
+        },
+        PivotRewriteRule(Regex("""(?iu)\b(la|de\s+la|pentru)\s+bal(ul)?\b""")) { m ->
+            "${m.groupValues[1]} balul studențesc"
+        },
+        PivotRewriteRule(Regex("""(?iu)\bprof\.?(?=\s+\p{L})""")) { m ->
+            matchPreserveFirstCap(m.value, "profesor")
+        },
+        PivotRewriteRule(Regex("""(?iu)(?<!\b(?:în|in|din|de|la|pentru)\s)\banul\s+([1-6])\b""")) { m ->
+            "${matchPreserveFirstCap(m.value.take(4), "în")} anul ${m.groupValues[1]}"
+        },
+        PivotRewriteRule(Regex("""(?iu)((?:\S+\s+){2,}[^\s,]+)[,\s]+gen\s*([?!.]*)$""")) { m ->
+            "${m.groupValues[1]}${m.groupValues[2]}"
         }
     )
 
@@ -167,6 +214,28 @@ object RomanianGreekPivotTable {
         }
         if (origNorm.contains("spor")) {
             result = result.replace(EL_SPOROS_REGEX, "καλή επιτυχία")
+        }
+        if (origNorm.contains("sesiun")) {
+            result = result.replace(EL_SESSION_NO_EXAMS_REGEX, "εξεταστική")
+            result = result.replace(EL_SESSION_GEN_REGEX, "εξεταστικής")
+        }
+        if (origNorm.contains("matricol")) {
+            result = result.replace(EL_MATRICOL_MATRIX_REGEX, "αριθμό μητρώου")
+        }
+        if (origNorm.contains("site")) {
+            result = result.replace(EL_SITE_AREA_REGEX, "στην ιστοσελίδα")
+        }
+        if (RO_BAL_WORD_REGEX.containsMatchIn(origNorm) && !origNorm.contains("minge") && !origNorm.contains("fotbal")) {
+            result = result.replace(EL_BALL_BALL_REGEX, "στον χορό")
+        }
+        if (origNorm.contains("cine ")) {
+            result = result.replace(EL_KANEIS_POU_REGEX, "Ξέρει κανείς ποιος")
+        }
+        if (origNorm.startsWith("cand ") && (origNorm.endsWith("?") || RO_CAND_INTERROGATIVE_REGEX.containsMatchIn(origNorm))) {
+            result = result.replace(EL_LEADING_OTAN_REGEX, "Πότε")
+        }
+        if (origNorm.startsWith("cat ") && (origNorm.endsWith("?") || RO_CAT_INTERROGATIVE_REGEX.containsMatchIn(origNorm))) {
+            result = result.replace(EL_LEADING_OSO_REGEX, "Πόσο")
         }
 
         // Por qué: Elimina el artículo nominativo "ο" delante de nombres propios en vocativo tras coma

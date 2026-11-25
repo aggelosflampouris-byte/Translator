@@ -434,4 +434,17 @@ class TranslationFilterTest {
         assertTrue(TranslationFilter.isDeliveryStatusText("Στάλθηκε"))
         assertFalse(TranslationFilter.isDeliveryStatusText("Avem succes"))
     }
+
+    @Test
+    fun shouldTranslate_allowsMixedTextWithUrlsAndElongatedRomanianChatWords() {
+        val tiktokInvite = "‼️ Va invitam sa urmăriți colegii noștri, în noul clip postat #GuessTheArtist 🤗 https://vm.tiktok.com/ZN8PxdsHD/"
+        assertTrue(TranslationFilter.shouldTranslate(tiktokInvite, TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN, deferUnknownLatinToMlKit = true))
+        assertTrue(TranslationFilter.shouldTranslate("E codul din platforma de studenti", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN, deferUnknownLatinToMlKit = true))
+        assertTrue(TranslationFilter.shouldTranslate("probabil ca ai vrut sa scri ianuarie in loc de februarie", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN, deferUnknownLatinToMlKit = true))
+        assertTrue(TranslationFilter.shouldTranslate("multumescc", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN, deferUnknownLatinToMlKit = true))
+        assertTrue(TranslationFilter.shouldTranslate("Bineee baaa misule", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN, deferUnknownLatinToMlKit = true))
+        assertTrue(TranslationFilter.shouldTranslate("Nup", TranslateLanguage.GREEK, TranslateLanguage.ROMANIAN, deferUnknownLatinToMlKit = true))
+        assertEquals("Ευχαριστώ!", TranslationSenseEngine.resolveIdiomPreTranslation("multumescc", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK))
+        assertEquals("Όχι", TranslationSenseEngine.resolveIdiomPreTranslation("Nup", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK))
+    }
 }

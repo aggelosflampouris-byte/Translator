@@ -14,6 +14,10 @@ object ScriptDetector {
         """(https?://|www\.|\.com\b|\.org\b|\.net\b|\.ly/|bit\.ly|waze\.com|facebook\.com|instagram\.com|tiktok\.com|twitter\.com|youtube\.com|/share/)""",
         RegexOption.IGNORE_CASE
     )
+    private val URL_TOKEN_REGEX = Regex("""(?i)(?:[a-z][a-z0-9+.-]*://\S+|www\.\S+)""")
+    private val DOMAIN_TOKEN_REGEX = Regex(
+        """(?i)\b[a-z0-9-]+(?:\.[a-z0-9-]+)+\.(?:com|org|net|ro|gr|io|ly|gg|me|tv|co|uk|de|fr)\S*|\b(?:bit\.ly|vm\.tiktok\.com|youtu\.be|t\.me|wa\.me)/\S*"""
+    )
 
     fun isGreekLetter(ch: Char): Boolean {
         return (ch in '\u0370'..'\u03FF' || ch in '\u1F00'..'\u1FFF') && ch.isLetter()
@@ -62,6 +66,27 @@ object ScriptDetector {
 
     fun containsUrlOrDomain(text: CharSequence): Boolean {
         return URL_OR_DOMAIN_REGEX.containsMatchIn(text)
+    }
+
+    fun stripUrls(text: CharSequence): String {
+        val withoutScheme = URL_TOKEN_REGEX.replace(text, " ")
+        return DOMAIN_TOKEN_REGEX.replace(withoutScheme, " ").trim()
+    }
+
+    /**
+     * Indica si el texto es únicamente un enlace o dominio sin suficiente mensaje legible alrededor.
+     */
+    fun isOnlyUrlOrDomain(text: CharSequence): Boolean {
+        if (!containsUrlOrDomain(text) && !URL_TOKEN_REGEX.containsMatchIn(text)) return false
+        val remainder = stripUrls(text)
+        var letterCount = 0
+        for (i in 0 until remainder.length) {
+            if (remainder[i].isLetter()) {
+                letterCount++
+                if (letterCount >= 2) return false
+            }
+        }
+        return true
     }
 }
 

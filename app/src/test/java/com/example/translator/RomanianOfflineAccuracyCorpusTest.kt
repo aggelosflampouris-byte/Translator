@@ -210,6 +210,78 @@ class RomanianOfflineAccuracyCorpusTest {
         )
         assertFalse("Should not produce double commas: $lasaCaOut", lasaCaOut.contains(",,"))
         assertTrue(lasaCaOut.startsWith("Nu-ți face griji,"))
+
+        // Regresiones de campus y traducciones observadas en capturas FILS Boboci 2026
+        assertEquals(
+            "avem examen intermediar azi?",
+            TranslationSenseEngine.applyPreTranslationPivotDisambiguation("avem parțial azi?", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK)
+        )
+        assertEquals(
+            "sesiunea de examene începe luni",
+            TranslationSenseEngine.applyPreTranslationPivotDisambiguation("sesiunea începe luni", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK)
+        )
+        assertEquals(
+            "numărul de înmatriculare de pe website",
+            TranslationSenseEngine.applyPreTranslationPivotDisambiguation("nr matricol de pe site", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK)
+        )
+        assertEquals(
+            "cin' cântă la balul studențesc?",
+            TranslationSenseEngine.applyPreTranslationPivotDisambiguation("cin' cântă la bal?", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK)
+        )
+        assertEquals(
+            "în anul 2 la profesor Maria",
+            TranslationSenseEngine.applyPreTranslationPivotDisambiguation("anul 2 la prof Maria", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK)
+        )
+        assertEquals(
+            "E anonimizat așa",
+            TranslationSenseEngine.applyPreTranslationPivotDisambiguation("E anonimizat așa, gen", TranslateLanguage.ROMANIAN, TranslateLanguage.GREEK)
+        )
+
+        assertEquals(
+            "Πότε έχουμε χειμερινές διακοπές;",
+            TranslationSenseEngine.applyPostTranslationSenseLogic(
+                "Cand avem vacanta de iarna?",
+                "Όταν έχουμε χειμερινές διακοπές;",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK
+            )
+        )
+        assertEquals(
+            "Πόσο διαρκεί το τεστ;",
+            TranslationSenseEngine.applyPostTranslationSenseLogic(
+                "Cat dureaza testul?",
+                "Όσο διαρκεί το τεστ;",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK
+            )
+        )
+        assertEquals(
+            "Ξέρει κανείς ποιος τραγουδάει στον χορό;",
+            TranslationSenseEngine.applyPostTranslationSenseLogic(
+                "stie cineva cine canta la bal?",
+                "Ξέρει κανείς που τραγουδάει στην μπάλα;",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK
+            )
+        )
+        assertEquals(
+            "Δεν βρίσκουν αριθμό μητρώου στην ιστοσελίδα",
+            TranslationSenseEngine.applyPostTranslationSenseLogic(
+                "Nu găsesc nr matricol pe site",
+                "Δεν βρίσκουν μήτρα στην περιοχή",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK
+            )
+        )
+        assertEquals(
+            "Ήταν καλό να παραλείψετε την έξοδο πάνω από τη εξεταστική",
+            TranslationSenseEngine.applyPostTranslationSenseLogic(
+                "Era bine să treceți cu vederea peste sesiune",
+                "Ήταν καλό να παραλείψετε την έξοδο πάνω από τη σύνοδο",
+                TranslateLanguage.ROMANIAN,
+                TranslateLanguage.GREEK
+            )
+        )
     }
 
     private fun stripRomanian(text: String): String {

@@ -34,10 +34,21 @@ object TextNormalizer {
         Regex("""(?iu)\bda{3,}\b""") to "da",
         Regex("""(?iu)\bnu{3,}\b""") to "nu",
         Regex("""(?iu)\bmultu{2,}\b""") to "mulțumesc",
+        Regex("""(?iu)\bmul[tț]umesc{2,}\b""") to "mulțumesc",
         Regex("""(?iu)\bsalu{2,}t+\b""") to "salut",
         Regex("""(?iu)\bmersi{2,}\b""") to "mersi",
-        Regex("""(?iu)\bha{2,}i\b""") to "hai"
+        Regex("""(?iu)\bha{2,}i\b""") to "hai",
+        Regex("""(?iu)\bbine{2,}\b""") to "bine",
+        Regex("""(?iu)\bb[aă]{2,}\b""") to "bă"
     )
+
+    fun collapseElongatedChatWords(text: String): String {
+        var result = text
+        for ((pattern, canonical) in ELONGATED_WORD_RULES) {
+            result = pattern.replace(result) { RomanianDiacriticsRestorer.matchCasing(it.value, canonical) }
+        }
+        return result
+    }
     private val FATA_VERSO_REGEX = Regex("""(?iu)\bfata[\s/-]+verso\b""")
     private val SPATELE_FATA_REGEX = Regex("""(?iu)\b(spatele)\s*/\s*(fata)\b""")
     private val FATA_SPATE_REGEX = Regex("""(?iu)\b(fata)\s*/\s*(spate)\b""")
@@ -122,11 +133,7 @@ object TextNormalizer {
      */
     fun normalizeRomanianChatForTranslation(text: String): String {
         if (text.isBlank()) return text
-        var result = normalizeRomanianCedillas(text)
-
-        for ((pattern, canonical) in ELONGATED_WORD_RULES) {
-            result = pattern.replace(result) { RomanianDiacriticsRestorer.matchCasing(it.value, canonical) }
-        }
+        var result = collapseElongatedChatWords(normalizeRomanianCedillas(text))
 
         // Por qué: Resuelve "față"/"fața" por contexto antes del diccionario léxico para no confundir "față-verso" con "fată".
         result = FATA_VERSO_REGEX.replace(result) { RomanianDiacriticsRestorer.matchCasing(it.value.take(4), "față") + "-verso" }
@@ -153,10 +160,10 @@ object TextNormalizer {
 
     // ── Emoji & Special Token Protection ──────────────────────────────────────
 
-    // Por qué: Protege emojis compuestos, @menciones y #hashtags para que ningún motor neuronal
-    // traduzca ni corrompa identificadores o secuencias de símbolos especiales.
+    // Por qué: Protege enlaces, emojis compuestos, @menciones y #hashtags para que ningún motor neuronal
+    // traduzca ni corrompa URLs o secuencias de símbolos especiales.
     private val EMOJI_PATTERN: Pattern = Pattern.compile(
-        """(@~?[\p{L}\p{N}_.]+|#[\p{L}\p{N}_]+|[\x{1F300}-\x{1FAFF}\x{2600}-\x{26FF}\x{2700}-\x{27BF}\x{1F1E6}-\x{1F1FF}\x{1F600}-\x{1F64F}\x{1F680}-\x{1F6FF}\uFE0F\u200D]+)"""
+        """(https?://\S+|www\.\S+|@~?[\p{L}\p{N}_.]+|#[\p{L}\p{N}_]+|[\x{1F300}-\x{1FAFF}\x{2600}-\x{26FF}\x{2700}-\x{27BF}\x{1F1E6}-\x{1F1FF}\x{1F600}-\x{1F64F}\x{1F680}-\x{1F6FF}\uFE0F\u200D]+)"""
     )
 
     data class ProtectedResult(

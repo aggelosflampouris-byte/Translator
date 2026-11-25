@@ -71,7 +71,15 @@ object TranslationSenseEngine {
         "poze", "abonament", "abonamente", "abonamentele", "legitimația", "legitimatia",
         "cartela", "cartele", "metrou", "bilete", "ploaie", "afară", "afara", "lungă", "lunga",
         "șuruburi", "suruburi", "dovada", "dovadă", "ms",
-        "avem", "aveti", "aveți", "suntem", "sunteti", "sunteți", "putem", "vrem", "succes"
+        "avem", "aveti", "aveți", "suntem", "sunteti", "sunteți", "putem", "vrem", "succes",
+        "din", "vrut", "scri", "scris", "studenti", "studenți", "codul", "platforma",
+        "facultate", "facultatea", "sesiune", "sesiunea", "partial", "parțial",
+        "subiecte", "subiectele", "materie", "materia", "bursa", "bursă", "burse",
+        "curs", "cursuri", "laborator", "examen", "examene", "restanta", "restanță",
+        "ianuarie", "februarie", "martie", "aprilie", "iunie", "iulie",
+        "septembrie", "octombrie", "noiembrie", "decembrie",
+        "nup", "ba", "bă", "colegii", "urmăriți", "urmariti", "invitam", "invităm",
+        "bal", "canta", "cântă"
     )
 
     private val GENERIC_ROMANCE_PREPOSITIONS = setOf("de", "in", "e", "a", "la")
@@ -121,7 +129,8 @@ object TranslationSenseEngine {
         IdiomRule(setOf("multumesc", "mersi"), "Ευχαριστώ!"),
         IdiomRule(setOf("cu placere"), "Παρακαλώ!"),
         IdiomRule(setOf("du-te dracului", "du-te dracu"), "Άντε στο διάολο!"),
-        IdiomRule(setOf("ce dracu", "ce naiba"), "Τι στο διάολο;")
+        IdiomRule(setOf("ce dracu", "ce naiba"), "Τι στο διάολο;"),
+        IdiomRule(setOf("nup"), "Όχι")
     )
 
     private val GREEK_TO_ROMANIAN_EXACT_IDIOMS = listOf(
@@ -283,8 +292,10 @@ object TranslationSenseEngine {
     )
 
     private fun analyzeScriptFacts(text: String, alreadyCleaned: Boolean): ScriptFacts? {
-        val clean = (if (alreadyCleaned) text else TranslationFilter.cleanMessageText(text)).trim()
-        if (clean.length < 2 || ScriptDetector.containsUrlOrDomain(clean)) return null
+        val rawClean = (if (alreadyCleaned) text else TranslationFilter.cleanMessageText(text)).trim()
+        if (rawClean.length < 2 || ScriptDetector.isOnlyUrlOrDomain(rawClean)) return null
+        val clean = TextNormalizer.collapseElongatedChatWords(ScriptDetector.stripUrls(rawClean)).trim()
+        if (clean.length < 2) return null
 
         val greekLetters = ScriptDetector.countGreek(clean)
         val latinLetters = ScriptDetector.countLatin(clean)
@@ -493,7 +504,7 @@ object TranslationSenseEngine {
         val trimmed = text.trim()
         if (trimmed.contains("\n")) return null
 
-        val clean = TranslationFilter.cleanMessageText(trimmed).trim()
+        val clean = TextNormalizer.collapseElongatedChatWords(TranslationFilter.cleanMessageText(trimmed)).trim()
         val words = clean.replace(IDIOM_PUNCT_REGEX, " ")
             .split(WHITESPACE_REGEX)
             .filter { it.isNotBlank() }

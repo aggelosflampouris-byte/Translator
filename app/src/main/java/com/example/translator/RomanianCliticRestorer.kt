@@ -32,7 +32,7 @@ object RomanianCliticRestorer {
     )
 
     private val RO_CONTEXT_MARKER_REGEX = Regex(
-        """(?iu)\b(și|si|să|în|îți|îmi|își|așa|nu|da|eu|tu|el|ea|noi|voi|ce|cine|când|unde|cum|dacă|care|doar|sau|pentru|trebuie|cred|poți|vrei|faci|făcut|cineva|mulțumesc|mersi|pup|rămas|prins|chinui|abonamente|legitimația|ștampilate|lăudat|mințit|rectorat|secretariat|cămin|cartela|cererea|bonul|bursa|dosar|permisiune|contractul|bună|salut|problemă|restanță|restanțe|buletin|buletinul)\b"""
+        """(?iu)\b(și|si|să|în|îți|îmi|își|așa|nu|da|eu|tu|el|ea|noi|voi|ce|cine|când|unde|cum|dacă|care|doar|sau|pentru|trebuie|cred|poți|vrei|faci|făcut|cineva|mulțumesc|mersi|pup|rămas|prins|chinui|abonamente|legitimația|ștampilate|lăudat|mințit|rectorat|secretariat|cămin|cartela|cererea|bonul|bursa|dosar|permisiune|contractul|bună|salut|problemă|restanță|restanțe|buletin|buletinul|din|probabil|studenti|studenți|sesiune|partial|parțial)\b"""
     )
 
     // Pasada no condicional (segura sin contexto extra)
@@ -46,16 +46,17 @@ object RomanianCliticRestorer {
     private val PHRASE_O_SA_REGEX = Regex("""(?iu)\bo\s+sa\b""")
     private val PHRASE_OR_SA_REGEX = Regex("""(?iu)(?<![\p{L}'’-])\b(or)\s+(să|sa)\b""")
     private val PHRASE_NU_SA_MA_REGEX = Regex("""(?iu)\b(nu|sa|să)\s+ma\b""")
-    private val PHRASE_AUX_SA_REGEX = Regex("""(?iu)\b(trebuie|vreau|vrea|vrei|poti|poți|poate|am|ai|are|avem|aveti|aveți|hai|haide|stai|sta|mergi|duci)\s+sa\b""")
+    private val PHRASE_AUX_SA_REGEX = Regex("""(?iu)\b(trebuie|vreau|vrea|vrei|vrut|poti|poți|poate|am|ai|are|avem|aveti|aveți|hai|haide|stai|sta|mergi|duci)\s+sa\b""")
     private val PHRASE_SA_DIE_REGEX = Regex("""\b([Ss][aă])\s+die\b""")
     private val PHRASE_SA_INTRII_REGEX = Regex("""(?iu)\b(sa|să)\s+intrii\b""")
+    private val PHRASE_SA_SCRI_REGEX = Regex("""(?iu)\b(sa|să)\s+scri\b""")
     private val PHRASE_SA_CLAUSE_REGEX = Regex(
         """(?iu)\bsa\s+(nu|te|ne|va|vă|le|li|ii|îi|imi|îmi|iti|îți|o|se|fie|fiu|fim|fiti|fiți|merg|mergem|merge|vii|vina|vină|dam|dăm|dai|dea|intri|intru|fac|facem|faca|facă|stii|știi|stie|știe|spun|spuna|spună|fur|fure|iau|iei|luam|luăm|duc|duci|duca|ducă|vad|văd|vada|vadă|vorbim|vorbesc|trimit|trimita|trimită|verific|verifice|depun|depunem|depuna|depună|completez|completam|completăm|semnez|semnam|semnăm|semneze)\b"""
     )
     private val PHRASE_TI_DA_REGEX = Regex("""(?iu)\b(ti|ți)\s+da\b""")
     private val PHRASE_TI_VERB_REGEX = Regex("""(?iu)\b(ti|ți)\s+(dau|dai|spune|spun|trimit|trimite|arăt|arat|zice|zic)\b""")
     private val PHRASE_VERB_CA_REGEX = Regex(
-        """(?iu)\b(cred|zic|zice|spune|spun|stiu|știu|pare|parcă|gândesc|banuiesc|bănuiesc|vad|văd|auzit|aflat|scrie|pentru|fiindcă|deși|măcar|hai|haide)\s+ca\b"""
+        """(?iu)\b(cred|zic|zice|spune|spun|stiu|știu|pare|parcă|gândesc|banuiesc|bănuiesc|vad|văd|auzit|aflat|scrie|pentru|fiindcă|deși|măcar|hai|haide|probabil)\s+ca\b"""
     )
     private val PHRASE_CA_CLAUSE_REGEX = Regex(
         """(?iu)\bca\s+(nu|doar|numai|deja|e|este|sunt|am|ai|a|au|o|va|mai|poate|trebuie|acum|mâine|maine|azi|aici|acolo|eu|tu|el|ea|noi|voi|ei|ele|oricum|dacă|daca|după|dupa|pentru|fără|fara|tot|toți|toti)\b"""
@@ -134,6 +135,9 @@ object RomanianCliticRestorer {
         }
         result = PHRASE_SA_INTRII_REGEX.replace(result) { match ->
             "${RomanianDiacriticsRestorer.matchCasing(match.groupValues[1], "să")} intri"
+        }
+        result = PHRASE_SA_SCRI_REGEX.replace(result) { match ->
+            "${RomanianDiacriticsRestorer.matchCasing(match.groupValues[1], "să")} scrii"
         }
         result = PHRASE_SA_CLAUSE_REGEX.replace(result) { match ->
             val prefix = match.value.substringBefore(' ')

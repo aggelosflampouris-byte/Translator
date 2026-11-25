@@ -322,11 +322,10 @@ object TranslationFilter {
         // Must contain at least one letter
         if (!trimmed.any { it.isLetter() }) return "let"
 
-        // Filter out URLs, schemes, domain extensions, and URL path fragments
-        if (ScriptDetector.containsUrlOrDomain(trimmed) ||
-            trimmed.contains("://") ||
+        // Filter out pure URLs, schemes, domain extensions, and URL path fragments while allowing mixed text+URL messages
+        if (ScriptDetector.isOnlyUrlOrDomain(trimmed) ||
             (trimmed.startsWith("/") && !trimmed.contains(" ")) ||
-            (trimmed.matches(URL_PATH_REGEX) && (trimmed.contains("/") || (trimmed.length > 8 && !trimmed.contains(" "))))) {
+            (trimmed.matches(URL_PATH_REGEX) && (trimmed.contains("/") || trimmed.contains('?') || trimmed.contains('=')))) {
             return "url"
         }
 

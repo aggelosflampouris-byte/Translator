@@ -308,5 +308,46 @@ class OverlayThemeTest {
         assertEquals(1080 - 840 - 24, clampedWide.posX)
         assertEquals(96, clampedWide.posY)
     }
+
+    @Test
+    fun `horizontal expansion bounds grow incoming right and outgoing left up to 84 percent while preserving quotes`() {
+        val density = 3f
+        val screenWidth = 1080
+        // Burbuja entrante estrecha (135..520): expande el borde derecho hasta min(1080-42, 135+907) = 1038
+        val (inLeft, inRight) = OverlayManager.resolveHorizontalExpansionBounds(
+            targetLeft = 135,
+            targetRight = 520,
+            screenWidth = screenWidth,
+            isRightSide = false,
+            isQuoted = false,
+            density = density
+        )
+        assertEquals(135, inLeft)
+        assertEquals(1038, inRight)
+
+        // Burbuja saliente estrecha (680..1020): expande el borde izquierdo hasta max(42, 1020-907) = 113
+        val (outLeft, outRight) = OverlayManager.resolveHorizontalExpansionBounds(
+            targetLeft = 680,
+            targetRight = 1020,
+            screenWidth = screenWidth,
+            isRightSide = true,
+            isQuoted = false,
+            density = density
+        )
+        assertEquals(113, outLeft)
+        assertEquals(1020, outRight)
+
+        // Citas nunca se expanden horizontalmente
+        val (qLeft, qRight) = OverlayManager.resolveHorizontalExpansionBounds(
+            targetLeft = 150,
+            targetRight = 500,
+            screenWidth = screenWidth,
+            isRightSide = false,
+            isQuoted = true,
+            density = density
+        )
+        assertEquals(150, qLeft)
+        assertEquals(500, qRight)
+    }
 }
 
