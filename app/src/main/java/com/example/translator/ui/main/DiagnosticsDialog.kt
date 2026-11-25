@@ -13,9 +13,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.example.translator.BuildConfig
 import com.example.translator.ClipboardHelper
+import com.example.translator.R
 import com.example.translator.ServiceBridge
 import com.example.translator.TranslatorApplication
 
@@ -45,10 +47,11 @@ fun ScanDiagnosticsDialog(
             enabledPackages = enabledPackages
         )
     }
+    val diagnosticsLabel = stringResource(R.string.diagnostics_title)
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Scan Diagnostics") },
+        title = { Text(diagnosticsLabel) },
         text = {
             Box(
                 modifier = Modifier
@@ -63,15 +66,15 @@ fun ScanDiagnosticsDialog(
         },
         confirmButton = {
             TextButton(onClick = {
-                ClipboardHelper.copySensitiveText(context, "OverChat Diagnostics", diagReport)
+                ClipboardHelper.copySensitiveText(context, diagnosticsLabel, diagReport)
                 onCopied()
             }) {
-                Text("Copy")
+                Text(stringResource(R.string.action_copy))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Close")
+                Text(stringResource(R.string.action_close))
             }
         }
     )

@@ -111,7 +111,7 @@ fun GlossaryDialog(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Personal Dictionary",
+                    text = stringResource(R.string.title_personal_dictionary),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface
                 )
@@ -122,7 +122,7 @@ fun GlossaryDialog(
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                         ) {
                             Text(
-                                text = "Reset All",
+                                text = stringResource(R.string.action_reset_all),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.error
                             )
@@ -146,7 +146,7 @@ fun GlossaryDialog(
             ) {
                 Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
                     DictionaryToggleRow(
-                        label = "Apply saved fixes",
+                        label = stringResource(R.string.dict_apply_saved_fixes),
                         checked = glossaryEnabled,
                         onCheckedChange = onGlossaryChanged
                     )
@@ -155,7 +155,7 @@ fun GlossaryDialog(
                         color = MaterialTheme.colorScheme.outlineVariant
                     )
                     DictionaryToggleRow(
-                        label = "Learn from my edits",
+                        label = stringResource(R.string.dict_learn_from_edits),
                         checked = learningEnabled,
                         onCheckedChange = onLearningChanged
                     )
@@ -164,8 +164,8 @@ fun GlossaryDialog(
 
             OverChatSegmentedControl(
                 options = listOf(
-                    "words" to "Words (${corrections.size})",
-                    "phrases" to "Phrases (${memories.size})"
+                    "words" to stringResource(R.string.dict_tab_words, corrections.size),
+                    "phrases" to stringResource(R.string.dict_tab_phrases, memories.size)
                 ),
                 selectedValue = if (selectedTab == 0) "words" else "phrases",
                 onSelected = { selectedTab = if (it == "words") 0 else 1 }
@@ -174,7 +174,7 @@ fun GlossaryDialog(
             OutlinedTextField(
                 value = filterQuery,
                 onValueChange = { filterQuery = it },
-                placeholder = { Text("Search dictionary...", style = MaterialTheme.typography.bodySmall) },
+                placeholder = { Text(stringResource(R.string.dict_search_placeholder), style = MaterialTheme.typography.bodySmall) },
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp),
                 textStyle = MaterialTheme.typography.bodySmall,
@@ -198,7 +198,7 @@ fun GlossaryDialog(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "Add custom rule",
+                                text = stringResource(R.string.dict_add_custom_rule),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.primary
                             )
@@ -231,7 +231,7 @@ fun GlossaryDialog(
                             OutlinedTextField(
                                 value = wrongTerm,
                                 onValueChange = { wrongTerm = it },
-                                placeholder = { Text("Replace", style = MaterialTheme.typography.bodySmall) },
+                                placeholder = { Text(stringResource(R.string.dict_placeholder_replace), style = MaterialTheme.typography.bodySmall) },
                                 singleLine = true,
                                 shape = RoundedCornerShape(10.dp),
                                 textStyle = MaterialTheme.typography.bodySmall,
@@ -240,7 +240,7 @@ fun GlossaryDialog(
                             OutlinedTextField(
                                 value = preferredTerm,
                                 onValueChange = { preferredTerm = it },
-                                placeholder = { Text("With", style = MaterialTheme.typography.bodySmall) },
+                                placeholder = { Text(stringResource(R.string.dict_placeholder_with), style = MaterialTheme.typography.bodySmall) },
                                 singleLine = true,
                                 shape = RoundedCornerShape(10.dp),
                                 textStyle = MaterialTheme.typography.bodySmall,
@@ -256,7 +256,7 @@ fun GlossaryDialog(
                                 shape = RoundedCornerShape(10.dp),
                                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
                             ) {
-                                Text("Add", style = MaterialTheme.typography.labelMedium)
+                                Text(stringResource(R.string.action_add), style = MaterialTheme.typography.labelMedium)
                             }
                         }
                     }
@@ -265,7 +265,9 @@ fun GlossaryDialog(
 
             if ((selectedTab == 0 && filteredCorrections.isEmpty()) || (selectedTab == 1 && filteredMemories.isEmpty())) {
                 Text(
-                    text = if (filterQuery.isBlank()) "No entries saved yet." else "No matching entries.",
+                    text = stringResource(
+                        if (filterQuery.isBlank()) R.string.dict_empty_entries else R.string.dict_no_matching_entries
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(vertical = 14.dp)
@@ -374,7 +376,7 @@ private fun GlossaryItemRow(
         ) {
             Icon(
                 painter = painterResource(id = R.drawable.ic_close),
-                contentDescription = "Delete",
+                contentDescription = stringResource(R.string.action_delete),
                 tint = MaterialTheme.colorScheme.error,
                 modifier = Modifier.size(16.dp)
             )

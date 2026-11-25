@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">OverChat</string>
+    <string name="app_name" translatable="false">OverChat</string>
     <string name="app_subtitle">Real-Time Chat Translator</string>
     <string name="accessibility_service_description">Reads text on screen inside your enabled chat apps to display real-time translation overlays.</string>
 
@@ -7,12 +7,17 @@
     <string name="status_translating">Translating</string>
     <string name="status_paused">Paused</string>
     <string name="status_required">Required</string>
+    <string name="status_ready">Ready</string>
+    <string name="status_connecting">Connecting...</string>
+    <string name="action_checking_short">Checking...</string>
     <string name="action_grant_permissions">Grant Required Permissions Above</string>
     <string name="action_stop_service">Stop OverChat</string>
     <string name="action_pause">Pause</string>
     <string name="action_resume">Resume</string>
     <string name="action_start_translation">Start Translation</string>
 
+    <string name="notif_channel_name">OverChat Translation Controls</string>
+    <string name="notif_channel_description">Quick controls for translating messages in your chat apps.</string>
     <string name="notif_title_auto_active">OverChat Active</string>
     <string name="notif_title_paused">OverChat Paused</string>
     <string name="notif_subtitle_pair">%1$s to %2$s</string>
@@ -25,10 +30,33 @@
     <string name="quick_switch_title">Switch Languages</string>
     <string name="quick_switch_subtitle">Applies immediately to active chat translations.</string>
 
+    <string name="section_translation">Translation</string>
+    <string name="section_apps_dictionary">Apps &amp; Dictionary</string>
+    <string name="section_setup_required">Setup Required</string>
+    <string name="section_language">Language</string>
+    <string name="section_appearance">Appearance</string>
+    <string name="section_engine">Engine</string>
+    <string name="section_battery_updates">Battery &amp; Updates</string>
+    <string name="section_troubleshooting">Troubleshooting</string>
+
     <string name="settings_title">Settings</string>
+    <string name="settings_app_language_title">App Language</string>
+    <string name="settings_app_language_subtitle">Choose the language for OverChat menus and notifications.</string>
+    <string name="app_language_picker_title">Choose App Language</string>
+    <string name="app_language_system_default">System Default</string>
     <string name="settings_system_translator_title">System Translation</string>
     <string name="settings_system_translator_switch">Prefer Android System Engine</string>
     <string name="settings_system_translator_subtitle">Uses your device\'s built-in offline language pack with ML Kit fallback.</string>
+    <string name="settings_idle_pause_title">Idle Auto-Pause (%1$dm)</string>
+    <string name="settings_idle_pause_subtitle">Pauses automatically when idle away from chat apps.</string>
+    <string name="settings_auto_updates_title">Auto-Check Updates</string>
+    <string name="settings_auto_updates_subtitle">Checks GitHub releases when app opens.</string>
+    <string name="settings_check_updates_title">Check for Updates</string>
+    <string name="settings_installed_version">Installed version v%1$s</string>
+    <string name="action_check_now">Check Now</string>
+    <string name="settings_app_info_subtitle">Open Android permissions and battery settings.</string>
+    <string name="settings_diagnostics_subtitle">Copy live detection logs and status snapshot.</string>
+
     <string name="draft_switch_lang_desc">Switch translation language</string>
     <string name="draft_action_replace">Replace</string>
     <string name="draft_action_undo">Undo</string>
@@ -38,13 +66,117 @@
 
     <string name="pill_close_desc">Close</string>
     <string name="nav_back_desc">Back</string>
+    <string name="label_from">From</string>
+    <string name="label_to">To</string>
     <string name="lang_picker_title_from">Translate from</string>
     <string name="lang_picker_title_to">Translate to</string>
     <string name="swap_languages_desc">Swap languages</string>
+    <string name="action_swap_arrow">⇄ Swap</string>
+    <string name="action_done">Done</string>
+
+    <string name="toggle_translate_what_i_type">Translate What I Type</string>
+    <string name="toggle_translate_what_i_type_subtitle">Preview and insert translations as you type.</string>
+
+    <string name="model_status_checking">Checking language models...</string>
+    <string name="model_status_downloading">Downloading language models...</string>
+    <string name="model_status_ready">Offline ready</string>
+    <string name="model_status_error">Model download error. Check connection.</string>
+
+    <string name="title_supported_apps">Supported Apps</string>
+    <string name="summary_no_apps_selected">No apps selected — tap to choose</string>
+    <string name="title_personal_dictionary">Personal Dictionary</string>
+    <string name="dict_no_saved_fixes">No saved fixes yet</string>
+    <string name="dict_one_word">1 word</string>
+    <string name="dict_many_words">%1$d words</string>
+    <string name="dict_one_phrase">1 phrase</string>
+    <string name="dict_many_phrases">%1$d phrases</string>
+    <string name="dict_state_off">\u0020· Off</string>
+    <string name="dict_state_manual_only">\u0020· Manual only</string>
+    <string name="dict_state_learning_only">\u0020· Learning only</string>
+
+    <string name="bubble_style_title">Overlay Bubble Style</string>
+    <string name="bubble_style_subtitle">Matches dark mode automatically or locks a fixed bubble palette.</string>
+    <string name="bubble_preview_quote">Do we meet at 6?</string>
+    <string name="bubble_preview_reply">Yes, see you outside the library.</string>
+    <string name="bubble_preview_outgoing">Perfect, on my way now.</string>
+    <string name="bubble_theme_auto">Auto</string>
+    <string name="bubble_theme_light">Light</string>
+    <string name="bubble_theme_classic">Classic</string>
+
+    <string name="dialog_reset_learning_title">Reset learned data?</string>
+    <string name="dialog_reset_learning_message">All learned words and remembered phrases will be deleted from this phone.</string>
+    <string name="action_reset">Reset</string>
+    <string name="action_cancel">Cancel</string>
 
     <string name="perm_card_title">System Permissions</string>
     <string name="perm_accessibility_label">Accessibility Service</string>
     <string name="perm_notifications_label">Notifications</string>
+    <string name="perm_restricted_hint">Android 13+ restricted? Open App Info → ⋮ → Allow restricted settings.</string>
+    <string name="perm_privacy_note">100% on-device · Nothing leaves your phone.</string>
+    <string name="action_enable">Enable</string>
     <string name="perm_diagnostics">Diagnostics</string>
     <string name="perm_app_info">App Info</string>
+
+    <string name="action_enable_all">Enable All</string>
+    <string name="apps_screen_description">Translations appear only in the verified apps enabled below. System settings, keyboards, and financial apps are always ignored.</string>
+    <string name="apps_verified_count">Verified Apps · %1$d of %2$d enabled</string>
+    <string name="apps_status_installed">Installed</string>
+    <string name="apps_status_not_installed">Not installed</string>
+
+    <string name="action_reset_all">Reset All</string>
+    <string name="dict_apply_saved_fixes">Apply saved fixes</string>
+    <string name="dict_learn_from_edits">Learn from my edits</string>
+    <string name="dict_tab_words">Words (%1$d)</string>
+    <string name="dict_tab_phrases">Phrases (%1$d)</string>
+    <string name="dict_search_placeholder">Search dictionary...</string>
+    <string name="dict_add_custom_rule">Add custom rule</string>
+    <string name="dict_placeholder_replace">Replace</string>
+    <string name="dict_placeholder_with">With</string>
+    <string name="action_add">Add</string>
+    <string name="dict_empty_entries">No entries saved yet.</string>
+    <string name="dict_no_matching_entries">No matching entries.</string>
+    <string name="action_delete">Delete</string>
+
+    <string name="update_title_ready">Update Ready to Install</string>
+    <string name="update_title_downloading">Downloading Update</string>
+    <string name="update_title_failed">Update Failed</string>
+    <string name="update_title_available">Update Available</string>
+    <string name="update_downloading_version">Downloading %1$s directly...</string>
+    <string name="update_ready_message">Version %1$s has been downloaded and is ready to install.</string>
+    <string name="update_ready_hint">Tap Install to apply the update immediately.</string>
+    <string name="update_error_hint">You can retry downloading or open the release page in your browser.</string>
+    <string name="update_available_message">Version %1$s%2$s is available.</string>
+    <string name="update_available_question">Download and update directly within the app?</string>
+    <string name="download_failed_connection">Download failed. Check your internet connection.</string>
+    <string name="download_missing_file">The downloaded update file is missing.</string>
+    <string name="action_install_now">Install Now</string>
+    <string name="action_retry">Retry</string>
+    <string name="action_download_install">Download &amp; Install</string>
+    <string name="action_open_browser">Open Browser</string>
+    <string name="action_later">Later</string>
+
+    <string name="crash_dialog_title">App Crashed</string>
+    <string name="crash_dialog_message">The app encountered an error in the previous session:\n\n%1$s</string>
+    <string name="crash_log_label">Crash Log</string>
+    <string name="action_copy_log">Copy Log</string>
+    <string name="action_dismiss">Dismiss</string>
+    <string name="snackbar_install_permission">Allow unknown apps or open in browser to install update</string>
+    <string name="snackbar_latest_version">You\'re on the latest version (v%1$s)</string>
+
+    <string name="diagnostics_title">Scan Diagnostics</string>
+    <string name="action_copy">Copy</string>
+    <string name="action_close">Close</string>
+
+    <string name="toast_copied_clipboard">Copied to clipboard</string>
+    <string name="toast_diagnostics_copied">Diagnostics copied</string>
+    <string name="toast_overchat_started">OverChat started (Notification controls active)</string>
+    <string name="toast_translation_active">Translation active</string>
+    <string name="toast_translation_paused">Translation paused</string>
+    <string name="toast_overchat_stopped">OverChat stopped</string>
+    <string name="toast_a11y_service_off">Accessibility Service is OFF. Toggle it ON in Settings.</string>
+    <string name="toast_replaced_in_chat">Replaced in chat</string>
+    <string name="toast_copied_tap_paste">Copied to clipboard (Tap Paste in chat)</string>
+    <string name="toast_original_restored">Original text restored</string>
+    <string name="toast_could_not_restore_draft">Could not restore draft</string>
+    <string name="clipboard_translated_text_label">Translated Text</string>
 </resources>

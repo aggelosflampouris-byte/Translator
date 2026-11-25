@@ -38,11 +38,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import com.example.translator.AppDefaults
 import com.example.translator.ChatAppProfile
+import com.example.translator.R
 import com.example.translator.TargetAppCatalog
 import com.example.translator.ui.components.OverChatSectionCard
 import com.example.translator.ui.components.OverChatSectionLabel
@@ -90,14 +92,14 @@ fun TargetAppsScreen(
         modifier = modifier.fillMaxSize(),
         topBar = {
             OverChatTopBar(
-                title = "Supported Apps",
+                title = stringResource(R.string.title_supported_apps),
                 onBack = onBack,
                 trailing = {
                     TextButton(
                         onClick = { updateEnabledPackages(TargetAppCatalog.getDefaultEnabledPackages()) },
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                     ) {
-                        Text(text = "Enable All", style = MaterialTheme.typography.labelMedium)
+                        Text(text = stringResource(R.string.action_enable_all), style = MaterialTheme.typography.labelMedium)
                     }
                 }
             )
@@ -113,18 +115,28 @@ fun TargetAppsScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
-                text = "Translations appear only in the verified apps enabled below. System settings, keyboards, and financial apps are always ignored.",
+                text = stringResource(R.string.apps_screen_description),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             OverChatSectionLabel(
-                text = "Verified Apps · ${curatedItems.count { it.isEnabled }} of ${curatedItems.size} enabled"
+                text = stringResource(
+                    R.string.apps_verified_count,
+                    curatedItems.count { it.isEnabled },
+                    curatedItems.size
+                )
             )
 
             OverChatSectionCard {
                 curatedItems.forEachIndexed { index, item ->
-                    val subtitle = if (item.installedPackage != null) "Installed" else "Not installed"
+                    val subtitle = stringResource(
+                        if (item.installedPackage != null) {
+                            R.string.apps_status_installed
+                        } else {
+                            R.string.apps_status_not_installed
+                        }
+                    )
                     TargetAppToggleRow(
                         title = item.profile.displayName,
                         subtitle = subtitle,

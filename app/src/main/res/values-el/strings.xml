@@ -1,0 +1,182 @@
+<resources>
+    <string name="app_subtitle">Μεταφραστής Συνομιλιών σε Πραγματικό Χρόνο</string>
+    <string name="accessibility_service_description">Διαβάζει το κείμενο στην οθόνη μέσα στις ενεργοποιημένες εφαρμογές συνομιλίας για να εμφανίζει μεταφράσεις σε πραγματικό χρόνο.</string>
+
+    <string name="status_active">Ενεργό</string>
+    <string name="status_translating">Μεταφράζει</string>
+    <string name="status_paused">Σε παύση</string>
+    <string name="status_required">Απαιτείται</string>
+    <string name="status_ready">Έτοιμο</string>
+    <string name="status_connecting">Σύνδεση...</string>
+    <string name="action_checking_short">Έλεγχος...</string>
+    <string name="action_grant_permissions">Παραχωρήστε τα Απαιτούμενα Δικαιώματα</string>
+    <string name="action_stop_service">Διακοπή OverChat</string>
+    <string name="action_pause">Παύση</string>
+    <string name="action_resume">Συνέχεια</string>
+    <string name="action_start_translation">Έναρξη Μετάφρασης</string>
+
+    <string name="notif_channel_name">Χειριστήρια Μετάφρασης OverChat</string>
+    <string name="notif_channel_description">Γρήγορος έλεγχος για μετάφραση μηνυμάτων στις εφαρμογές συνομιλίας.</string>
+    <string name="notif_title_auto_active">OverChat Ενεργό</string>
+    <string name="notif_title_paused">OverChat σε Παύση</string>
+    <string name="notif_subtitle_pair">%1$s προς %2$s</string>
+    <string name="notif_action_switch_languages">Αλλαγή Γλώσσας</string>
+    <string name="notif_action_pause">Παύση</string>
+    <string name="notif_action_resume">Συνέχεια</string>
+    <string name="notif_action_stop">Διακοπή</string>
+    <string name="notif_hint_auto">Μεταφράζει αυτόματα τις ορατές συνομιλίες στην οθόνη.</string>
+    <string name="notif_hint_paused">Η μετάφραση είναι σε παύση. Πατήστε Συνέχεια.</string>
+    <string name="quick_switch_title">Αλλαγή Γλωσσών</string>
+    <string name="quick_switch_subtitle">Εφαρμόζεται αμέσως στις ενεργές μεταφράσεις συνομιλίας.</string>
+
+    <string name="section_translation">Μετάφραση</string>
+    <string name="section_apps_dictionary">Εφαρμογές &amp; Λεξικό</string>
+    <string name="section_setup_required">Απαιτείται Ρύθμιση</string>
+    <string name="section_language">Γλώσσα</string>
+    <string name="section_appearance">Εμφάνιση</string>
+    <string name="section_engine">Μηχανή</string>
+    <string name="section_battery_updates">Μπαταρία &amp; Ενημερώσεις</string>
+    <string name="section_troubleshooting">Αντιμετώπιση Προβλημάτων</string>
+
+    <string name="settings_title">Ρυθμίσεις</string>
+    <string name="settings_app_language_title">Γλώσσα Εφαρμογής</string>
+    <string name="settings_app_language_subtitle">Επιλέξτε τη γλώσσα για τα μενού και τις ειδοποιήσεις του OverChat.</string>
+    <string name="app_language_picker_title">Επιλογή Γλώσσας Εφαρμογής</string>
+    <string name="app_language_system_default">Προεπιλογή Συστήματος</string>
+    <string name="settings_system_translator_title">Μετάφραση Συστήματος</string>
+    <string name="settings_system_translator_switch">Προτίμηση Μηχανής Android</string>
+    <string name="settings_system_translator_subtitle">Χρησιμοποιεί το ενσωματωμένο πακέτο γλωσσών της συσκευής με εφεδρικό το ML Kit.</string>
+    <string name="settings_idle_pause_title">Αυτόματη Παύση Αδράνειας (%1$dλ)</string>
+    <string name="settings_idle_pause_subtitle">Κάνει αυτόματη παύση όταν δεν χρησιμοποιείτε εφαρμογές συνομιλίας.</string>
+    <string name="settings_auto_updates_title">Αυτόματος Έλεγχος Ενημερώσεων</string>
+    <string name="settings_auto_updates_subtitle">Ελέγχει τις εκδόσεις στο GitHub κατά το άνοιγμα.</string>
+    <string name="settings_check_updates_title">Έλεγχος για Ενημερώσεις</string>
+    <string name="settings_installed_version">Εγκατεστημένη έκδοση v%1$s</string>
+    <string name="action_check_now">Έλεγχος Τώρα</string>
+    <string name="settings_app_info_subtitle">Άνοιγμα δικαιωμάτων Android και ρυθμίσεων μπαταρίας.</string>
+    <string name="settings_diagnostics_subtitle">Αντιγραφή αρχείων εντοπισμού και κατάστασης.</string>
+
+    <string name="draft_switch_lang_desc">Εναλλαγή γλώσσας μετάφρασης</string>
+    <string name="draft_action_replace">Αντικατάσταση</string>
+    <string name="draft_action_undo">Αναίρεση</string>
+    <string name="draft_undo_applied_badge">✓ Εφαρμόστηκε</string>
+    <string name="draft_undo_caption">Εισήχθη στη συνομιλία · Πατήστε Αναίρεση</string>
+    <string name="draft_dismiss_desc">Απόρριψη προεπισκόπησης μετάφρασης</string>
+
+    <string name="pill_close_desc">Κλείσιμο</string>
+    <string name="nav_back_desc">Πίσω</string>
+    <string name="label_from">Από</string>
+    <string name="label_to">Προς</string>
+    <string name="lang_picker_title_from">Μετάφραση από</string>
+    <string name="lang_picker_title_to">Μετάφραση προς</string>
+    <string name="swap_languages_desc">Εναλλαγή γλωσσών</string>
+    <string name="action_swap_arrow">⇄ Εναλλαγή</string>
+    <string name="action_done">Τέλος</string>
+
+    <string name="toggle_translate_what_i_type">Μετάφραση Πληκτρολόγησης</string>
+    <string name="toggle_translate_what_i_type_subtitle">Προεπισκόπηση και εισαγωγή μεταφράσεων καθώς γράφετε.</string>
+
+    <string name="model_status_checking">Έλεγχος μοντέλων γλώσσας...</string>
+    <string name="model_status_downloading">Λήψη μοντέλων γλώσσας...</string>
+    <string name="model_status_ready">Έτοιμο εκτός σύνδεσης</string>
+    <string name="model_status_error">Σφάλμα λήψης μοντέλων. Ελέγξτε τη σύνδεση.</string>
+
+    <string name="title_supported_apps">Υποστηριζόμενες Εφαρμογές</string>
+    <string name="summary_no_apps_selected">Καμία εφαρμογή επιλεγμένη — πατήστε για επιλογή</string>
+    <string name="title_personal_dictionary">Προσωπικό Λεξικό</string>
+    <string name="dict_no_saved_fixes">Δεν υπάρχουν αποθηκευμένες διορθώσεις</string>
+    <string name="dict_one_word">1 λέξη</string>
+    <string name="dict_many_words">%1$d λέξεις</string>
+    <string name="dict_one_phrase">1 φράση</string>
+    <string name="dict_many_phrases">%1$d φράσεις</string>
+    <string name="dict_state_off">\u0020· Ανενεργό</string>
+    <string name="dict_state_manual_only">\u0020· Μόνο χειροκίνητα</string>
+    <string name="dict_state_learning_only">\u0020· Μόνο εκμάθηση</string>
+
+    <string name="bubble_style_title">Στυλ Φούσκας Μετάφρασης</string>
+    <string name="bubble_style_subtitle">Προσαρμόζεται αυτόματα στο σκούρο θέμα ή κλειδώνει σταθερή παλέτα.</string>
+    <string name="bubble_preview_quote">Βρισκόμαστε στις 6;</string>
+    <string name="bubble_preview_reply">Ναι, τα λέμε έξω από τη βιβλιοθήκη.</string>
+    <string name="bubble_preview_outgoing">Τέλεια, έρχομαι τώρα.</string>
+    <string name="bubble_theme_auto">Αυτόματο</string>
+    <string name="bubble_theme_light">Φωτεινό</string>
+    <string name="bubble_theme_classic">Κλασικό</string>
+
+    <string name="dialog_reset_learning_title">Επαναφορά δεδομένων εκμάθησης;</string>
+    <string name="dialog_reset_learning_message">Όλες οι λέξεις και οι φράσεις που αποθηκεύτηκαν θα διαγραφούν από αυτή τη συσκευή.</string>
+    <string name="action_reset">Επαναφορά</string>
+    <string name="action_cancel">Ακύρωση</string>
+
+    <string name="perm_card_title">Δικαιώματα Συστήματος</string>
+    <string name="perm_accessibility_label">Υπηρεσία Προσβασιμότητας</string>
+    <string name="perm_notifications_label">Ειδοποιήσεις</string>
+    <string name="perm_restricted_hint">Περιορισμένο σε Android 13+; Πληροφορίες Εφαρμογής → ⋮ → Να επιτρέπονται οι περιορισμένες ρυθμίσεις.</string>
+    <string name="perm_privacy_note">100% στη συσκευή · Τίποτα δεν φεύγει από το τηλέφωνό σας.</string>
+    <string name="action_enable">Ενεργοποίηση</string>
+    <string name="perm_diagnostics">Διαγνωστικά</string>
+    <string name="perm_app_info">Πληροφορίες Εφαρμογής</string>
+
+    <string name="action_enable_all">Ενεργοποίηση Όλων</string>
+    <string name="apps_screen_description">Οι μεταφράσεις εμφανίζονται μόνο στις επαληθευμένες εφαρμογές παρακάτω. Ρυθμίσεις συστήματος, πληκτρολόγια και τραπεζικές εφαρμογές αγνοούνται πάντα.</string>
+    <string name="apps_verified_count">Επαληθευμένες Εφαρμογές · %1$d από %2$d ενεργές</string>
+    <string name="apps_status_installed">Εγκατεστημένη</string>
+    <string name="apps_status_not_installed">Μη εγκατεστημένη</string>
+
+    <string name="action_reset_all">Διαγραφή Όλων</string>
+    <string name="dict_apply_saved_fixes">Εφαρμογή αποθηκευμένων διορθώσεων</string>
+    <string name="dict_learn_from_edits">Εκμάθηση από τις αλλαγές μου</string>
+    <string name="dict_tab_words">Λέξεις (%1$d)</string>
+    <string name="dict_tab_phrases">Φράσεις (%1$d)</string>
+    <string name="dict_search_placeholder">Αναζήτηση στο λεξικό...</string>
+    <string name="dict_add_custom_rule">Προσθήκη κανόνα</string>
+    <string name="dict_placeholder_replace">Αντικατάσταση</string>
+    <string name="dict_placeholder_with">Με</string>
+    <string name="action_add">Προσθήκη</string>
+    <string name="dict_empty_entries">Δεν υπάρχουν καταχωρήσεις ακόμη.</string>
+    <string name="dict_no_matching_entries">Δεν βρέθηκαν αποτελέσματα.</string>
+    <string name="action_delete">Διαγραφή</string>
+
+    <string name="update_title_ready">Ενημέρωση Έτοιμη για Εγκατάσταση</string>
+    <string name="update_title_downloading">Λήψη Ενημέρωσης</string>
+    <string name="update_title_failed">Αποτυχία Ενημέρωσης</string>
+    <string name="update_title_available">Διαθέσιμη Ενημέρωση</string>
+    <string name="update_downloading_version">Άμεση λήψη έκδοσης %1$s...</string>
+    <string name="update_ready_message">Η έκδοση %1$s λήφθηκε και είναι έτοιμη για εγκατάσταση.</string>
+    <string name="update_ready_hint">Πατήστε Εγκατάσταση Τώρα για άμεση ενημέρωση.</string>
+    <string name="update_error_hint">Μπορείτε να ξαναδοκιμάσετε ή να ανοίξετε τη σελίδα έκδοσης στον browser.</string>
+    <string name="update_available_message">Η έκδοση %1$s%2$s είναι διαθέσιμη.</string>
+    <string name="update_available_question">Θέλετε λήψη και ενημέρωση μέσα από την εφαρμογή;</string>
+    <string name="download_failed_connection">Η λήψη απέτυχε. Ελέγξτε τη σύνδεσή σας.</string>
+    <string name="download_missing_file">Το ληφθέν αρχείο ενημέρωσης δεν βρέθηκε.</string>
+    <string name="action_install_now">Εγκατάσταση Τώρα</string>
+    <string name="action_retry">Επανάληψη</string>
+    <string name="action_download_install">Λήψη &amp; Εγκατάσταση</string>
+    <string name="action_open_browser">Άνοιγμα Browser</string>
+    <string name="action_later">Αργότερα</string>
+
+    <string name="crash_dialog_title">Σφάλμα Εφαρμογής</string>
+    <string name="crash_dialog_message">Η εφαρμογή αντιμετώπισε σφάλμα στην προηγούμενη συνεδρία:\n\n%1$s</string>
+    <string name="crash_log_label">Αρχείο Σφάλματος</string>
+    <string name="action_copy_log">Αντιγραφή</string>
+    <string name="action_dismiss">Παράβλεψη</string>
+    <string name="snackbar_install_permission">Επιτρέψτε άγνωστες εφαρμογές ή ανοίξτε στον browser για εγκατάσταση</string>
+    <string name="snackbar_latest_version">Έχετε ήδη την τελευταία έκδοση (v%1$s)</string>
+
+    <string name="diagnostics_title">Διαγνωστικά Σάρωσης</string>
+    <string name="action_copy">Αντιγραφή</string>
+    <string name="action_close">Κλείσιμο</string>
+
+    <string name="toast_copied_clipboard">Αντιγράφηκε στο πρόχειρο</string>
+    <string name="toast_diagnostics_copied">Τα διαγνωστικά αντιγράφηκαν</string>
+    <string name="toast_overchat_started">Το OverChat ξεκίνησε (ενεργά χειριστήρια ειδοποίησης)</string>
+    <string name="toast_translation_active">Η μετάφραση είναι ενεργή</string>
+    <string name="toast_translation_paused">Η μετάφραση τέθηκε σε παύση</string>
+    <string name="toast_overchat_stopped">Το OverChat σταμάτησε</string>
+    <string name="toast_a11y_service_off">Η Υπηρεσία Προσβασιμότητας είναι ΑΝΕΝΕΡΓΗ. Ενεργοποιήστε την στις Ρυθμίσεις.</string>
+    <string name="toast_replaced_in_chat">Αντικαταστάθηκε στη συνομιλία</string>
+    <string name="toast_copied_tap_paste">Αντιγράφηκε (πατήστε Επικόλληση στη συνομιλία)</string>
+    <string name="toast_original_restored">Το αρχικό κείμενο επαναφέρθηκε</string>
+    <string name="toast_could_not_restore_draft">Αδυναμία επαναφοράς κειμένου</string>
+    <string name="clipboard_translated_text_label">Μεταφρασμένο Κείμενο</string>
+</resources>
+

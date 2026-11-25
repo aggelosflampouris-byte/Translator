@@ -143,12 +143,18 @@ fun MainScreen(
         }
     }
 
+    val crashLogLabel = stringResource(R.string.crash_log_label)
+    val copiedClipboardMsg = stringResource(R.string.toast_copied_clipboard)
     uiState.crashLog?.let { currentCrashLog ->
         CrashReportDialog(
             crashLog = currentCrashLog,
             onCopyLog = {
-                ClipboardHelper.copySensitiveText(context, "Crash Log", currentCrashLog)
-                Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+                ClipboardHelper.copySensitiveText(
+                    context,
+                    crashLogLabel,
+                    currentCrashLog
+                )
+                Toast.makeText(context, copiedClipboardMsg, Toast.LENGTH_SHORT).show()
             },
             onDismiss = viewModel::dismissCrashLog
         )
@@ -365,7 +371,11 @@ private fun MainScreenHeader(
                     .clickable(onClick = onCheckUpdates)
             ) {
                 Text(
-                    text = if (isCheckingForUpdate) "Checking..." else "v${BuildConfig.VERSION_NAME}",
+                    text = if (isCheckingForUpdate) {
+                        stringResource(R.string.action_checking_short)
+                    } else {
+                        "v${BuildConfig.VERSION_NAME}"
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)

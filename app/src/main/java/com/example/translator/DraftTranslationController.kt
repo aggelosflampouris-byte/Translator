@@ -786,25 +786,36 @@ class DraftTranslationController(
                             dismissUndoBanner()
                         }
                     } else {
+                        val locCtx = AppLocaleManager.localizedContext(service)
                         postToMain(null) {
                             overlayManager.removeDraftOverlay()
-                            Toast.makeText(service, "Replaced in chat", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(service, locCtx.getString(R.string.toast_replaced_in_chat), Toast.LENGTH_SHORT).show()
                         }
                     }
                 } else {
                     lastInsertedText = null
                     lastReplacedOriginalText = null
+                    val locCtx = AppLocaleManager.localizedContext(service)
                     withContext(Dispatchers.Main) {
-                        ClipboardHelper.copySensitiveText(service, "Translated Text", text)
+                        ClipboardHelper.copySensitiveText(
+                            service,
+                            locCtx.getString(R.string.clipboard_translated_text_label),
+                            text
+                        )
                         overlayManager.removeDraftOverlay()
-                        Toast.makeText(service, "Copied to clipboard (Tap Paste in chat)", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(service, locCtx.getString(R.string.toast_copied_tap_paste), Toast.LENGTH_SHORT).show()
                     }
                 }
             } else {
+                val locCtx = AppLocaleManager.localizedContext(service)
                 withContext(Dispatchers.Main) {
-                    ClipboardHelper.copySensitiveText(service, "Translated Text", text)
+                    ClipboardHelper.copySensitiveText(
+                        service,
+                        locCtx.getString(R.string.clipboard_translated_text_label),
+                        text
+                    )
                     overlayManager.removeDraftOverlay()
-                    Toast.makeText(service, "Copied to clipboard (Tap Paste in chat)", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(service, locCtx.getString(R.string.toast_copied_tap_paste), Toast.LENGTH_SHORT).show()
                 }
             }
         } catch (e: Exception) {
@@ -823,8 +834,13 @@ class DraftTranslationController(
         }
         val directSuccess = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
         val pastedSuccess = if (!directSuccess) {
+            val locCtx = AppLocaleManager.localizedContext(service)
             withContext(Dispatchers.Main) {
-                ClipboardHelper.copySensitiveText(service, "Translated Text", text)
+                ClipboardHelper.copySensitiveText(
+                    service,
+                    locCtx.getString(R.string.clipboard_translated_text_label),
+                    text
+                )
             }
             val allRange = Bundle().apply {
                 val existingLen = node.text?.length ?: 0
@@ -872,9 +888,12 @@ class DraftTranslationController(
         lastRenderedDraftSource = original
         val node = findCurrentEditableNode() ?: fallbackNode
         val restored = if (node != null) applyTextToEditableNode(node, original) else false
+        val locCtx = AppLocaleManager.localizedContext(service)
         postToMain(null) {
             overlayManager.removeDraftOverlay()
-            val message = if (restored) "Original text restored" else "Could not restore draft"
+            val message = locCtx.getString(
+                if (restored) R.string.toast_original_restored else R.string.toast_could_not_restore_draft
+            )
             Toast.makeText(service, message, Toast.LENGTH_SHORT).show()
         }
     }

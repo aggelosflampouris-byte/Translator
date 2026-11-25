@@ -9,8 +9,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -18,15 +20,19 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,11 +44,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.translator.AppDefaults
+import com.example.translator.AppLocaleManager
 import com.example.translator.BuildConfig
 import com.example.translator.R
 import com.example.translator.ui.components.OverChatSectionCard
@@ -63,6 +71,7 @@ fun SettingsScreen(
     val prefs by viewModel.preferences.collectAsStateWithLifecycle()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var showDiagnosticsDialog by remember { mutableStateOf(false) }
+    var showAppLanguageSheet by remember { mutableStateOf(false) }
 
     MainUiEventsAndUpdateHost(
         viewModel = viewModel,
@@ -70,6 +79,7 @@ fun SettingsScreen(
         snackbarHostState = snackbarHostState
     )
 
+    val diagnosticsCopiedToast = stringResource(R.string.toast_diagnostics_copied)
     if (showDiagnosticsDialog) {
         ScanDiagnosticsDialog(
             sourceLanguage = prefs.sourceLanguage,
@@ -77,9 +87,20 @@ fun SettingsScreen(
             enabledPackages = prefs.enabledPackages,
             onCopied = {
                 showDiagnosticsDialog = false
-                Toast.makeText(context, "Diagnostics copied", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, diagnosticsCopiedToast, Toast.LENGTH_SHORT).show()
             },
             onDismiss = { showDiagnosticsDialog = false }
+        )
+    }
+
+    if (showAppLanguageSheet) {
+        AppLanguagePickerSheet(
+            selectedTag = prefs.appLanguage,
+            onSelected = { chosen ->
+                showAppLanguageSheet = false
+                viewModel.setAppLanguage(context, chosen)
+            },
+            onDismiss = { showAppLanguageSheet = false }
         )
     }
 
@@ -103,7 +124,19 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OverChatSectionLabel(text = "Appearance")
+                OverChatSectionLabel(text = stringResource(R.string.section_language))
+                OverChatSectionCard {
+                    val systemLabel = stringResource(R.string.app_language_system_default)
+                    SettingsActionRow(
+                        title = stringResource(R.string.settings_app_language_title),
+                        subtitle = AppLocaleManager.nativeLanguageLabel(prefs.appLanguage, systemLabel),
+                        onClick = { showAppLanguageSheet = true }
+                    )
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OverChatSectionLabel(text = stringResource(R.string.section_appearance))
                 BubbleThemeCard(
                     overlayTheme = prefs.overlayTheme,
                     settingsEnabled = true,
@@ -113,7 +146,7 @@ fun SettingsScreen(
 
             if (uiState.isSystemTranslatorAvailable) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OverChatSectionLabel(text = "Engine")
+                    OverChatSectionLabel(text = stringResource(R.string.section_engine))
                     OverChatSectionCard {
                         SettingsSwitchRow(
                             title = stringResource(R.string.settings_system_translator_switch),
@@ -126,11 +159,11 @@ fun SettingsScreen(
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OverChatSectionLabel(text = "Battery & Updates")
+                OverChatSectionLabel(text = stringResource(R.string.section_battery_updates))
                 OverChatSectionCard {
                     SettingsSwitchRow(
-                        title = "Idle Auto-Pause (${AppDefaults.DEFAULT_IDLE_AUTO_PAUSE_MINUTES}m)",
-                        subtitle = "Pauses automatically when idle away from chat apps.",
+                        title = stringResource(R.string.settings_idle_pause_title, AppDefaults.DEFAULT_IDLE_AUTO_PAUSE_MINUTES),
+                        subtitle = stringResource(R.string.settings_idle_pause_subtitle),
                         checked = prefs.idleAutoPauseMinutes > 0,
                         onCheckedChange = viewModel::setIdleAutoPauseEnabled
                     )
@@ -142,8 +175,8 @@ fun SettingsScreen(
                     )
 
                     SettingsSwitchRow(
-                        title = "Auto-Check Updates",
-                        subtitle = "Checks GitHub releases when app opens.",
+                        title = stringResource(R.string.settings_auto_updates_title),
+                        subtitle = stringResource(R.string.settings_auto_updates_subtitle),
                         checked = prefs.autoCheckUpdates,
                         onCheckedChange = viewModel::setAutoCheckUpdates
                     )
@@ -161,12 +194,12 @@ fun SettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Check for Updates",
+                                text = stringResource(R.string.settings_check_updates_title),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                text = "Installed version v${BuildConfig.VERSION_NAME}",
+                                text = stringResource(R.string.settings_installed_version, BuildConfig.VERSION_NAME),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
@@ -178,18 +211,22 @@ fun SettingsScreen(
                             enabled = !uiState.isCheckingForUpdate,
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                         ) {
-                            Text(if (uiState.isCheckingForUpdate) "Checking..." else "Check Now")
+                            Text(
+                                stringResource(
+                                    if (uiState.isCheckingForUpdate) R.string.action_checking_short else R.string.action_check_now
+                                )
+                            )
                         }
                     }
                 }
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OverChatSectionLabel(text = "Troubleshooting")
+                OverChatSectionLabel(text = stringResource(R.string.section_troubleshooting))
                 OverChatSectionCard {
                     SettingsActionRow(
                         title = stringResource(R.string.perm_app_info),
-                        subtitle = "Open Android permissions and battery settings.",
+                        subtitle = stringResource(R.string.settings_app_info_subtitle),
                         onClick = {
                             val intent = Intent(
                                 Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
@@ -207,9 +244,104 @@ fun SettingsScreen(
 
                     SettingsActionRow(
                         title = stringResource(R.string.perm_diagnostics),
-                        subtitle = "Copy live detection logs and status snapshot.",
+                        subtitle = stringResource(R.string.settings_diagnostics_subtitle),
                         onClick = { showDiagnosticsDialog = true }
                     )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AppLanguagePickerSheet(
+    selectedTag: String,
+    onSelected: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val systemDefaultLabel = stringResource(R.string.app_language_system_default)
+    val subtitleHint = stringResource(R.string.settings_app_language_subtitle)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 20.dp)
+        ) {
+            Text(
+                text = stringResource(R.string.app_language_picker_title),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = subtitleHint,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            AppDefaults.AVAILABLE_APP_LANGUAGES.forEachIndexed { index, tag ->
+                val isSelected = AppLocaleManager.normalizeLanguageTag(selectedTag) == tag
+                val label = AppLocaleManager.nativeLanguageLabel(tag, systemDefaultLabel)
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { onSelected(tag) },
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium
+                                ),
+                                color = if (isSelected) {
+                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                }
+                            )
+                            Text(
+                                text = tag.uppercase(),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (isSelected) {
+                                    MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                }
+                            )
+                        }
+                        if (isSelected) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_check),
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+                if (index < AppDefaults.AVAILABLE_APP_LANGUAGES.lastIndex) {
+                    Spacer(modifier = Modifier.height(4.dp))
                 }
             }
         }

@@ -20,8 +20,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.example.translator.AppUpdater
+import com.example.translator.R
 import java.io.File
 import java.util.Locale
 
@@ -51,12 +53,14 @@ fun AppUpdateDialog(
         },
         title = {
             Text(
-                text = when {
-                    downloadedApkFile != null -> "Update Ready to Install"
-                    isDownloading -> "Downloading Update"
-                    downloadErrorMessage != null -> "Update Failed"
-                    else -> "Update Available"
-                }
+                text = stringResource(
+                    when {
+                        downloadedApkFile != null -> R.string.update_title_ready
+                        isDownloading -> R.string.update_title_downloading
+                        downloadErrorMessage != null -> R.string.update_title_failed
+                        else -> R.string.update_title_available
+                    }
+                )
             )
         },
         text = {
@@ -64,7 +68,7 @@ fun AppUpdateDialog(
                 when {
                     isDownloading -> {
                         Text(
-                            text = "Downloading ${info.version} directly...",
+                            text = stringResource(R.string.update_downloading_version, info.version),
                             style = MaterialTheme.typography.bodyMedium
                         )
                         Spacer(modifier = Modifier.height(12.dp))
@@ -81,12 +85,12 @@ fun AppUpdateDialog(
                     }
                     downloadedApkFile != null -> {
                         Text(
-                            text = "Version ${info.version} has been downloaded and is ready to install.",
+                            text = stringResource(R.string.update_ready_message, info.version),
                             style = MaterialTheme.typography.bodyMedium
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "Tap Install to apply the update immediately.",
+                            text = stringResource(R.string.update_ready_hint),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -99,7 +103,7 @@ fun AppUpdateDialog(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "You can retry downloading or open the release page in your browser.",
+                            text = stringResource(R.string.update_error_hint),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -111,12 +115,12 @@ fun AppUpdateDialog(
                             ""
                         }
                         Text(
-                            text = "Version ${info.version}$sizeFormatted is available.",
+                            text = stringResource(R.string.update_available_message, info.version, sizeFormatted),
                             style = MaterialTheme.typography.bodyMedium
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "Download and update directly within the app?",
+                            text = stringResource(R.string.update_available_question),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -131,12 +135,16 @@ fun AppUpdateDialog(
                 }
                 downloadedApkFile != null -> {
                     Button(onClick = { onInstall(downloadedApkFile) }) {
-                        Text("Install Now")
+                        Text(stringResource(R.string.action_install_now))
                     }
                 }
                 else -> {
                     Button(onClick = onDownloadOrRetry) {
-                        Text(if (downloadErrorMessage != null) "Retry" else "Download & Install")
+                        Text(
+                            stringResource(
+                                if (downloadErrorMessage != null) R.string.action_retry else R.string.action_download_install
+                            )
+                        )
                     }
                 }
             }
@@ -144,17 +152,17 @@ fun AppUpdateDialog(
         dismissButton = {
             if (isDownloading) {
                 TextButton(onClick = onCancelDownload) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.action_cancel))
                 }
             } else {
                 Row {
                     if (downloadErrorMessage != null) {
                         TextButton(onClick = onOpenBrowser) {
-                            Text("Open Browser")
+                            Text(stringResource(R.string.action_open_browser))
                         }
                     }
                     TextButton(onClick = onDismiss) {
-                        Text("Later")
+                        Text(stringResource(R.string.action_later))
                     }
                 }
             }
@@ -173,12 +181,12 @@ fun CrashReportDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("App Crashed") },
+        title = { Text(stringResource(R.string.crash_dialog_title)) },
         text = {
             LazyColumn {
                 item {
                     Text(
-                        text = "The app encountered an error in the previous session:\n\n$crashLog",
+                        text = stringResource(R.string.crash_dialog_message, crashLog),
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -186,12 +194,12 @@ fun CrashReportDialog(
         },
         confirmButton = {
             TextButton(onClick = onCopyLog) {
-                Text("Copy Log")
+                Text(stringResource(R.string.action_copy_log))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Dismiss")
+                Text(stringResource(R.string.action_dismiss))
             }
         }
     )
@@ -210,6 +218,8 @@ fun MainUiEventsAndUpdateHost(
     snackbarHostState: SnackbarHostState
 ) {
     val context = LocalContext.current
+    val installPermissionMessage = stringResource(R.string.snackbar_install_permission)
+    val openBrowserLabel = stringResource(R.string.action_open_browser)
 
     LaunchedEffect(viewModel) {
         viewModel.events.collect { event ->
@@ -222,8 +232,8 @@ fun MainUiEventsAndUpdateHost(
                 }
                 is MainUiEvent.ShowInstallPermissionSnackbar -> {
                     val result = snackbarHostState.showSnackbar(
-                        message = "Allow unknown apps or open in browser to install update",
-                        actionLabel = if (event.htmlUrl != null) "Open Browser" else null,
+                        message = installPermissionMessage,
+                        actionLabel = if (event.htmlUrl != null) openBrowserLabel else null,
                         duration = SnackbarDuration.Long
                     )
                     if (result == SnackbarResult.ActionPerformed) {

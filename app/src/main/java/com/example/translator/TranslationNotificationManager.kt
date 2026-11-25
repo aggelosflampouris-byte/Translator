@@ -25,8 +25,9 @@ object TranslationNotificationManager {
 
     fun createNotificationChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val name = "OverChat Translation Controls"
-            val descriptionText = "Controles rápidos para traducir mensajes en tus apps de chat"
+            val locCtx = AppLocaleManager.localizedContext(context)
+            val name = locCtx.getString(R.string.notif_channel_name)
+            val descriptionText = locCtx.getString(R.string.notif_channel_description)
             val importance = NotificationManager.IMPORTANCE_LOW
             val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
                 description = descriptionText
@@ -72,14 +73,16 @@ object TranslationNotificationManager {
     }
 
     fun showNotification(context: Context, isTranslating: Boolean = ServiceBridge.isTranslatingActive) {
-        createNotificationChannel(context)
+        val locCtx = AppLocaleManager.localizedContext(context)
+        val displayLocale = AppLocaleManager.currentDisplayLocale(context)
+        createNotificationChannel(locCtx)
 
         val prefs = context.getSharedPreferences(AppDefaults.PREFS_NAME, Context.MODE_PRIVATE)
         val src = prefs.getString(AppDefaults.KEY_SOURCE_LANGUAGE, AppDefaults.SOURCE_LANGUAGE) ?: AppDefaults.SOURCE_LANGUAGE
         val tgt = prefs.getString(AppDefaults.KEY_TARGET_LANGUAGE, AppDefaults.TARGET_LANGUAGE) ?: AppDefaults.TARGET_LANGUAGE
 
-        val srcCode = AppDefaults.formatLanguageDisplayName(src)
-        val tgtCode = AppDefaults.formatLanguageDisplayName(tgt)
+        val srcCode = AppDefaults.formatLanguageDisplayName(src, displayLocale)
+        val tgtCode = AppDefaults.formatLanguageDisplayName(tgt, displayLocale)
 
         // Intent al tocar la notificación (abre MainActivity)
         val openAppIntent = Intent(context, MainActivity::class.java).apply {
@@ -129,14 +132,14 @@ object TranslationNotificationManager {
             isTranslating = isTranslating,
             srcName = srcCode,
             tgtName = tgtCode,
-            activeTitle = context.getString(R.string.notif_title_auto_active),
-            pausedTitle = context.getString(R.string.notif_title_paused),
-            subtitle = context.getString(R.string.notif_subtitle_pair, srcCode, tgtCode),
-            switchActionLabel = context.getString(R.string.notif_action_switch_languages),
-            pauseLabel = context.getString(R.string.notif_action_pause),
-            resumeLabel = context.getString(R.string.notif_action_resume),
-            activeHint = context.getString(R.string.notif_hint_auto),
-            pausedHint = context.getString(R.string.notif_hint_paused)
+            activeTitle = locCtx.getString(R.string.notif_title_auto_active),
+            pausedTitle = locCtx.getString(R.string.notif_title_paused),
+            subtitle = locCtx.getString(R.string.notif_subtitle_pair, srcCode, tgtCode),
+            switchActionLabel = locCtx.getString(R.string.notif_action_switch_languages),
+            pauseLabel = locCtx.getString(R.string.notif_action_pause),
+            resumeLabel = locCtx.getString(R.string.notif_action_resume),
+            activeHint = locCtx.getString(R.string.notif_hint_auto),
+            pausedHint = locCtx.getString(R.string.notif_hint_paused)
         )
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
@@ -154,7 +157,7 @@ object TranslationNotificationManager {
             .addAction(R.drawable.ic_translate_sphere, copy.toggleActionLabel, togglePendingIntent)
             .addAction(
                 R.drawable.ic_translate_sphere,
-                context.getString(R.string.notif_action_stop),
+                locCtx.getString(R.string.notif_action_stop),
                 stopPendingIntent
             )
             .setStyle(

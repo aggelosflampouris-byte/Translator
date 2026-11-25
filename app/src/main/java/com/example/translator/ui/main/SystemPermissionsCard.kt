@@ -49,7 +49,7 @@ fun SystemPermissionsCard(
     onOpenAppInfo: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        OverChatSectionLabel(text = "Setup Required")
+        OverChatSectionLabel(text = stringResource(R.string.section_setup_required))
 
         OverChatSectionCard(
             borderColor = if (allPermissionsGranted) {
@@ -74,7 +74,7 @@ fun SystemPermissionsCard(
                         color = MaterialTheme.colorScheme.primaryContainer
                     ) {
                         Text(
-                            text = "Ready",
+                            text = stringResource(R.string.status_ready),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
@@ -113,7 +113,7 @@ fun SystemPermissionsCard(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "Android 13+ restricted? Open App Info → ⋮ → Allow restricted settings.",
+                            text = stringResource(R.string.perm_restricted_hint),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.weight(1f)
@@ -130,7 +130,7 @@ fun SystemPermissionsCard(
 
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "100% on-device · Nothing leaves your phone.",
+                    text = stringResource(R.string.perm_privacy_note),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -197,7 +197,7 @@ private fun PermissionStatusRow(
                 shape = RoundedCornerShape(10.dp),
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
             ) {
-                Text("Enable", style = MaterialTheme.typography.labelMedium)
+                Text(stringResource(R.string.action_enable), style = MaterialTheme.typography.labelMedium)
             }
         }
     }

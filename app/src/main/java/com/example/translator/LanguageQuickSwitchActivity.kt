@@ -1,5 +1,6 @@
 package com.example.translator
 
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -44,6 +45,10 @@ import com.example.translator.ui.main.LanguageDropdown
 class LanguageQuickSwitchActivity : ComponentActivity() {
 
     private lateinit var preferencesRepository: TranslatorPreferencesRepository
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLocaleManager.wrapContext(newBase))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -157,7 +162,7 @@ private fun QuickLanguageSwitchDialogCard(
                 ) {
                     Box(modifier = Modifier.weight(1f)) {
                         LanguageDropdown(
-                            label = "From",
+                            label = stringResource(R.string.label_from),
                             selectedCode = sourceLanguage,
                             options = AppDefaults.AVAILABLE_LANGUAGES,
                             onSelected = onSourceSelected
@@ -177,7 +182,7 @@ private fun QuickLanguageSwitchDialogCard(
 
                     Box(modifier = Modifier.weight(1f)) {
                         LanguageDropdown(
-                            label = "To",
+                            label = stringResource(R.string.label_to),
                             selectedCode = targetLanguage,
                             options = AppDefaults.AVAILABLE_LANGUAGES,
                             onSelected = onTargetSelected
@@ -196,14 +201,14 @@ private fun QuickLanguageSwitchDialogCard(
                         shape = RoundedCornerShape(12.dp),
                         onClick = onSwapLanguages
                     ) {
-                        Text("⇄ Swap")
+                        Text(stringResource(R.string.action_swap_arrow))
                     }
                     Button(
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(12.dp),
                         onClick = onDismiss
                     ) {
-                        Text("Done")
+                        Text(stringResource(R.string.action_done))
                     }
                 }
             }

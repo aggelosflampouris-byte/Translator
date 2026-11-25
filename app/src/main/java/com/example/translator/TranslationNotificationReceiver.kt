@@ -15,19 +15,22 @@ class TranslationNotificationReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent?) {
         val action = intent?.action ?: return
+        val locCtx = AppLocaleManager.localizedContext(context)
 
         when (action) {
             TranslationNotificationManager.ACTION_TOGGLE -> {
                 val newState = !ServiceBridge.isTranslatingActive
                 if (newState && !ServiceBridge.isAccessibilityActive) {
-                    Toast.makeText(context, "Accessibility Service is OFF. Toggle it ON in Settings.", Toast.LENGTH_LONG).show()
+                    Toast.makeText(locCtx, locCtx.getString(R.string.toast_a11y_service_off), Toast.LENGTH_LONG).show()
                     return
                 }
                 ServiceBridge.isTranslatingActive = newState
                 ServiceBridge.onTranslationStateChanged?.invoke(newState)
                 TranslationNotificationManager.showNotification(context, isTranslating = newState)
-                val msg = if (newState) "Translation Active" else "Translation Paused"
-                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                val msg = locCtx.getString(
+                    if (newState) R.string.toast_translation_active else R.string.toast_translation_paused
+                )
+                Toast.makeText(locCtx, msg, Toast.LENGTH_SHORT).show()
             }
 
             TranslationNotificationManager.ACTION_STOP -> {
@@ -35,7 +38,7 @@ class TranslationNotificationReceiver : BroadcastReceiver() {
                 ServiceBridge.onTranslationStateChanged?.invoke(false)
                 TranslationNotificationManager.cancelNotification(context)
                 ServiceBridge.notifyUiStateChanged()
-                Toast.makeText(context, "OverChat Stopped", Toast.LENGTH_SHORT).show()
+                Toast.makeText(locCtx, locCtx.getString(R.string.toast_overchat_stopped), Toast.LENGTH_SHORT).show()
             }
         }
     }

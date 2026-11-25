@@ -44,9 +44,22 @@ object AppDefaults {
     const val OVERLAY_THEME_WHATSAPP = "WHATSAPP"
     const val OVERLAY_THEME_LIGHT = "LIGHT"
 
-    fun formatLanguageDisplayName(code: String): String {
-        return java.util.Locale.forLanguageTag(code).displayLanguage.replaceFirstChar {
-            if (it.isLowerCase()) it.titlecase(java.util.Locale.getDefault()) else it.toString()
+    // Por qué: Permite seleccionar inglés, griego o rumano para la interfaz interna de la app o seguir el idioma del sistema.
+    const val KEY_APP_LANGUAGE = "app_language"
+    const val APP_LANGUAGE_SYSTEM = "system"
+    val AVAILABLE_APP_LANGUAGES = listOf(
+        APP_LANGUAGE_SYSTEM,
+        TranslateLanguage.ENGLISH,
+        TranslateLanguage.GREEK,
+        TranslateLanguage.ROMANIAN
+    )
+
+    fun formatLanguageDisplayName(
+        code: String,
+        displayLocale: java.util.Locale = java.util.Locale.getDefault()
+    ): String {
+        return java.util.Locale.forLanguageTag(code).getDisplayLanguage(displayLocale).replaceFirstChar {
+            if (it.isLowerCase()) it.titlecase(displayLocale) else it.toString()
         }
     }
 }

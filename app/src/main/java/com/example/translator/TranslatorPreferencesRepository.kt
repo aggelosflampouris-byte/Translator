@@ -19,7 +19,8 @@ data class TranslatorPreferences(
     val idleAutoPauseMinutes: Int = AppDefaults.DEFAULT_IDLE_AUTO_PAUSE_MINUTES,
     val enabledPackages: Set<String> = emptySet(),
     val overlayTheme: String = AppDefaults.OVERLAY_THEME_AUTO,
-    val preferSystemTranslator: Boolean = false
+    val preferSystemTranslator: Boolean = false,
+    val appLanguage: String = AppDefaults.APP_LANGUAGE_SYSTEM
 )
 
 /**
@@ -101,6 +102,11 @@ class TranslatorPreferencesRepository(private val appContext: Context) {
         prefs.edit().putBoolean(AppDefaults.KEY_PREFER_SYSTEM_TRANSLATOR, enabled).apply()
     }
 
+    fun setAppLanguage(languageTag: String) {
+        val normalized = AppLocaleManager.normalizeLanguageTag(languageTag)
+        prefs.edit().putString(AppDefaults.KEY_APP_LANGUAGE, normalized).apply()
+    }
+
     fun close() {
         prefs.unregisterOnSharedPreferenceChangeListener(listener)
     }
@@ -125,7 +131,8 @@ class TranslatorPreferencesRepository(private val appContext: Context) {
             enabledPackages = TargetAppCatalog.getEnabledPackages(prefs, appContext.packageName),
             overlayTheme = prefs.getString(AppDefaults.KEY_OVERLAY_THEME, AppDefaults.OVERLAY_THEME_AUTO)
                 ?: AppDefaults.OVERLAY_THEME_AUTO,
-            preferSystemTranslator = prefs.getBoolean(AppDefaults.KEY_PREFER_SYSTEM_TRANSLATOR, false)
+            preferSystemTranslator = prefs.getBoolean(AppDefaults.KEY_PREFER_SYSTEM_TRANSLATOR, false),
+            appLanguage = AppLocaleManager.getSavedLanguageTag(appContext)
         )
     }
 

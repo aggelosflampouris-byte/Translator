@@ -1145,13 +1145,14 @@ class OverlayManager(private val context: Context) {
         val badgeView = view.findViewById<TextView>(R.id.draft_badge)
         val replaceBtn = view.findViewById<TextView>(R.id.draft_action_replace)
 
+        val locCtx = AppLocaleManager.localizedContext(context)
         textView.text = text
         badgeView.text = if (!sourceLangCode.isNullOrBlank()) {
             "$sourceLangCode → $targetLangCode"
         } else {
             "⇄ $targetLangCode"
         }
-        replaceBtn.setText(R.string.draft_action_replace)
+        replaceBtn.text = locCtx.getString(R.string.draft_action_replace)
         replaceBtn.visibility = if (showReplace) View.VISIBLE else View.GONE
 
         if (showReplace) {
@@ -1407,11 +1408,12 @@ class OverlayManager(private val context: Context) {
             val textView = view.findViewById<TextView>(R.id.draft_text)
             val badgeView = view.findViewById<TextView>(R.id.draft_badge)
             val actionBtn = view.findViewById<TextView>(R.id.draft_action_replace)
+            val locCtx = AppLocaleManager.localizedContext(context)
 
-            badgeView.setText(R.string.draft_undo_applied_badge)
+            badgeView.text = locCtx.getString(R.string.draft_undo_applied_badge)
             badgeView.setOnClickListener(null)
-            textView.setText(R.string.draft_undo_caption)
-            actionBtn.setText(R.string.draft_action_undo)
+            textView.text = locCtx.getString(R.string.draft_undo_caption)
+            actionBtn.text = locCtx.getString(R.string.draft_action_undo)
             actionBtn.visibility = View.VISIBLE
 
             view.findViewById<View>(R.id.draft_container).setOnClickListener { onUndoClicked() }

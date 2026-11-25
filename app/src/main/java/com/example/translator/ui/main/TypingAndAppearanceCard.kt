@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.translator.AppDefaults
@@ -53,37 +54,44 @@ fun ControlsAndAppsCard(
             .filter { profile -> profile.packageNames.any { it in enabledPackages } }
             .map { it.displayName }
     }
-    val enabledAppsSummary = remember(activeCuratedNames) {
+    val noAppsSelectedLabel = stringResource(R.string.summary_no_apps_selected)
+    val enabledAppsSummary = remember(activeCuratedNames, noAppsSelectedLabel) {
         if (activeCuratedNames.isEmpty()) {
-            "No apps selected — tap to choose"
+            noAppsSelectedLabel
         } else {
             activeCuratedNames.joinToString(", ")
         }
     }
-    val dictionarySummary = remember(learningStats, glossaryEnabled, learningEnabled) {
-        val totalSaved = learningStats.first + learningStats.second
-        val countText = if (totalSaved == 0) {
-            "No saved fixes yet"
+    val totalSaved = learningStats.first + learningStats.second
+    val countText = if (totalSaved == 0) {
+        stringResource(R.string.dict_no_saved_fixes)
+    } else {
+        val wordLabel = if (learningStats.first == 1) {
+            stringResource(R.string.dict_one_word)
         } else {
-            val wordLabel = if (learningStats.first == 1) "1 word" else "${learningStats.first} words"
-            val phraseLabel = if (learningStats.second == 1) "1 phrase" else "${learningStats.second} phrases"
-            "$wordLabel · $phraseLabel"
+            stringResource(R.string.dict_many_words, learningStats.first)
         }
-        val stateSuffix = when {
-            glossaryEnabled && learningEnabled -> ""
-            !glossaryEnabled && !learningEnabled -> " · Off"
-            glossaryEnabled -> " · Manual only"
-            else -> " · Learning only"
+        val phraseLabel = if (learningStats.second == 1) {
+            stringResource(R.string.dict_one_phrase)
+        } else {
+            stringResource(R.string.dict_many_phrases, learningStats.second)
         }
-        "$countText$stateSuffix"
+        "$wordLabel · $phraseLabel"
     }
+    val stateSuffix = when {
+        glossaryEnabled && learningEnabled -> ""
+        !glossaryEnabled && !learningEnabled -> stringResource(R.string.dict_state_off)
+        glossaryEnabled -> stringResource(R.string.dict_state_manual_only)
+        else -> stringResource(R.string.dict_state_learning_only)
+    }
+    val dictionarySummary = "$countText$stateSuffix"
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        OverChatSectionLabel(text = "Apps & Dictionary")
+        OverChatSectionLabel(text = stringResource(R.string.section_apps_dictionary))
 
         OverChatSectionCard {
             NavigationSummaryRow(
-                title = "Supported Apps",
+                title = stringResource(R.string.title_supported_apps),
                 subtitle = enabledAppsSummary,
                 enabled = settingsEnabled,
                 onClick = onManageApps
@@ -96,7 +104,7 @@ fun ControlsAndAppsCard(
             )
 
             NavigationSummaryRow(
-                title = "Personal Dictionary",
+                title = stringResource(R.string.title_personal_dictionary),
                 subtitle = dictionarySummary,
                 enabled = settingsEnabled,
                 onClick = onOpenDictionary
@@ -173,13 +181,13 @@ fun BubbleThemeCard(
 
     OverChatSectionCard {
         Text(
-            text = "Overlay Bubble Style",
+            text = stringResource(R.string.bubble_style_title),
             style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.onSurface
         )
         Spacer(modifier = Modifier.height(3.dp))
         Text(
-            text = "Matches dark mode automatically or locks a fixed bubble palette.",
+            text = stringResource(R.string.bubble_style_subtitle),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -208,7 +216,7 @@ fun BubbleThemeCard(
                             color = quotedBg
                         ) {
                             Text(
-                                text = "Do we meet at 6?",
+                                text = stringResource(R.string.bubble_preview_quote),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = quotedInk,
                                 modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
@@ -216,7 +224,7 @@ fun BubbleThemeCard(
                         }
                         Spacer(modifier = Modifier.height(5.dp))
                         Text(
-                            text = "Yes, see you outside the library.",
+                            text = stringResource(R.string.bubble_preview_reply),
                             style = MaterialTheme.typography.bodySmall,
                             color = bubbleInk
                         )
@@ -233,7 +241,7 @@ fun BubbleThemeCard(
                         border = BorderStroke(0.75.dp, outgoingBorder)
                     ) {
                         Text(
-                            text = "Perfect, on my way now.",
+                            text = stringResource(R.string.bubble_preview_outgoing),
                             style = MaterialTheme.typography.bodySmall,
                             color = bubbleInk,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
@@ -246,9 +254,9 @@ fun BubbleThemeCard(
         Spacer(modifier = Modifier.height(12.dp))
         OverChatSegmentedControl(
             options = listOf(
-                AppDefaults.OVERLAY_THEME_AUTO to "Auto",
-                AppDefaults.OVERLAY_THEME_LIGHT to "Light",
-                AppDefaults.OVERLAY_THEME_WHATSAPP to "Classic"
+                AppDefaults.OVERLAY_THEME_AUTO to stringResource(R.string.bubble_theme_auto),
+                AppDefaults.OVERLAY_THEME_LIGHT to stringResource(R.string.bubble_theme_light),
+                AppDefaults.OVERLAY_THEME_WHATSAPP to stringResource(R.string.bubble_theme_classic)
             ),
             selectedValue = overlayTheme,
             enabled = settingsEnabled,
@@ -267,16 +275,16 @@ fun ResetLearningDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Reset learned data?") },
-        text = { Text("All learned words and remembered phrases will be deleted from this phone.") },
+        title = { Text(stringResource(R.string.dialog_reset_learning_title)) },
+        text = { Text(stringResource(R.string.dialog_reset_learning_message)) },
         confirmButton = {
             TextButton(onClick = onConfirm) {
-                Text("Reset", color = MaterialTheme.colorScheme.error)
+                Text(stringResource(R.string.action_reset), color = MaterialTheme.colorScheme.error)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(stringResource(R.string.action_cancel))
             }
         }
     )

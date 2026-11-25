@@ -1,0 +1,182 @@
+<resources>
+    <string name="app_subtitle">Traducător de Conversații în Timp Real</string>
+    <string name="accessibility_service_description">Citește textul de pe ecran în aplicațiile de chat activate pentru a afișa traduceri suprapuse în timp real.</string>
+
+    <string name="status_active">Activ</string>
+    <string name="status_translating">Traduce</string>
+    <string name="status_paused">În pauză</string>
+    <string name="status_required">Necesar</string>
+    <string name="status_ready">Pregătit</string>
+    <string name="status_connecting">Se conectează...</string>
+    <string name="action_checking_short">Se verifică...</string>
+    <string name="action_grant_permissions">Acordă Permisiunile Necesare de Mai Sus</string>
+    <string name="action_stop_service">Oprește OverChat</string>
+    <string name="action_pause">Pauză</string>
+    <string name="action_resume">Reluare</string>
+    <string name="action_start_translation">Pornește Traducerea</string>
+
+    <string name="notif_channel_name">Controale Traducere OverChat</string>
+    <string name="notif_channel_description">Controale rapide pentru traducerea mesajelor în aplicațiile de chat.</string>
+    <string name="notif_title_auto_active">OverChat Activ</string>
+    <string name="notif_title_paused">OverChat în Pauză</string>
+    <string name="notif_subtitle_pair">%1$s în %2$s</string>
+    <string name="notif_action_switch_languages">Schimbă Limba</string>
+    <string name="notif_action_pause">Pauză</string>
+    <string name="notif_action_resume">Reluare</string>
+    <string name="notif_action_stop">Oprire</string>
+    <string name="notif_hint_auto">Traduce automat conversațiile vizibile pe ecran.</string>
+    <string name="notif_hint_paused">Traducerea este în pauză. Apasă Reluare pentru a continua.</string>
+    <string name="quick_switch_title">Schimbă Limbile</string>
+    <string name="quick_switch_subtitle">Se aplică imediat traducerilor active din chat.</string>
+
+    <string name="section_translation">Traducere</string>
+    <string name="section_apps_dictionary">Aplicații și Dicționar</string>
+    <string name="section_setup_required">Configurare Necesară</string>
+    <string name="section_language">Limbă</string>
+    <string name="section_appearance">Aspect</string>
+    <string name="section_engine">Motor de Traducere</string>
+    <string name="section_battery_updates">Baterie și Actualizări</string>
+    <string name="section_troubleshooting">Depanare</string>
+
+    <string name="settings_title">Setări</string>
+    <string name="settings_app_language_title">Limba Aplicației</string>
+    <string name="settings_app_language_subtitle">Alege limba pentru meniurile și notificările OverChat.</string>
+    <string name="app_language_picker_title">Alege Limba Aplicației</string>
+    <string name="app_language_system_default">Implicit Sistem</string>
+    <string name="settings_system_translator_title">Traducere Sistem</string>
+    <string name="settings_system_translator_switch">Preferă Motorul Sistem Android</string>
+    <string name="settings_system_translator_subtitle">Folosește pachetul offline al telefonului cu rezervă ML Kit.</string>
+    <string name="settings_idle_pause_title">Pauză Automată la Inactivitate (%1$dm)</string>
+    <string name="settings_idle_pause_subtitle">Pune pauză automat când nu folosești aplicațiile de chat.</string>
+    <string name="settings_auto_updates_title">Verificare Automată Actualizări</string>
+    <string name="settings_auto_updates_subtitle">Verifică versiunile GitHub la deschiderea aplicației.</string>
+    <string name="settings_check_updates_title">Caută Actualizări</string>
+    <string name="settings_installed_version">Versiune instalată v%1$s</string>
+    <string name="action_check_now">Verifică Acum</string>
+    <string name="settings_app_info_subtitle">Deschide permisiunile Android și setările bateriei.</string>
+    <string name="settings_diagnostics_subtitle">Copiază jurnalele de detecție și starea live.</string>
+
+    <string name="draft_switch_lang_desc">Schimbă limba traducerii</string>
+    <string name="draft_action_replace">Înlocuiește</string>
+    <string name="draft_action_undo">Anulează</string>
+    <string name="draft_undo_applied_badge">✓ Aplicat</string>
+    <string name="draft_undo_caption">Introdus în chat · Apasă Anulează</string>
+    <string name="draft_dismiss_desc">Închide previzualizarea traducerii</string>
+
+    <string name="pill_close_desc">Închide</string>
+    <string name="nav_back_desc">Înapoi</string>
+    <string name="label_from">Din</string>
+    <string name="label_to">În</string>
+    <string name="lang_picker_title_from">Tradu din</string>
+    <string name="lang_picker_title_to">Tradu în</string>
+    <string name="swap_languages_desc">Inversează limbile</string>
+    <string name="action_swap_arrow">⇄ Inversează</string>
+    <string name="action_done">Gata</string>
+
+    <string name="toggle_translate_what_i_type">Tradu Ce Scriu</string>
+    <string name="toggle_translate_what_i_type_subtitle">Previzualizează și inserează traduceri pe măsură ce tastezi.</string>
+
+    <string name="model_status_checking">Se verifică modelele de limbă...</string>
+    <string name="model_status_downloading">Se descarcă modelele de limbă...</string>
+    <string name="model_status_ready">Pregătit offline</string>
+    <string name="model_status_error">Eroare la descărcare. Verifică conexiunea.</string>
+
+    <string name="title_supported_apps">Aplicații Suportate</string>
+    <string name="summary_no_apps_selected">Nicio aplicație selectată — apasă pentru a alege</string>
+    <string name="title_personal_dictionary">Dicționar Personal</string>
+    <string name="dict_no_saved_fixes">Nicio corecție salvată încă</string>
+    <string name="dict_one_word">1 cuvânt</string>
+    <string name="dict_many_words">%1$d cuvinte</string>
+    <string name="dict_one_phrase">1 expresie</string>
+    <string name="dict_many_phrases">%1$d expresii</string>
+    <string name="dict_state_off">\u0020· Oprit</string>
+    <string name="dict_state_manual_only">\u0020· Doar manual</string>
+    <string name="dict_state_learning_only">\u0020· Doar învățare</string>
+
+    <string name="bubble_style_title">Stil Bule de Traducere</string>
+    <string name="bubble_style_subtitle">Se potrivește automat cu modul întunecat sau fixează o paletă.</string>
+    <string name="bubble_preview_quote">Ne vedem la 6?</string>
+    <string name="bubble_preview_reply">Da, ne vedem în fața bibliotecii.</string>
+    <string name="bubble_preview_outgoing">Perfect, sunt pe drum.</string>
+    <string name="bubble_theme_auto">Automat</string>
+    <string name="bubble_theme_light">Luminos</string>
+    <string name="bubble_theme_classic">Clasic</string>
+
+    <string name="dialog_reset_learning_title">Ștergi datele învățate?</string>
+    <string name="dialog_reset_learning_message">Toate cuvintele și expresiile memorate vor fi șterse de pe acest telefon.</string>
+    <string name="action_reset">Șterge</string>
+    <string name="action_cancel">Anulează</string>
+
+    <string name="perm_card_title">Permisiuni Sistem</string>
+    <string name="perm_accessibility_label">Serviciu de Accesibilitate</string>
+    <string name="perm_notifications_label">Notificări</string>
+    <string name="perm_restricted_hint">Restricționat pe Android 13+? Informații Aplicație → ⋮ → Permite setările restricționate.</string>
+    <string name="perm_privacy_note">100% pe dispozitiv · Nimic nu părăsește telefonul.</string>
+    <string name="action_enable">Activează</string>
+    <string name="perm_diagnostics">Diagnostic</string>
+    <string name="perm_app_info">Informații Aplicație</string>
+
+    <string name="action_enable_all">Activează Tot</string>
+    <string name="apps_screen_description">Traducerile apar doar în aplicațiile verificate activate mai jos. Setările de sistem, tastaturile și aplicațiile bancare sunt întotdeauna ignorate.</string>
+    <string name="apps_verified_count">Aplicații Verificate · %1$d din %2$d activate</string>
+    <string name="apps_status_installed">Instalată</string>
+    <string name="apps_status_not_installed">Neinstalată</string>
+
+    <string name="action_reset_all">Șterge Tot</string>
+    <string name="dict_apply_saved_fixes">Aplică corecțiile salvate</string>
+    <string name="dict_learn_from_edits">Învață din editările mele</string>
+    <string name="dict_tab_words">Cuvinte (%1$d)</string>
+    <string name="dict_tab_phrases">Expresii (%1$d)</string>
+    <string name="dict_search_placeholder">Caută în dicționar...</string>
+    <string name="dict_add_custom_rule">Adaugă regulă</string>
+    <string name="dict_placeholder_replace">Înlocuiește</string>
+    <string name="dict_placeholder_with">Cu</string>
+    <string name="action_add">Adaugă</string>
+    <string name="dict_empty_entries">Nicio intrare salvată încă.</string>
+    <string name="dict_no_matching_entries">Nicio potrivire găsită.</string>
+    <string name="action_delete">Șterge</string>
+
+    <string name="update_title_ready">Actualizare Pregătită de Instalare</string>
+    <string name="update_title_downloading">Se Descarcă Actualizarea</string>
+    <string name="update_title_failed">Actualizare Eșuată</string>
+    <string name="update_title_available">Actualizare Disponibilă</string>
+    <string name="update_downloading_version">Se descarcă direct %1$s...</string>
+    <string name="update_ready_message">Versiunea %1$s a fost descărcată și este gata de instalare.</string>
+    <string name="update_ready_hint">Apasă Instalează Acum pentru a aplica actualizarea imediat.</string>
+    <string name="update_error_hint">Poți reîncerca descărcarea sau poți deschide pagina lansării în browser.</string>
+    <string name="update_available_message">Versiunea %1$s%2$s este disponibilă.</string>
+    <string name="update_available_question">Descarci și actualizezi direct din aplicație?</string>
+    <string name="download_failed_connection">Descărcarea a eșuat. Verifică conexiunea la internet.</string>
+    <string name="download_missing_file">Fișierul de actualizare descărcat lipsește.</string>
+    <string name="action_install_now">Instalează Acum</string>
+    <string name="action_retry">Reîncearcă</string>
+    <string name="action_download_install">Descarcă și Instalează</string>
+    <string name="action_open_browser">Deschide în Browser</string>
+    <string name="action_later">Mai Târziu</string>
+
+    <string name="crash_dialog_title">Eroare Aplicație</string>
+    <string name="crash_dialog_message">Aplicația a întâmpinat o eroare în sesiunea anterioară:\n\n%1$s</string>
+    <string name="crash_log_label">Jurnal Eroare</string>
+    <string name="action_copy_log">Copiază</string>
+    <string name="action_dismiss">Ignoră</string>
+    <string name="snackbar_install_permission">Permite aplicațiile necunoscute sau deschide în browser pentru instalare</string>
+    <string name="snackbar_latest_version">Ai deja cea mai recentă versiune (v%1$s)</string>
+
+    <string name="diagnostics_title">Diagnostic Scanare</string>
+    <string name="action_copy">Copiază</string>
+    <string name="action_close">Închide</string>
+
+    <string name="toast_copied_clipboard">Copiat în clipboard</string>
+    <string name="toast_diagnostics_copied">Diagnosticul a fost copiat</string>
+    <string name="toast_overchat_started">OverChat a pornit (controale active în notificare)</string>
+    <string name="toast_translation_active">Traducerea este activă</string>
+    <string name="toast_translation_paused">Traducerea este în pauză</string>
+    <string name="toast_overchat_stopped">OverChat a fost oprit</string>
+    <string name="toast_a11y_service_off">Serviciul de Accesibilitate este OPRIT. Activează-l în Setări.</string>
+    <string name="toast_replaced_in_chat">Înlocuit în chat</string>
+    <string name="toast_copied_tap_paste">Copiat în clipboard (apasă Lipire în chat)</string>
+    <string name="toast_original_restored">Textul original a fost restaurat</string>
+    <string name="toast_could_not_restore_draft">Nu s-a putut restaura textul</string>
+    <string name="clipboard_translated_text_label">Text Tradus</string>
+</resources>
+

@@ -41,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -65,7 +66,7 @@ fun TranslationSettingsCard(
     sourceLanguage: String,
     targetLanguage: String,
     availableLanguages: List<String>,
-    modelStatus: String,
+    modelStatus: ModelStatus,
     keyboardTranslatorEnabled: Boolean,
     settingsEnabled: Boolean,
     onSourceSelected: (String) -> Unit,
@@ -97,11 +98,19 @@ fun TranslationSettingsCard(
         )
     }
 
-    val isReady = modelStatus.contains("ready", ignoreCase = true)
+    val isReady = modelStatus == ModelStatus.READY
+    val statusText = stringResource(
+        when (modelStatus) {
+            ModelStatus.CHECKING -> R.string.model_status_checking
+            ModelStatus.DOWNLOADING -> R.string.model_status_downloading
+            ModelStatus.READY -> R.string.model_status_ready
+            ModelStatus.ERROR -> R.string.model_status_error
+        }
+    )
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         OverChatSectionLabel(
-            text = "Translation",
+            text = stringResource(R.string.section_translation),
             trailing = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Surface(
@@ -111,7 +120,7 @@ fun TranslationSettingsCard(
                     ) {}
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = if (isReady) "Offline ready" else modelStatus,
+                        text = statusText,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -128,7 +137,7 @@ fun TranslationSettingsCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 LanguagePillButton(
-                    label = "From",
+                    label = stringResource(R.string.label_from),
                     languageCode = sourceLanguage,
                     enabled = settingsEnabled,
                     onClick = { activePickerSlot = LanguageSlot.FROM },
@@ -159,7 +168,7 @@ fun TranslationSettingsCard(
                 }
 
                 LanguagePillButton(
-                    label = "To",
+                    label = stringResource(R.string.label_to),
                     languageCode = targetLanguage,
                     enabled = settingsEnabled,
                     onClick = { activePickerSlot = LanguageSlot.TO },
@@ -181,13 +190,13 @@ fun TranslationSettingsCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Translate What I Type",
+                        text = stringResource(R.string.toggle_translate_what_i_type),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "Preview and insert translations as you type.",
+                        text = stringResource(R.string.toggle_translate_what_i_type_subtitle),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 2,
@@ -213,6 +222,7 @@ private fun LanguagePillButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val displayLocale = LocalConfiguration.current.locales[0]
     Surface(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
@@ -231,7 +241,7 @@ private fun LanguagePillButton(
             )
             Spacer(modifier = Modifier.height(1.dp))
             Text(
-                text = AppDefaults.formatLanguageDisplayName(languageCode),
+                text = AppDefaults.formatLanguageDisplayName(languageCode, displayLocale),
                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                 color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -251,6 +261,7 @@ private fun LanguagePickerSheet(
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val displayLocale = LocalConfiguration.current.locales[0]
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
@@ -290,7 +301,7 @@ private fun LanguagePickerSheet(
                     ) {
                         Column {
                             Text(
-                                text = AppDefaults.formatLanguageDisplayName(code),
+                                text = AppDefaults.formatLanguageDisplayName(code, displayLocale),
                                 style = MaterialTheme.typography.bodyLarge.copy(
                                     fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium
                                 ),
@@ -341,6 +352,7 @@ fun LanguageDropdown(
     onSelected: (String) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val displayLocale = LocalConfiguration.current.locales[0]
 
     LaunchedEffect(enabled) {
         if (!enabled) {
@@ -359,7 +371,7 @@ fun LanguageDropdown(
             readOnly = true,
             singleLine = true,
             enabled = enabled,
-            value = AppDefaults.formatLanguageDisplayName(selectedCode),
+            value = AppDefaults.formatLanguageDisplayName(selectedCode, displayLocale),
             onValueChange = {},
             textStyle = MaterialTheme.typography.bodyMedium,
             label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -372,7 +384,7 @@ fun LanguageDropdown(
         ) {
             options.forEach { code ->
                 DropdownMenuItem(
-                    text = { Text(AppDefaults.formatLanguageDisplayName(code)) },
+                    text = { Text(AppDefaults.formatLanguageDisplayName(code, displayLocale)) },
                     onClick = {
                         onSelected(code)
                         expanded = false

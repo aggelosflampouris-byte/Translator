@@ -9,11 +9,13 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.translator.AppDefaults
+import com.example.translator.AppLocaleManager
 import com.example.translator.AppUpdater
 import com.example.translator.BuildConfig
 import com.example.translator.LearnedCorrectionEntry
 import com.example.translator.LearnedMemoryEntry
 import com.example.translator.LearningStore
+import com.example.translator.R
 import com.example.translator.ServiceBridge
 import com.example.translator.SystemOnDeviceTranslationEngine
 import com.example.translator.TranslationNotificationManager
@@ -37,13 +39,23 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
+ * Estado del ciclo de descarga y disponibilidad de los modelos locales.
+ */
+enum class ModelStatus {
+    CHECKING,
+    DOWNLOADING,
+    READY,
+    ERROR
+}
+
+/**
  * Estado observable de la pantalla principal desacoplado de detalles de Compose.
  */
 data class MainUiState(
     val isAccessibilityEnabled: Boolean = false,
     val isNotificationPermissionGranted: Boolean = true,
     val isSystemTranslatorAvailable: Boolean = false,
-    val modelStatus: String = "Checking language models...",
+    val modelStatus: ModelStatus = ModelStatus.CHECKING,
     val learningStats: Pair<Int, Int> = 0 to 0,
     val glossaryCorrections: List<LearnedCorrectionEntry> = emptyList(),
     val glossaryMemories: List<LearnedMemoryEntry> = emptyList(),
@@ -149,6 +161,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setOverlayTheme(theme: String) = preferencesRepository.setOverlayTheme(theme)
     fun setPreferSystemTranslator(enabled: Boolean) = preferencesRepository.setPreferSystemTranslator(enabled)
 
+    fun setAppLanguage(context: Context, languageTag: String) {
+        preferencesRepository.setAppLanguage(languageTag)
+        AppLocaleManager.applyAppLanguage(context, languageTag)
+    }
+
+    private fun locStr(resId: Int, vararg args: Any): String {
+        return AppLocaleManager.localizedContext(appContext).getString(resId, *args)
+    }
+
     fun startService() {
         val current = preferences.value
         ensureModelsDownloaded(current.sourceLanguage, current.targetLanguage)
@@ -157,7 +178,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ServiceBridge.onTranslationStateChanged?.invoke(true)
         TranslationNotificationManager.showNotification(appContext, isTranslating = true)
         ServiceBridge.notifyUiStateChanged()
-        _events.tryEmit(MainUiEvent.ShowToast("OverChat started (Notification controls active)"))
+        _events.tryEmit(MainUiEvent.ShowToast(locStr(R.string.toast_overchat_started)))
     }
 
     fun togglePauseResume() {
@@ -167,7 +188,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             TranslationNotificationManager.showNotification(appContext, isTranslating = next)
         }
         ServiceBridge.notifyUiStateChanged()
-        _events.tryEmit(MainUiEvent.ShowToast(if (next) "Translation active" else "Translation paused"))
+        _events.tryEmit(
+            MainUiEvent.ShowToast(
+                locStr(if (next) R.string.toast_translation_active else R.string.toast_translation_paused)
+            )
+        )
     }
 
     fun stopService() {
@@ -175,7 +200,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         TranslationNotificationManager.cancelNotification(appContext)
         ServiceBridge.onTranslationStateChanged?.invoke(false)
         ServiceBridge.notifyUiStateChanged()
-        _events.tryEmit(MainUiEvent.ShowToast("OverChat stopped"))
+        _events.tryEmit(MainUiEvent.ShowToast(locStr(R.string.toast_overchat_stopped)))
     }
 
     fun refreshGlossarySnapshot() {
@@ -240,7 +265,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             if (manual && info == null) {
                 _events.tryEmit(
-                    MainUiEvent.ShowSnackbar("You're on the latest version (v${BuildConfig.VERSION_NAME})")
+                    MainUiEvent.ShowSnackbar(locStr(R.string.snackbar_latest_version, BuildConfig.VERSION_NAME))
                 )
             }
         }
@@ -253,7 +278,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 downloadErrorMessage = null,
                 isDownloadingUpdate = true,
                 downloadProgress = 0f,
-                downloadStatusText = "Connecting..."
+                downloadStatusText = locStr(R.string.status_connecting)
             )
         }
         val destination = appUpdater.getUpdateFile(info.version)
@@ -288,7 +313,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 installUpdateFile(destination)
             } else {
                 _uiState.update {
-                    it.copy(downloadErrorMessage = "Download failed. Check your internet connection.")
+                    it.copy(downloadErrorMessage = locStr(R.string.download_failed_connection))
                 }
             }
         }
@@ -304,7 +329,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 it.copy(downloadedApkFile = null, downloadErrorMessage = result.message)
             }
             is AppUpdater.InstallResult.FileNotFound -> _uiState.update {
-                it.copy(downloadedApkFile = null, downloadErrorMessage = "The downloaded update file is missing.")
+                it.copy(downloadedApkFile = null, downloadErrorMessage = locStr(R.string.download_missing_file))
             }
         }
     }
@@ -323,7 +348,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun ensureModelsDownloaded(source: String, target: String) {
-        _uiState.update { it.copy(modelStatus = "Downloading language models...") }
+        _uiState.update { it.copy(modelStatus = ModelStatus.DOWNLOADING) }
         viewModelScope.launch {
             val sysAvailable = withContext(Dispatchers.IO) {
                 SystemOnDeviceTranslationEngine.isPairOnDevice(appContext, source, target)
@@ -334,10 +359,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             source = source,
             target = target,
             onSuccess = {
-                _uiState.update { it.copy(modelStatus = "Language models ready (offline)") }
+                _uiState.update { it.copy(modelStatus = ModelStatus.READY) }
             },
             onError = {
-                _uiState.update { it.copy(modelStatus = "Model download error. Check connection.") }
+                _uiState.update { it.copy(modelStatus = ModelStatus.ERROR) }
             }
         )
     }
